@@ -28,7 +28,9 @@ jobs:
         uses: astral-sh/setup-uv@v4
 
       - name: Install
-        run: uv pip install -e .
+        run: |
+          uv venv
+          uv pip install -e .
 
       - name: Generate CLI docs
         run: uv run -q python scripts/generate_cli_docs.py
