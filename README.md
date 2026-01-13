@@ -11,6 +11,8 @@ frontier models on agentic coding tasks.
 ## Quickstart
 
 ```bash
+# Create a local virtualenv + install (recommended for development)
+uv venv
 uv pip install -e '.[dev]'
 
 # Run HumanEval
@@ -28,6 +30,38 @@ mcode results --benchmark humaneval --model qwen2.5-coder-7b --compare-samples
 - Python 3.11+ (project uses `uv` for packaging/runs)
 - Docker (for secure-ish code execution)
 - A Mellea backend (for local models: Ollama is easiest)
+
+## Installing `mcode` (so the command works)
+
+There are two supported ways to run the CLI.
+
+### Option A: install as a global tool (recommended)
+
+This makes `mcode` available on your PATH without activating a virtualenv:
+
+```bash
+uv tool install -e .
+uv tool update-shell
+# restart your shell
+mcode --help
+```
+
+### Option B: use a project virtualenv
+
+```bash
+uv venv
+uv pip install -e '.[dev]'
+
+# Either activate:
+source .venv/bin/activate
+mcode --help
+
+# Or run without activating:
+uv run mcode --help
+```
+
+If you installed into a virtualenv but didn’t activate it, you can also run the binary directly:
+`.venv/bin/mcode` (macOS/Linux) or `.venv\\Scripts\\mcode.exe` (Windows).
 
 ## Usage
 
