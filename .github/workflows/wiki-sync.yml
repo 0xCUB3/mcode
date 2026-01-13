@@ -36,12 +36,21 @@ jobs:
         run: uv run -q python scripts/generate_cli_docs.py
 
       - name: Checkout wiki
+        id: wiki
         run: |
-          git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git" wiki
+          set -euo pipefail
+          if git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git" wiki; then
+            echo "cloned=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Wiki repo not found. GitHub wikis are created lazily: open the repo Wiki tab and create the first page once, then re-run this workflow."
+          echo "cloned=false" >> "$GITHUB_OUTPUT"
+          exit 0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Sync wiki pages
+        if: steps.wiki.outputs.cloned == 'true'
         run: |
           rsync -av --delete --exclude='.git' docs/wiki/ wiki/
           cd wiki
