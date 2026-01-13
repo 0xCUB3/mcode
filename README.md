@@ -62,6 +62,7 @@ Two options:
 - Architecture / roadmap: `mcode-research-v2.md`
 - GitHub Wiki (auto-synced): source lives in `docs/wiki/` and is pushed on every `main` update via
   `.github/workflows/wiki-sync.yml`.
+  - GitHub creates the wiki repo lazily; create the first wiki page once in the UI before sync works.
 
 ## Publishing notes
 
