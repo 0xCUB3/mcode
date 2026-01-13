@@ -1,9 +1,8 @@
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
 from dataclasses import dataclass
-
-import json
 
 from pydantic import BaseModel, Field
 
@@ -25,7 +24,8 @@ class LLMSession:
             import mellea
         except Exception as e:  # pragma: no cover
             raise RuntimeError(
-                "mellea is required for LLM interaction; install dependencies with `uv pip install -e .`"
+                "mellea is required for LLM interaction; "
+                "install dependencies with `uv pip install -e .`"
             ) from e
 
         try:
@@ -33,7 +33,8 @@ class LLMSession:
                 return
         except Exception as e:  # pragma: no cover
             raise RuntimeError(
-                f"Could not start a Mellea session (backend={self.backend_name!r}, model_id={self.model_id!r}). "
+                f"Could not start a Mellea session (backend={self.backend_name!r}, "
+                f"model_id={self.model_id!r}). "
                 "Ensure the backend is running and accessible (e.g. Ollama server) and retry."
             ) from e
 
@@ -47,7 +48,8 @@ class LLMSession:
             import mellea
         except Exception as e:  # pragma: no cover
             raise RuntimeError(
-                "mellea is required for LLM interaction; install dependencies with `uv pip install -e .`"
+                "mellea is required for LLM interaction; "
+                "install dependencies with `uv pip install -e .`"
             ) from e
 
         with mellea.start_session(backend_name=self.backend_name, model_id=self.model_id) as m:
@@ -90,7 +92,8 @@ class LLMSession:
             import mellea
         except Exception as e:  # pragma: no cover
             raise RuntimeError(
-                "mellea is required for LLM interaction; install dependencies with `uv pip install -e .`"
+                "mellea is required for LLM interaction; "
+                "install dependencies with `uv pip install -e .`"
             ) from e
 
         m = self._m

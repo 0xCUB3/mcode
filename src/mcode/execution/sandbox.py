@@ -3,21 +3,19 @@ from __future__ import annotations
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import docker
-from docker.errors import DockerException
-from docker.errors import ImageNotFound
+from docker.errors import DockerException, ImageNotFound
 
 
 @dataclass(frozen=True)
 class SandboxRun:
     success: bool
-    exit_code: Optional[int]
+    exit_code: int | None
     stdout: str
     stderr: str
     timed_out: bool
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class DockerSandbox:
@@ -42,8 +40,8 @@ class DockerSandbox:
             return self._client
         except DockerException as e:  # pragma: no cover
             raise RuntimeError(
-                "Docker is required for sandboxed execution, but the Docker daemon is not reachable. "
-                "Start Docker Desktop (or ensure DOCKER_HOST is configured) and retry."
+                "Docker is required for sandboxed execution, but the daemon is not reachable. "
+                "Start Docker Desktop (or configure DOCKER_HOST) and retry."
             ) from e
 
     def check_available(self) -> None:

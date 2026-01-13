@@ -4,7 +4,6 @@ import hashlib
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Optional
 
 from rich.progress import Progress
 
@@ -32,7 +31,7 @@ class BenchmarkRunner:
         self.llm = LLMSession(model_id=config.model_id, backend_name=config.backend_name)
         self.sandbox = DockerSandbox()
 
-    def run_benchmark(self, benchmark: str, *, limit: Optional[int] = None) -> RunSummary:
+    def run_benchmark(self, benchmark: str, *, limit: int | None = None) -> RunSummary:
         self.sandbox.check_available()
         self.sandbox.ensure_image()
         self.llm.check_available()
@@ -97,9 +96,17 @@ class BenchmarkRunner:
                 break
 
         elapsed_ms = int((time.time() - start) * 1000)
-        passed = bool(last_error_detail and (last_error_detail.get("exit_code") == 0) and not last_error_detail.get("timed_out"))
+        passed = bool(
+            last_error_detail
+            and (last_error_detail.get("exit_code") == 0)
+            and not last_error_detail.get("timed_out")
+        )
 
-        sha = hashlib.sha256(final_code.encode("utf-8", errors="ignore")).hexdigest() if final_code else None
+        sha = (
+            hashlib.sha256(final_code.encode("utf-8", errors="ignore")).hexdigest()
+            if final_code
+            else None
+        )
 
         return {
             "task_id": task.task_id,

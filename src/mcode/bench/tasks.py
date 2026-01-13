@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional
 
 
 @dataclass(frozen=True)
@@ -10,12 +10,12 @@ class Task:
     benchmark: str
     task_id: str
     prompt: str
-    entry_point: Optional[str]
+    entry_point: str | None
     test_code: str
     metadata: dict
 
 
-def load_benchmark(benchmark: str, cache_dir: Path, limit: Optional[int] = None) -> list[Task]:
+def load_benchmark(benchmark: str, cache_dir: Path, limit: int | None = None) -> list[Task]:
     name = benchmark.lower().strip()
     if name in {"humaneval", "human-eval"}:
         from mcode.bench.humaneval import load_humaneval
@@ -24,11 +24,11 @@ def load_benchmark(benchmark: str, cache_dir: Path, limit: Optional[int] = None)
     if name in {"mbpp"}:
         from mcode.bench.mbpp import load_mbpp
 
-        return list(_limit(load_mbpp(cache_dir), limit))
+    return list(_limit(load_mbpp(cache_dir), limit))
     raise ValueError(f"Unknown benchmark: {benchmark}")
 
 
-def _limit(tasks: Iterable[Task], limit: Optional[int]) -> Iterable[Task]:
+def _limit(tasks: Iterable[Task], limit: int | None) -> Iterable[Task]:
     if limit is None:
         yield from tasks
         return
@@ -36,4 +36,3 @@ def _limit(tasks: Iterable[Task], limit: Optional[int]) -> Iterable[Task]:
         if i >= limit:
             return
         yield task
-

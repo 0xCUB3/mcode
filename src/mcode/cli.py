@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.console import Console
@@ -30,7 +30,7 @@ def _configure_mellea_logging(verbose: bool) -> None:
         return
 
 
-def _parse_bool(v: Optional[str]) -> Optional[bool]:
+def _parse_bool(v: str | None) -> bool | None:
     if v is None:
         return None
     lowered = v.strip().lower()
@@ -54,14 +54,14 @@ def results(
     db: Annotated[Path, typer.Option("--db", help="SQLite DB path")] = Path(
         "experiments/results/results.db"
     ),
-    benchmark: Annotated[Optional[str], typer.Option("--benchmark")] = None,
-    model: Annotated[Optional[str], typer.Option("--model")] = None,
-    backend: Annotated[Optional[str], typer.Option("--backend")] = None,
-    samples: Annotated[Optional[int], typer.Option("--samples", min=1)] = None,
-    debug_iters: Annotated[Optional[int], typer.Option("--debug-iters", min=0)] = None,
-    timeout_s: Annotated[Optional[int], typer.Option("--timeout", min=1)] = None,
+    benchmark: Annotated[str | None, typer.Option("--benchmark")] = None,
+    model: Annotated[str | None, typer.Option("--model")] = None,
+    backend: Annotated[str | None, typer.Option("--backend")] = None,
+    samples: Annotated[int | None, typer.Option("--samples", min=1)] = None,
+    debug_iters: Annotated[int | None, typer.Option("--debug-iters", min=0)] = None,
+    timeout_s: Annotated[int | None, typer.Option("--timeout", min=1)] = None,
     compare_samples: Annotated[bool, typer.Option("--compare-samples")] = False,
-    retrieval: Annotated[Optional[str], typer.Option("--retrieval")] = None,
+    retrieval: Annotated[str | None, typer.Option("--retrieval")] = None,
 ) -> None:
     """Query pass rates from the results DB."""
     retrieval_bool = _parse_bool(retrieval)
@@ -158,7 +158,7 @@ def _bench_common(
     timeout_s: int,
     retrieval: bool,
     db: Path,
-    limit: Optional[int],
+    limit: int | None,
 ) -> None:
     config = BenchConfig(
         backend_name=backend,
@@ -204,7 +204,7 @@ def bench_humaneval(
     timeout_s: Annotated[int, typer.Option("--timeout", min=1)] = 60,
     retrieval: Annotated[bool, typer.Option("--retrieval/--no-retrieval")] = False,
     db: Annotated[Path, typer.Option("--db")] = Path("experiments/results/results.db"),
-    limit: Annotated[Optional[int], typer.Option("--limit", min=1)] = None,
+    limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
 ) -> None:
     _bench_common(
         benchmark="humaneval",
@@ -228,7 +228,7 @@ def bench_mbpp(
     timeout_s: Annotated[int, typer.Option("--timeout", min=1)] = 60,
     retrieval: Annotated[bool, typer.Option("--retrieval/--no-retrieval")] = False,
     db: Annotated[Path, typer.Option("--db")] = Path("experiments/results/results.db"),
-    limit: Annotated[Optional[int], typer.Option("--limit", min=1)] = None,
+    limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
 ) -> None:
     _bench_common(
         benchmark="mbpp",
@@ -245,4 +245,6 @@ def bench_mbpp(
 
 @bench_app.command("swebench-lite")
 def bench_swebench_lite() -> None:  # pragma: no cover
-    raise typer.BadParameter("SWE-Bench Lite support is deferred; Phase 1 focuses on HumanEval+MBPP.")
+    raise typer.BadParameter(
+        "SWE-Bench Lite support is deferred; Phase 1 focuses on HumanEval+MBPP."
+    )

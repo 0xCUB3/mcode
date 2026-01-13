@@ -40,8 +40,8 @@ class RepoMap:
 
 def _summarize_python(path: Path) -> str:
     try:
-        from tree_sitter import Parser
         import tree_sitter_python as tspython
+        from tree_sitter import Parser
 
         language = tspython.language()
         parser = Parser()
@@ -57,6 +57,8 @@ def _summarize_python(path: Path) -> str:
                 first_line = text.splitlines()[0] if text else ""
                 if first_line:
                     lines.append(first_line)
-        return "\n".join(lines) if lines else path.read_text(encoding="utf-8", errors="replace")[:2000]
+        if lines:
+            return "\n".join(lines)
+        return path.read_text(encoding="utf-8", errors="replace")[:2000]
     except Exception:
         return path.read_text(encoding="utf-8", errors="replace")[:2000]

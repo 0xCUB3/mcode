@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional, Sequence
 
 
 @dataclass(frozen=True)
@@ -80,7 +80,7 @@ class ResultsDB:
         self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
     def start_run(self, benchmark: str, config: dict) -> int:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         cursor = self.conn.execute(
             """
             INSERT INTO runs
@@ -140,14 +140,14 @@ class ResultsDB:
     def pass_rates_grouped(
         self,
         *,
-        benchmark: Optional[str],
-        model_id: Optional[str],
-        backend_name: Optional[str] = None,
-        max_debug_iterations: Optional[int] = None,
-        timeout_s: Optional[int] = None,
+        benchmark: str | None,
+        model_id: str | None,
+        backend_name: str | None = None,
+        max_debug_iterations: int | None = None,
+        timeout_s: int | None = None,
         group_by: Sequence[str],
-        retrieval: Optional[bool] = None,
-        samples: Optional[int] = None,
+        retrieval: bool | None = None,
+        samples: int | None = None,
     ) -> list[dict]:
         group_map = {
             "samples": "r.samples",
@@ -253,7 +253,13 @@ class ResultsDB:
           JOIN task_results tr ON tr.run_id = r.id
           WHERE {' AND '.join(where)}
           GROUP BY {', '.join(group_cols)}
-          ORDER BY r.benchmark, r.model_id, r.backend_name, r.max_debug_iterations, r.timeout_s, r.samples
+          ORDER BY
+            r.benchmark,
+            r.model_id,
+            r.backend_name,
+            r.max_debug_iterations,
+            r.timeout_s,
+            r.samples
         """
         rows = self.conn.execute(sql, params).fetchall()
         out: list[dict] = []

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import requests
 
@@ -61,4 +61,3 @@ def _download(url: str, dest: Path) -> None:
     resp = requests.get(url, timeout=60)
     resp.raise_for_status()
     dest.write_text(resp.text, encoding="utf-8")
-
