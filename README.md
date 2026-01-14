@@ -76,6 +76,13 @@ mcode bench mbpp --model qwen2.5-coder-7b --samples 10 --debug-iters 3 --timeout
 mcode bench swebench-lite --model qwen2.5-coder-7b --limit 5 --timeout 1800
 ```
 
+Note: `mcode` must run in the same environment where you installed the `.[swebench]` extra. If you
+installed `mcode` via `uv tool install ...`, install the extra there too:
+
+```bash
+uv tool install -e '.[swebench]'
+```
+
 Query results:
 
 ```bash

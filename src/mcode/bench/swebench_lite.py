@@ -35,7 +35,9 @@ def load_swebench_lite(
     except Exception as e:  # pragma: no cover
         raise RuntimeError(
             "SWE-bench Lite requires the `swebench` extra. "
-            "Install with `uv pip install -e '.[swebench]'`."
+            "Install with `uv pip install -e '.[swebench]'`.\n"
+            "If you installed `mcode` via `uv tool install ...`, install the extra there too:\n"
+            "  `uv tool install -e '.[swebench]'`"
         ) from e
 
     instances: list[dict] = load_swebench_dataset("SWE-bench/SWE-bench_Lite", split, instance_ids)
