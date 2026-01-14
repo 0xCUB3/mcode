@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import Any, TypeVar
 
 from pydantic import BaseModel, Field
 
 from mcode.bench.tasks import Task
+
+_T = TypeVar("_T")
 
 
 class CodeOutput(BaseModel):
@@ -129,26 +133,18 @@ class LLMSession:
         return self._instruct_patch(prompt)
 
     def _instruct_code(self, prompt: str) -> str:
-        try:
-            import mellea
-        except Exception as e:  # pragma: no cover
-            raise RuntimeError(
-                "mellea is required for LLM interaction; "
-                "install dependencies with `uv pip install -e .`"
-            ) from e
-
-        m = self._m
-        if m is not None:
-            thunk = m.instruct(prompt, format=CodeOutput)
-            out = getattr(thunk, "value", thunk)
-            return _extract_code(out)
-
-        with mellea.start_session(backend_name=self.backend_name, model_id=self.model_id) as m2:
-            thunk = m2.instruct(prompt, format=CodeOutput)
-            out = getattr(thunk, "value", thunk)
-            return _extract_code(out)
+        return self._instruct(prompt, format_model=CodeOutput, extractor=_extract_code)
 
     def _instruct_patch(self, prompt: str) -> str:
+        return self._instruct(prompt, format_model=PatchOutput, extractor=_extract_patch)
+
+    def _instruct(
+        self,
+        prompt: str,
+        *,
+        format_model: type[_T],
+        extractor: Callable[[Any], str],
+    ) -> str:
         try:
             import mellea
         except Exception as e:  # pragma: no cover
@@ -159,14 +155,14 @@ class LLMSession:
 
         m = self._m
         if m is not None:
-            thunk = m.instruct(prompt, format=PatchOutput)
+            thunk = m.instruct(prompt, format=format_model)
             out = getattr(thunk, "value", thunk)
-            return _extract_patch(out)
+            return extractor(out)
 
         with mellea.start_session(backend_name=self.backend_name, model_id=self.model_id) as m2:
-            thunk = m2.instruct(prompt, format=PatchOutput)
+            thunk = m2.instruct(prompt, format=format_model)
             out = getattr(thunk, "value", thunk)
-            return _extract_patch(out)
+            return extractor(out)
 
 
 def _extract_code(out: object) -> str:

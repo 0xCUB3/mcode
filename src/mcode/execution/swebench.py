@@ -27,14 +27,18 @@ class SWEbenchSandbox:
         mem_limit: str = "4g",
         pids_limit: int = 512,
         force_rebuild: bool = False,
-        cache_level: str = "env",
+        base_image_tag: str = "latest",
+        env_image_tag: str = "latest",
+        instance_image_tag: str = "latest",
     ):
         self.namespace = namespace
         self.max_workers = max_workers
         self.mem_limit = mem_limit
         self.pids_limit = pids_limit
         self.force_rebuild = force_rebuild
-        self.cache_level = cache_level
+        self.base_image_tag = base_image_tag
+        self.env_image_tag = env_image_tag
+        self.instance_image_tag = instance_image_tag
         self._client = None
 
     def _get_client(self):
@@ -57,28 +61,46 @@ class SWEbenchSandbox:
             return "arm64"
         return "x86_64"
 
+    @staticmethod
+    def _missing_extra_message() -> str:
+        return (
+            "SWE-bench Lite requires the `swebench` extra. "
+            "Install with `uv pip install -e '.[swebench]'`.\n"
+            "If you installed `mcode` via `uv tool install ...`, install the extra there too:\n"
+            "  `uv tool install -e '.[swebench]'`"
+        )
+
     def prepare_images(self, instances: list[dict]) -> None:
         try:
             from swebench.harness.docker_build import build_env_images
+            from swebench.harness.test_spec.test_spec import make_test_spec
         except Exception as e:  # pragma: no cover
-            raise RuntimeError(
-                "SWE-bench Lite requires the `swebench` extra. "
-                "Install with `uv pip install -e '.[swebench]'`.\n"
-                "If you installed `mcode` via `uv tool install ...`, install the extra there too:\n"
-                "  `uv tool install -e '.[swebench]'`"
-            ) from e
+            raise RuntimeError(self._missing_extra_message()) from e
 
         if self.namespace is not None:
-            # Using remote images; let Docker pull on-demand during evaluation.
             return
+
+        test_specs = [
+            make_test_spec(
+                inst,
+                namespace=self.namespace,
+                base_image_tag=self.base_image_tag,
+                env_image_tag=self.env_image_tag,
+                instance_image_tag=self.instance_image_tag,
+                arch=self._arch(),
+            )
+            for inst in instances
+        ]
 
         client = self._get_client()
         build_env_images(
             client,
-            instances,
+            test_specs,
             force_rebuild=self.force_rebuild,
             max_workers=self.max_workers,
             namespace=self.namespace,
+            instance_image_tag=self.instance_image_tag,
+            env_image_tag=self.env_image_tag,
         )
 
     def evaluate_patch(
@@ -110,15 +132,17 @@ class SWEbenchSandbox:
             from swebench.harness.grading import get_eval_report
             from swebench.harness.test_spec.test_spec import make_test_spec
         except Exception as e:  # pragma: no cover
-            raise RuntimeError(
-                "SWE-bench Lite requires the `swebench` extra. "
-                "Install with `uv pip install -e '.[swebench]'`.\n"
-                "If you installed `mcode` via `uv tool install ...`, install the extra there too:\n"
-                "  `uv tool install -e '.[swebench]'`"
-            ) from e
+            raise RuntimeError(self._missing_extra_message()) from e
 
         client = self._get_client()
-        test_spec = make_test_spec(instance, namespace=self.namespace, arch=self._arch())
+        test_spec = make_test_spec(
+            instance,
+            namespace=self.namespace,
+            base_image_tag=self.base_image_tag,
+            env_image_tag=self.env_image_tag,
+            instance_image_tag=self.instance_image_tag,
+            arch=self._arch(),
+        )
 
         patch_sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest()
         pred = {

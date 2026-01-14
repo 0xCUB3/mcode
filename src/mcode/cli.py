@@ -7,7 +7,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from mcode.bench.results import ResultsDB
+from mcode.bench.results import ResultsDB, RunSummary
 from mcode.bench.runner import BenchConfig, BenchmarkRunner
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -149,6 +149,45 @@ def results(
 app.add_typer(bench_app, name="bench")
 
 
+def _print_run_summary(
+    *,
+    summary: RunSummary,
+    benchmark: str,
+    backend: str,
+    model: str,
+    samples: int,
+    debug_iters: int,
+    timeout_s: int,
+    retrieval: bool,
+) -> None:
+    table = Table(title="Run summary")
+    table.add_column("run_id", justify="right")
+    table.add_column("benchmark")
+    table.add_column("backend")
+    table.add_column("model")
+    table.add_column("samples", justify="right")
+    table.add_column("debug", justify="right")
+    table.add_column("timeout", justify="right")
+    table.add_column("retrieval", justify="center")
+    table.add_column("total", justify="right")
+    table.add_column("passed", justify="right")
+    table.add_column("pass_rate", justify="right")
+    table.add_row(
+        str(summary.run_id),
+        benchmark,
+        backend,
+        model,
+        str(samples),
+        str(debug_iters),
+        str(timeout_s),
+        "on" if retrieval else "off",
+        str(summary.total),
+        str(summary.passed),
+        f"{summary.pass_rate:.1%}",
+    )
+    console.print(table)
+
+
 def _bench_common(
     benchmark: str,
     backend: str,
@@ -170,29 +209,16 @@ def _bench_common(
     )
     runner = BenchmarkRunner(config=config, results_db=ResultsDB(db))
     summary = runner.run_benchmark(benchmark, limit=limit)
-
-    table = Table(title="Run summary")
-    table.add_column("run_id", justify="right")
-    table.add_column("benchmark")
-    table.add_column("model")
-    table.add_column("samples", justify="right")
-    table.add_column("debug", justify="right")
-    table.add_column("retrieval", justify="center")
-    table.add_column("total", justify="right")
-    table.add_column("passed", justify="right")
-    table.add_column("pass_rate", justify="right")
-    table.add_row(
-        str(summary.run_id),
-        benchmark,
-        model,
-        str(samples),
-        str(debug_iters),
-        "on" if retrieval else "off",
-        str(summary.total),
-        str(summary.passed),
-        f"{summary.pass_rate:.1%}",
+    _print_run_summary(
+        summary=summary,
+        benchmark=benchmark,
+        backend=backend,
+        model=model,
+        samples=samples,
+        debug_iters=debug_iters,
+        timeout_s=timeout_s,
+        retrieval=retrieval,
     )
-    console.print(table)
 
 
 @bench_app.command("humaneval")
@@ -278,24 +304,13 @@ def bench_swebench_lite(
     )
     runner = BenchmarkRunner(config=config, results_db=ResultsDB(db))
     summary = runner.run_benchmark("swebench-lite", limit=limit)
-
-    table = Table(title="Run summary")
-    table.add_column("run_id", justify="right")
-    table.add_column("benchmark")
-    table.add_column("model")
-    table.add_column("samples", justify="right")
-    table.add_column("debug", justify="right")
-    table.add_column("total", justify="right")
-    table.add_column("passed", justify="right")
-    table.add_column("pass_rate", justify="right")
-    table.add_row(
-        str(summary.run_id),
-        "swebench-lite",
-        model,
-        str(samples),
-        str(debug_iters),
-        str(summary.total),
-        str(summary.passed),
-        f"{summary.pass_rate:.1%}",
+    _print_run_summary(
+        summary=summary,
+        benchmark="swebench-lite",
+        backend=backend,
+        model=model,
+        samples=samples,
+        debug_iters=debug_iters,
+        timeout_s=timeout_s,
+        retrieval=False,
     )
-    console.print(table)
