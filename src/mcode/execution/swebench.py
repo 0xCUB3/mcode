@@ -62,6 +62,11 @@ class SWEbenchSandbox:
             if arch not in {"x86_64", "arm64"}:
                 raise ValueError(f"Unsupported SWE-bench arch: {self.arch!r}")
             return arch
+
+        # When using prebuilt images (namespace set), prefer x86_64 images for compatibility.
+        if self.namespace is not None:
+            return "x86_64"
+
         machine = platform.machine().lower()
         if machine in {"arm64", "aarch64"}:
             return "arm64"
@@ -179,13 +184,32 @@ class SWEbenchSandbox:
                 try:
                     client.images.pull(test_spec.instance_image_key)
                 except Exception as e:  # pragma: no cover
-                    raise RuntimeError(
-                        "Could not pull the SWE-bench prebuilt image "
-                        f"{test_spec.instance_image_key!r}. "
-                        "The namespace may not contain images for this instance.\n"
-                        "Try `--namespace none` (or `--namespace \"\"`) to build locally, "
-                        "or use a namespace that you know contains the required images."
-                    ) from e
+                    if test_spec.arch == "arm64":
+                        alt_spec = make_test_spec(
+                            instance,
+                            namespace=self.namespace,
+                            base_image_tag=self.base_image_tag,
+                            env_image_tag=self.env_image_tag,
+                            instance_image_tag=self.instance_image_tag,
+                            arch="x86_64",
+                        )
+                        try:
+                            client.images.pull(alt_spec.instance_image_key)
+                            test_spec = alt_spec
+                        except Exception:
+                            raise RuntimeError(
+                                "Could not pull the SWE-bench prebuilt image "
+                                f"{test_spec.instance_image_key!r}. "
+                                "Try `--arch x86_64` (recommended) or `--namespace none` "
+                                "to build locally."
+                            ) from e
+                    else:
+                        raise RuntimeError(
+                            "Could not pull the SWE-bench prebuilt image "
+                            f"{test_spec.instance_image_key!r}. "
+                            "The namespace may not contain images for this instance.\n"
+                            "Try `--namespace none` (or `--namespace \"\"`) to build locally."
+                        ) from e
         else:
             # Build locally (relies on env images produced by `prepare_images`).
             # Keep `nocache=False` for speed; swebench uses this flag name.

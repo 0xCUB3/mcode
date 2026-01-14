@@ -288,8 +288,8 @@ def bench_swebench_lite(
         typer.Option(
             "--arch",
             help=(
-                "Docker arch for SWE-bench images: auto (default), x86_64 "
-                "(emulated on Apple Silicon), or arm64."
+                "Docker arch for SWE-bench images: auto (default), x86_64, or arm64. "
+                "Auto prefers x86_64 for prebuilt images and uses host arch for local builds."
             ),
         ),
     ] = "auto",
@@ -298,11 +298,11 @@ def bench_swebench_lite(
         typer.Option(
             "--namespace",
             help=(
-                "Container registry namespace for prebuilt SWE-bench images. "
+                "Container registry namespace for prebuilt SWE-bench images (default: swebench). "
                 'Use "none" (or an empty string) to build images locally.'
             ),
         ),
-    ] = "none",
+    ] = "swebench",
     max_workers: Annotated[int, typer.Option("--max-workers", min=1)] = 4,
     force_rebuild: Annotated[bool, typer.Option("--force-rebuild")] = False,
     mem_limit: Annotated[str, typer.Option("--mem-limit")] = "4g",
