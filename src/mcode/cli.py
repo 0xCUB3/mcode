@@ -277,6 +277,16 @@ def bench_swebench_lite(
     debug_iters: Annotated[int, typer.Option("--debug-iters", min=0)] = 0,
     timeout_s: Annotated[int, typer.Option("--timeout", min=1)] = 1800,
     split: Annotated[str, typer.Option("--split", help="Dataset split (dev/test)")] = "test",
+    arch: Annotated[
+        str,
+        typer.Option(
+            "--arch",
+            help=(
+                "Docker arch for SWE-bench images: auto (default), x86_64 "
+                "(emulated on Apple Silicon), or arm64."
+            ),
+        ),
+    ] = "auto",
     namespace: Annotated[
         str | None,
         typer.Option("--namespace", help="Use prebuilt SWE-bench images from this namespace"),
@@ -297,6 +307,7 @@ def bench_swebench_lite(
         timeout_s=timeout_s,
         swebench_split=split,
         swebench_namespace=namespace,
+        swebench_arch=None if arch == "auto" else arch,
         swebench_max_workers=max_workers,
         swebench_force_rebuild=force_rebuild,
         swebench_mem_limit=mem_limit,

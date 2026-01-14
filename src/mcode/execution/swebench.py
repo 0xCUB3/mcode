@@ -23,6 +23,7 @@ class SWEbenchSandbox:
         self,
         *,
         namespace: str | None = None,
+        arch: str | None = None,
         max_workers: int = 4,
         mem_limit: str = "4g",
         pids_limit: int = 512,
@@ -32,6 +33,7 @@ class SWEbenchSandbox:
         instance_image_tag: str = "latest",
     ):
         self.namespace = namespace
+        self.arch = arch
         self.max_workers = max_workers
         self.mem_limit = mem_limit
         self.pids_limit = pids_limit
@@ -54,8 +56,12 @@ class SWEbenchSandbox:
                 "Docker is required for SWE-bench Lite evaluation; start Docker and retry."
             ) from e
 
-    @staticmethod
-    def _arch() -> str:
+    def _effective_arch(self) -> str:
+        if self.arch is not None:
+            arch = self.arch.strip().lower()
+            if arch not in {"x86_64", "arm64"}:
+                raise ValueError(f"Unsupported SWE-bench arch: {self.arch!r}")
+            return arch
         machine = platform.machine().lower()
         if machine in {"arm64", "aarch64"}:
             return "arm64"
@@ -87,21 +93,33 @@ class SWEbenchSandbox:
                 base_image_tag=self.base_image_tag,
                 env_image_tag=self.env_image_tag,
                 instance_image_tag=self.instance_image_tag,
-                arch=self._arch(),
+                arch=self._effective_arch(),
             )
             for inst in instances
         ]
 
         client = self._get_client()
-        build_env_images(
-            client,
-            test_specs,
-            force_rebuild=self.force_rebuild,
-            max_workers=self.max_workers,
-            namespace=self.namespace,
-            instance_image_tag=self.instance_image_tag,
-            env_image_tag=self.env_image_tag,
-        )
+        try:
+            build_env_images(
+                client,
+                test_specs,
+                force_rebuild=self.force_rebuild,
+                max_workers=self.max_workers,
+                namespace=self.namespace,
+                instance_image_tag=self.instance_image_tag,
+                env_image_tag=self.env_image_tag,
+            )
+        except Exception as e:
+            if self._effective_arch() == "arm64":
+                raise RuntimeError(
+                    "Failed to build SWE-bench environment images for arm64. "
+                    "Some SWE-bench instances pin very old conda packages that aren't available on "
+                    "linux-aarch64 (e.g. `setuptools==38.2.4` for Python 3.6).\n"
+                    "On Apple Silicon, rerun with "
+                    "`mcode bench swebench-lite --arch x86_64 --max-workers 1` "
+                    "to use amd64 images via emulation."
+                ) from e
+            raise
 
     def evaluate_patch(
         self,
@@ -141,7 +159,7 @@ class SWEbenchSandbox:
             base_image_tag=self.base_image_tag,
             env_image_tag=self.env_image_tag,
             instance_image_tag=self.instance_image_tag,
-            arch=self._arch(),
+            arch=self._effective_arch(),
         )
 
         patch_sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest()

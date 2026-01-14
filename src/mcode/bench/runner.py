@@ -24,6 +24,7 @@ class BenchConfig:
     cache_dir: Path = Path.home() / ".cache" / "mcode"
     swebench_split: str = "test"
     swebench_namespace: str | None = None
+    swebench_arch: str | None = None
     swebench_max_workers: int = 4
     swebench_force_rebuild: bool = False
     swebench_mem_limit: str = "4g"
@@ -141,6 +142,7 @@ class BenchmarkRunner:
 
         swe_sandbox = SWEbenchSandbox(
             namespace=self.config.swebench_namespace,
+            arch=self.config.swebench_arch,
             max_workers=self.config.swebench_max_workers,
             mem_limit=self.config.swebench_mem_limit,
             pids_limit=self.config.swebench_pids_limit,
