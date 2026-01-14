@@ -13,6 +13,10 @@ class CodeOutput(BaseModel):
     code: str = Field(..., description="Python code only, no markdown.")
 
 
+class PatchOutput(BaseModel):
+    patch: str = Field(..., description="A unified diff patch (git apply compatible), no markdown.")
+
+
 @dataclass
 class LLMSession:
     model_id: str
@@ -87,6 +91,43 @@ class LLMSession:
         )
         return self._instruct_code(prompt)
 
+    def generate_patch(self, *, repo: str, problem_statement: str, hints_text: str = "") -> str:
+        hints_block = f"\n\nHints:\n{hints_text.strip()}\n" if hints_text.strip() else ""
+        prompt = (
+            "You are an expert software engineer.\n"
+            "Given a GitHub issue and a repository name, produce a single unified diff patch.\n"
+            "The patch must fix the issue.\n"
+            "Return ONLY the patch text. Do not use markdown. Do not add explanations.\n"
+            "The patch must apply cleanly with `git apply` from the repository root.\n\n"
+            f"Repository: {repo}\n\n"
+            f"Issue:\n{problem_statement.strip()}\n"
+            f"{hints_block}"
+        )
+        return self._instruct_patch(prompt)
+
+    def debug_patch(
+        self,
+        *,
+        repo: str,
+        problem_statement: str,
+        previous_patch: str,
+        failure_output: str,
+        hints_text: str = "",
+    ) -> str:
+        hints_block = f"\n\nHints:\n{hints_text.strip()}\n" if hints_text.strip() else ""
+        prompt = (
+            "You are an expert software engineer.\n"
+            "Fix the patch so that the repository tests pass.\n"
+            "Return ONLY a unified diff patch (git apply compatible), no markdown.\n"
+            "The patch should be complete and apply cleanly to the original repository state.\n\n"
+            f"Repository: {repo}\n\n"
+            f"Issue:\n{problem_statement.strip()}\n"
+            f"{hints_block}\n"
+            f"Previous patch:\n{previous_patch}\n\n"
+            f"Test output / failure:\n{failure_output}\n"
+        )
+        return self._instruct_patch(prompt)
+
     def _instruct_code(self, prompt: str) -> str:
         try:
             import mellea
@@ -107,6 +148,26 @@ class LLMSession:
             out = getattr(thunk, "value", thunk)
             return _extract_code(out)
 
+    def _instruct_patch(self, prompt: str) -> str:
+        try:
+            import mellea
+        except Exception as e:  # pragma: no cover
+            raise RuntimeError(
+                "mellea is required for LLM interaction; "
+                "install dependencies with `uv pip install -e .`"
+            ) from e
+
+        m = self._m
+        if m is not None:
+            thunk = m.instruct(prompt, format=PatchOutput)
+            out = getattr(thunk, "value", thunk)
+            return _extract_patch(out)
+
+        with mellea.start_session(backend_name=self.backend_name, model_id=self.model_id) as m2:
+            thunk = m2.instruct(prompt, format=PatchOutput)
+            out = getattr(thunk, "value", thunk)
+            return _extract_patch(out)
+
 
 def _extract_code(out: object) -> str:
     if isinstance(out, CodeOutput):
@@ -123,6 +184,27 @@ def _extract_code(out: object) -> str:
                 parsed = json.loads(s)
                 if isinstance(parsed, dict) and "code" in parsed:
                     return str(parsed["code"])
+            except Exception:
+                pass
+        return s
+    return str(out)
+
+
+def _extract_patch(out: object) -> str:
+    if isinstance(out, PatchOutput):
+        return out.patch
+    if isinstance(out, dict) and "patch" in out:
+        return str(out["patch"])
+    if isinstance(out, str):
+        s = out.strip()
+        if s.startswith("```"):
+            s = s.strip("`")
+            s = "\n".join(s.splitlines()[1:]).strip()
+        if s.startswith("{") and '"patch"' in s:
+            try:
+                parsed = json.loads(s)
+                if isinstance(parsed, dict) and "patch" in parsed:
+                    return str(parsed["patch"])
             except Exception:
                 pass
         return s

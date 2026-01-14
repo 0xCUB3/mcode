@@ -20,6 +20,9 @@ dev = [
   "pytest>=8.0.0",
   "ruff>=0.4.0",
 ]
+swebench = [
+  "swebench>=4.1.0",
+]
 
 [project.scripts]
 mcode = "mcode.cli:app"

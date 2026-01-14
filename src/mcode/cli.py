@@ -244,7 +244,58 @@ def bench_mbpp(
 
 
 @bench_app.command("swebench-lite")
-def bench_swebench_lite() -> None:  # pragma: no cover
-    raise typer.BadParameter(
-        "SWE-Bench Lite support is deferred; Phase 1 focuses on HumanEval+MBPP."
+def bench_swebench_lite(
+    model: Annotated[str, typer.Option("--model", help="Mellea model id")],
+    backend: Annotated[str, typer.Option("--backend", help="Mellea backend name")] = "ollama",
+    samples: Annotated[int, typer.Option("--samples", min=1)] = 1,
+    debug_iters: Annotated[int, typer.Option("--debug-iters", min=0)] = 0,
+    timeout_s: Annotated[int, typer.Option("--timeout", min=1)] = 1800,
+    split: Annotated[str, typer.Option("--split", help="Dataset split (dev/test)")] = "test",
+    namespace: Annotated[
+        str | None,
+        typer.Option("--namespace", help="Use prebuilt SWE-bench images from this namespace"),
+    ] = None,
+    max_workers: Annotated[int, typer.Option("--max-workers", min=1)] = 4,
+    force_rebuild: Annotated[bool, typer.Option("--force-rebuild")] = False,
+    mem_limit: Annotated[str, typer.Option("--mem-limit")] = "4g",
+    pids_limit: Annotated[int, typer.Option("--pids-limit", min=64)] = 512,
+    db: Annotated[Path, typer.Option("--db")] = Path("experiments/results/results.db"),
+    limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
+) -> None:
+    config = BenchConfig(
+        backend_name=backend,
+        model_id=model,
+        samples=samples,
+        retrieval=False,
+        max_debug_iterations=debug_iters,
+        timeout_s=timeout_s,
+        swebench_split=split,
+        swebench_namespace=namespace,
+        swebench_max_workers=max_workers,
+        swebench_force_rebuild=force_rebuild,
+        swebench_mem_limit=mem_limit,
+        swebench_pids_limit=pids_limit,
     )
+    runner = BenchmarkRunner(config=config, results_db=ResultsDB(db))
+    summary = runner.run_benchmark("swebench-lite", limit=limit)
+
+    table = Table(title="Run summary")
+    table.add_column("run_id", justify="right")
+    table.add_column("benchmark")
+    table.add_column("model")
+    table.add_column("samples", justify="right")
+    table.add_column("debug", justify="right")
+    table.add_column("total", justify="right")
+    table.add_column("passed", justify="right")
+    table.add_column("pass_rate", justify="right")
+    table.add_row(
+        str(summary.run_id),
+        "swebench-lite",
+        model,
+        str(samples),
+        str(debug_iters),
+        str(summary.total),
+        str(summary.passed),
+        f"{summary.pass_rate:.1%}",
+    )
+    console.print(table)

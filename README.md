@@ -30,6 +30,7 @@ mcode results --benchmark humaneval --model qwen2.5-coder-7b --compare-samples
 - Python 3.11+ (project uses `uv` for packaging/runs)
 - Docker (for secure-ish code execution)
 - A Mellea backend (for local models: Ollama is easiest)
+- For SWE-bench Lite: install the optional dependency `.[swebench]`
 
 ## Installing `mcode` (so the command works)
 
@@ -70,6 +71,9 @@ Run a benchmark:
 ```bash
 mcode bench humaneval --model granite3.3:8b --samples 100 --debug-iters 0 --timeout 60
 mcode bench mbpp --model qwen2.5-coder-7b --samples 10 --debug-iters 3 --timeout 60
+
+# SWE-bench Lite (requires `uv pip install -e '.[swebench]'`)
+mcode bench swebench-lite --model qwen2.5-coder-7b --limit 5 --timeout 1800
 ```
 
 Query results:
