@@ -32,7 +32,7 @@ mcode results --benchmark humaneval --model qwen2.5-coder-7b --compare-samples
 - A Mellea backend (for local models: Ollama is easiest)
 - For SWE-bench Lite: install the optional dependency `.[swebench]`
 
-## Installing `mcode` (so the command works)
+## Installing `mcode`
 
 There are two supported ways to run the CLI.
 
@@ -92,21 +92,3 @@ mcode results --benchmark humaneval --model granite3.3:8b --debug-iters 0 --time
 ```
 
 By default results are stored in `experiments/results/results.db` (override with `--db`).
-
-## “Just run `mcode`”
-
-Two options:
-
-- In this repo: use `uv run mcode ...` (no activation needed).
-- From anywhere: install as a uv tool:
-  - `uv tool install -e .`
-  - `uv tool update-shell` (then restart your shell)
-
-## Documentation
-
-Architecture notes are currently maintained privately (not checked into the public repo).
-
-## Publishing notes
-
-This repo does not currently include a license file. If you intend it to be open source, add a
-`LICENSE` before making it public.
