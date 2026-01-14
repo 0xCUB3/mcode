@@ -176,7 +176,16 @@ class SWEbenchSandbox:
             try:
                 client.images.get(test_spec.instance_image_key)
             except docker.errors.ImageNotFound:  # pragma: no cover
-                client.images.pull(test_spec.instance_image_key)
+                try:
+                    client.images.pull(test_spec.instance_image_key)
+                except Exception as e:  # pragma: no cover
+                    raise RuntimeError(
+                        "Could not pull the SWE-bench prebuilt image "
+                        f"{test_spec.instance_image_key!r}. "
+                        "The namespace may not contain images for this instance.\n"
+                        "Try `--namespace none` (or `--namespace \"\"`) to build locally, "
+                        "or use a namespace that you know contains the required images."
+                    ) from e
         else:
             # Build locally (relies on env images produced by `prepare_images`).
             # Keep `nocache=False` for speed; swebench uses this flag name.

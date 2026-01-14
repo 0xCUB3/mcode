@@ -23,7 +23,7 @@ class BenchConfig:
     timeout_s: int = 60
     cache_dir: Path = Path.home() / ".cache" / "mcode"
     swebench_split: str = "test"
-    swebench_namespace: str | None = "swebench"
+    swebench_namespace: str | None = None
     swebench_arch: str | None = None
     swebench_max_workers: int = 4
     swebench_force_rebuild: bool = False

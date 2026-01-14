@@ -298,11 +298,11 @@ def bench_swebench_lite(
         typer.Option(
             "--namespace",
             help=(
-                "Container registry namespace for prebuilt SWE-bench images (default: swebench). "
+                "Container registry namespace for prebuilt SWE-bench images. "
                 'Use "none" (or an empty string) to build images locally.'
             ),
         ),
-    ] = "swebench",
+    ] = "none",
     max_workers: Annotated[int, typer.Option("--max-workers", min=1)] = 4,
     force_rebuild: Annotated[bool, typer.Option("--force-rebuild")] = False,
     mem_limit: Annotated[str, typer.Option("--mem-limit")] = "4g",

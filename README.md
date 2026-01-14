@@ -82,7 +82,7 @@ mcode bench humaneval --model granite3.3:8b --samples 100 --debug-iters 0 --time
 mcode bench mbpp --model qwen2.5-coder-7b --samples 10 --debug-iters 3 --timeout 60
 
 # SWE-bench Lite (requires `uv pip install -e '.[swebench]'` in the same environment)
-mcode bench swebench-lite --model qwen2.5-coder-7b --limit 5 --timeout 1800
+mcode bench swebench-lite --model qwen2.5-coder-7b --limit 5 --timeout 1800 --namespace ""
 ```
 
 Common options (HumanEval + MBPP):
@@ -105,7 +105,7 @@ SWE-bench Lite specific options:
   - `arm64`: faster on Apple Silicon when it works, but some instances require old conda packages not
     available on `linux-aarch64`.
 - `--max-workers`: parallelism for image building (lower this to reduce RAM pressure).
-- `--namespace`: container registry namespace for prebuilt SWE-bench images (default: `swebench`).
+- `--namespace`: container registry namespace for prebuilt SWE-bench images.
   Use `--namespace none` (or `--namespace ""`) to build images locally (much slower and can fail on arm64).
 - `--force-rebuild`: rebuild images even if they exist.
 - `--mem-limit`, `--pids-limit`: limits for the evaluation container (not the image build step).
@@ -156,12 +156,6 @@ This typically means you’re running an older `mcode` build. Update/reinstall `
 If the build log mentions something like `PackagesNotFoundError` for a pinned old package (for
 example `setuptools==38.2.4` for Python 3.6), that’s an upstream limitation on `linux-aarch64`.
 
-Fix (recommended): use prebuilt images (default):
-
-```bash
-mcode bench swebench-lite --namespace swebench --limit 10 --model granite3.3:8b --samples 1
-```
-
 If you must build locally, run amd64 SWE-bench images via emulation:
 
 ```bash
@@ -186,7 +180,7 @@ Checks / mitigations:
 
 - Verify Docker can actually run amd64 containers: `docker run --rm --platform linux/amd64 ubuntu:22.04 uname -m`
   should print `x86_64`.
-- Prefer prebuilt images to avoid local builds entirely: run with the default `--namespace swebench`.
+- Prefer prebuilt images to avoid local builds entirely if you have a namespace that contains them.
 - Restart/upgrade Docker Desktop and retry with `--max-workers 1`.
 - If it still fails, the practical workaround is to build/run SWE-bench Lite on a machine that can build amd64
   images natively (Linux x86_64 / Intel Mac), or prebuild and distribute images.
