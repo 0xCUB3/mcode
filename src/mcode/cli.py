@@ -41,6 +41,12 @@ def _parse_bool(v: str | None) -> bool | None:
     raise typer.BadParameter("Expected a boolean (true/false).")
 
 
+def _optional_str(v: str) -> str | None:
+    if v.strip().lower() in {"", "none", "null"}:
+        return None
+    return v
+
+
 @app.callback()
 def _root(
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show Mellea INFO logs")] = False,
@@ -288,9 +294,15 @@ def bench_swebench_lite(
         ),
     ] = "auto",
     namespace: Annotated[
-        str | None,
-        typer.Option("--namespace", help="Use prebuilt SWE-bench images from this namespace"),
-    ] = None,
+        str,
+        typer.Option(
+            "--namespace",
+            help=(
+                "Container registry namespace for prebuilt SWE-bench images (default: swebench). "
+                'Use "none" (or an empty string) to build images locally.'
+            ),
+        ),
+    ] = "swebench",
     max_workers: Annotated[int, typer.Option("--max-workers", min=1)] = 4,
     force_rebuild: Annotated[bool, typer.Option("--force-rebuild")] = False,
     mem_limit: Annotated[str, typer.Option("--mem-limit")] = "4g",
@@ -306,7 +318,7 @@ def bench_swebench_lite(
         max_debug_iterations=debug_iters,
         timeout_s=timeout_s,
         swebench_split=split,
-        swebench_namespace=namespace,
+        swebench_namespace=_optional_str(namespace),
         swebench_arch=None if arch == "auto" else arch,
         swebench_max_workers=max_workers,
         swebench_force_rebuild=force_rebuild,

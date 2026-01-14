@@ -115,9 +115,11 @@ class SWEbenchSandbox:
                     "Failed to build SWE-bench environment images for arm64. "
                     "Some SWE-bench instances pin very old conda packages that aren't available on "
                     "linux-aarch64 (e.g. `setuptools==38.2.4` for Python 3.6).\n"
-                    "On Apple Silicon, rerun with "
-                    "`mcode bench swebench-lite --arch x86_64 --max-workers 1` "
-                    "to use amd64 images via emulation."
+                    "On Apple Silicon, the easiest workaround is to use prebuilt images:\n"
+                    "  `mcode bench swebench-lite --namespace swebench ...`\n"
+                    "If you must build locally, try amd64 emulation:\n"
+                    "  `mcode bench swebench-lite --namespace none --arch x86_64`\n"
+                    "  (add `--max-workers 1` if you hit OOM)"
                 ) from e
             raise
 
