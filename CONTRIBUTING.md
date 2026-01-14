@@ -15,4 +15,4 @@ uv run ruff check src tests
 
 ## Updating documentation
 
-Documentation currently lives in the repository (see `README.md` and `mcode-research-v2.md`).
+Documentation currently lives in the repository (see `README.md`).

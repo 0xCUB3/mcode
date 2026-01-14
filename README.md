@@ -93,7 +93,7 @@ Two options:
 
 ## Documentation
 
-- Architecture / roadmap: `mcode-research-v2.md`
+Architecture notes are currently maintained privately (not checked into the public repo).
 
 ## Publishing notes
 
