@@ -163,3 +163,22 @@ mcode bench swebench-lite --arch x86_64 --max-workers 1 --limit 10 --model grani
 
 If you still hit errors like exit code `137`, increase Docker Desktop memory and keep
 `--max-workers 1`.
+
+### SWE-bench Lite fails building the x86_64 base image with exit code 133 (Miniconda / rosetta error)
+
+If you see something like:
+
+- `rosetta error: failed to open elf at /lib64/ld-linux-x86-64.so.2`
+- `Trace/breakpoint trap`
+- `returned a non-zero code: 133`
+
+that’s a Docker Desktop amd64-emulation failure while running the Miniconda installer inside the
+`sweb.base.py.x86_64:latest` image build. It’s not caused by missing Python packages in `mcode`.
+
+Checks / mitigations:
+
+- Verify Docker can actually run amd64 containers: `docker run --rm --platform linux/amd64 ubuntu:22.04 uname -m`
+  should print `x86_64`.
+- Restart/upgrade Docker Desktop and retry with `--max-workers 1`.
+- If it still fails, the practical workaround is to build/run SWE-bench Lite on a machine that can build amd64
+  images natively (Linux x86_64 / Intel Mac), or prebuild and distribute images.
