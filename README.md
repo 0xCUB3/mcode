@@ -92,7 +92,9 @@ Common options (HumanEval + MBPP):
 - `--samples`: how many independent attempts per task. Stops early on first pass.
 - `--debug-iters`: after a failed attempt, how many “fix” attempts to allow (per sample).
 - `--timeout`: seconds per sandbox execution attempt.
+- `--sandbox`: execution mode for untrusted code (`docker` (default) or `process`).
 - `--limit`: number of tasks to run (takes the first `N` tasks in dataset order).
+- `--shard-count`, `--shard-index`: split tasks into shards for parallel/distributed runs.
 - `--db`: SQLite path (default: `experiments/results/results.db`).
 - `--retrieval/--no-retrieval`: placeholder flag for future ablations (currently off by default).
 
@@ -116,6 +118,26 @@ installed `mcode` via `uv tool install ...`, install the extra there too:
 ```bash
 uv tool install -e '.[swebench]'
 ```
+
+## Running on Kubernetes (plug-and-play?)
+
+You can make `mcode` run on most clusters without any cluster-specific integration by:
+
+- Building a container image that has `mcode` installed.
+- Running `mcode bench ...` inside a `Job`.
+- Using `--sandbox process` (because Docker-in-Docker is usually unavailable/undesirable in pods).
+- Sharding tasks across many Jobs with `--shard-count/--shard-index` for parallelism.
+
+What’s still cluster-specific (usually unavoidable): image registry/auth, GPU resource names,
+node selectors/tolerations, storage (where the SQLite DB lives), and security/network policy.
+
+Example (run 10 parallel shards for HumanEval; each job writes its own DB file):
+
+```bash
+mcode bench humaneval --model granite3.3:8b --samples 100 --sandbox process --shard-count 10 --shard-index 0 --db /results/shard-0.db
+```
+
+Important: `--sandbox process` runs untrusted code in the same container. Only use it in a locked down pod if security is a concern (no privileged mode, restricted egress, `automountServiceAccountToken: false`, etc).
 
 ### `mcode results`
 

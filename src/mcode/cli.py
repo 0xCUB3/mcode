@@ -202,9 +202,21 @@ def _bench_common(
     debug_iters: int,
     timeout_s: int,
     retrieval: bool,
+    sandbox: str,
+    shard_count: int | None,
+    shard_index: int | None,
     db: Path,
     limit: int | None,
 ) -> None:
+    sandbox_name = sandbox.strip().lower()
+    if sandbox_name not in {"docker", "process", "subprocess"}:
+        raise typer.BadParameter("Unknown --sandbox. Use docker or process.")
+
+    if shard_index is not None and shard_count is None:
+        raise typer.BadParameter("--shard-index requires --shard-count")
+    if shard_count is not None and shard_index is not None and shard_index >= shard_count:
+        raise typer.BadParameter("--shard-index must be < --shard-count")
+
     config = BenchConfig(
         backend_name=backend,
         model_id=model,
@@ -212,6 +224,9 @@ def _bench_common(
         retrieval=retrieval,
         max_debug_iterations=debug_iters,
         timeout_s=timeout_s,
+        sandbox=sandbox_name,
+        task_shard_count=shard_count,
+        task_shard_index=shard_index,
     )
     runner = BenchmarkRunner(config=config, results_db=ResultsDB(db))
     summary = runner.run_benchmark(benchmark, limit=limit)
@@ -235,6 +250,15 @@ def bench_humaneval(
     debug_iters: Annotated[int, typer.Option("--debug-iters", min=0)] = 0,
     timeout_s: Annotated[int, typer.Option("--timeout", min=1)] = 60,
     retrieval: Annotated[bool, typer.Option("--retrieval/--no-retrieval")] = False,
+    sandbox: Annotated[
+        str,
+        typer.Option(
+            "--sandbox",
+            help="Execution sandbox for code evaluation (docker or process).",
+        ),
+    ] = "docker",
+    shard_count: Annotated[int | None, typer.Option("--shard-count", min=1)] = None,
+    shard_index: Annotated[int | None, typer.Option("--shard-index", min=0)] = None,
     db: Annotated[Path, typer.Option("--db")] = Path("experiments/results/results.db"),
     limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
 ) -> None:
@@ -246,6 +270,9 @@ def bench_humaneval(
         debug_iters=debug_iters,
         timeout_s=timeout_s,
         retrieval=retrieval,
+        sandbox=sandbox,
+        shard_count=shard_count,
+        shard_index=shard_index,
         db=db,
         limit=limit,
     )
@@ -259,6 +286,15 @@ def bench_mbpp(
     debug_iters: Annotated[int, typer.Option("--debug-iters", min=0)] = 0,
     timeout_s: Annotated[int, typer.Option("--timeout", min=1)] = 60,
     retrieval: Annotated[bool, typer.Option("--retrieval/--no-retrieval")] = False,
+    sandbox: Annotated[
+        str,
+        typer.Option(
+            "--sandbox",
+            help="Execution sandbox for code evaluation (docker or process).",
+        ),
+    ] = "docker",
+    shard_count: Annotated[int | None, typer.Option("--shard-count", min=1)] = None,
+    shard_index: Annotated[int | None, typer.Option("--shard-index", min=0)] = None,
     db: Annotated[Path, typer.Option("--db")] = Path("experiments/results/results.db"),
     limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
 ) -> None:
@@ -270,6 +306,9 @@ def bench_mbpp(
         debug_iters=debug_iters,
         timeout_s=timeout_s,
         retrieval=retrieval,
+        sandbox=sandbox,
+        shard_count=shard_count,
+        shard_index=shard_index,
         db=db,
         limit=limit,
     )
@@ -307,9 +346,16 @@ def bench_swebench_lite(
     force_rebuild: Annotated[bool, typer.Option("--force-rebuild")] = False,
     mem_limit: Annotated[str, typer.Option("--mem-limit")] = "4g",
     pids_limit: Annotated[int, typer.Option("--pids-limit", min=64)] = 512,
+    shard_count: Annotated[int | None, typer.Option("--shard-count", min=1)] = None,
+    shard_index: Annotated[int | None, typer.Option("--shard-index", min=0)] = None,
     db: Annotated[Path, typer.Option("--db")] = Path("experiments/results/results.db"),
     limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
 ) -> None:
+    if shard_index is not None and shard_count is None:
+        raise typer.BadParameter("--shard-index requires --shard-count")
+    if shard_count is not None and shard_index is not None and shard_index >= shard_count:
+        raise typer.BadParameter("--shard-index must be < --shard-count")
+
     config = BenchConfig(
         backend_name=backend,
         model_id=model,
@@ -324,6 +370,8 @@ def bench_swebench_lite(
         swebench_force_rebuild=force_rebuild,
         swebench_mem_limit=mem_limit,
         swebench_pids_limit=pids_limit,
+        task_shard_count=shard_count,
+        task_shard_index=shard_index,
     )
     runner = BenchmarkRunner(config=config, results_db=ResultsDB(db))
     summary = runner.run_benchmark("swebench-lite", limit=limit)

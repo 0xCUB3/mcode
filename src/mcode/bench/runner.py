@@ -21,6 +21,9 @@ class BenchConfig:
     retrieval: bool = False
     max_debug_iterations: int = 0
     timeout_s: int = 60
+    sandbox: str = "docker"
+    task_shard_count: int | None = None
+    task_shard_index: int | None = None
     cache_dir: Path = Path.home() / ".cache" / "mcode"
     swebench_split: str = "test"
     swebench_namespace: str | None = "swebench"
@@ -36,7 +39,7 @@ class BenchmarkRunner:
         self.config = config
         self.results_db = results_db
         self.llm = LLMSession(model_id=config.model_id, backend_name=config.backend_name)
-        self.sandbox = DockerSandbox()
+        self.sandbox = _make_sandbox(config)
 
     def run_benchmark(self, benchmark: str, *, limit: int | None = None) -> RunSummary:
         self.sandbox.check_available()
@@ -48,6 +51,7 @@ class BenchmarkRunner:
             return self._run_swebench_lite(limit=limit)
 
         tasks = load_benchmark(name, cache_dir=self.config.cache_dir, limit=limit)
+        tasks = _apply_task_shard(tasks, self.config.task_shard_count, self.config.task_shard_index)
         run_id = self.results_db.start_run(name, asdict(self.config))
 
         passed = 0
@@ -138,6 +142,7 @@ class BenchmarkRunner:
             split=self.config.swebench_split,
             limit=limit,
         )
+        tasks = _apply_task_shard(tasks, self.config.task_shard_count, self.config.task_shard_index)
         run_id = self.results_db.start_run("swebench-lite", asdict(self.config))
 
         swe_sandbox = SWEbenchSandbox(
@@ -284,3 +289,30 @@ def _combine_for_eval(task: Task, code: str) -> str:
         )
 
     raise ValueError(f"Unsupported benchmark for eval: {task.benchmark}")
+
+
+def _make_sandbox(config: BenchConfig):
+    name = config.sandbox.strip().lower()
+    if name == "docker":
+        return DockerSandbox()
+    if name in {"process", "subprocess"}:
+        from mcode.execution.process_sandbox import ProcessSandbox
+
+        return ProcessSandbox()
+    raise ValueError(f"Unknown sandbox: {config.sandbox!r}")
+
+
+def _apply_task_shard(tasks: list, shard_count: int | None, shard_index: int | None) -> list:
+    if shard_count is None and shard_index is None:
+        return tasks
+    if shard_count is None:
+        raise ValueError("task_shard_count is required when task_shard_index is set")
+    if shard_count < 1:
+        raise ValueError("task_shard_count must be >= 1")
+    if shard_index is None:
+        shard_index = 0
+    if not (0 <= shard_index < shard_count):
+        raise ValueError("task_shard_index must be in [0, task_shard_count)")
+    if shard_count == 1 and shard_index == 0:
+        return tasks
+    return tasks[shard_index::shard_count]
