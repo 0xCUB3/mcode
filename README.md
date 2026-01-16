@@ -3,7 +3,7 @@
 mCode is a lightweight benchmarking harness for coding tasks, which will eventually become an agentic coding tool tailored for small LLMs. It runs a benchmark, executes the
 model’s output, and stores per-task outcomes in SQLite so you can compare models and settings later.
 
-- Benchmarks: HumanEval, MBPP (SWE-bench Lite optional)
+- Benchmarks: HumanEval, MBPP (SWE-bench Lite optional -- currently not fully functional on Apple Silicon)
 - LLM interface: Mellea (default backend: `ollama`)
 - Results: SQLite (default: `experiments/results/results.db`)
 
