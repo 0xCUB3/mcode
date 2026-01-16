@@ -42,13 +42,14 @@ class BenchmarkRunner:
         self.sandbox = _make_sandbox(config)
 
     def run_benchmark(self, benchmark: str, *, limit: int | None = None) -> RunSummary:
+        name = benchmark.lower().strip()
+        if name in {"swebench-lite", "swebench_lite"}:
+            self.llm.check_available()
+            return self._run_swebench_lite(limit=limit)
+
         self.sandbox.check_available()
         self.sandbox.ensure_image()
         self.llm.check_available()
-
-        name = benchmark.lower().strip()
-        if name in {"swebench-lite", "swebench_lite"}:
-            return self._run_swebench_lite(limit=limit)
 
         tasks = load_benchmark(name, cache_dir=self.config.cache_dir, limit=limit)
         tasks = _apply_task_shard(tasks, self.config.task_shard_count, self.config.task_shard_index)
@@ -295,7 +296,7 @@ def _make_sandbox(config: BenchConfig):
     name = config.sandbox.strip().lower()
     if name == "docker":
         return DockerSandbox()
-    if name in {"process", "subprocess"}:
+    if name == "process":
         from mcode.execution.process_sandbox import ProcessSandbox
 
         return ProcessSandbox()

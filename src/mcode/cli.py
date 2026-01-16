@@ -47,6 +47,16 @@ def _optional_str(v: str) -> str | None:
     return v
 
 
+def _validate_shards(
+    *, shard_count: int | None, shard_index: int | None
+) -> tuple[int | None, int | None]:
+    if shard_index is not None and shard_count is None:
+        raise typer.BadParameter("--shard-index requires --shard-count")
+    if shard_count is not None and shard_index is not None and shard_index >= shard_count:
+        raise typer.BadParameter("--shard-index must be < --shard-count")
+    return shard_count, shard_index
+
+
 @app.callback()
 def _root(
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show Mellea INFO logs")] = False,
@@ -66,8 +76,14 @@ def results(
     samples: Annotated[int | None, typer.Option("--samples", min=1)] = None,
     debug_iters: Annotated[int | None, typer.Option("--debug-iters", min=0)] = None,
     timeout_s: Annotated[int | None, typer.Option("--timeout", min=1)] = None,
-    compare_samples: Annotated[bool, typer.Option("--compare-samples")] = False,
-    retrieval: Annotated[str | None, typer.Option("--retrieval")] = None,
+    compare_samples: Annotated[
+        bool,
+        typer.Option("--compare-samples", help="Group results by sample count"),
+    ] = False,
+    retrieval: Annotated[
+        str | None,
+        typer.Option("--retrieval", help="Filter by retrieval flag (true/false)"),
+    ] = None,
 ) -> None:
     """Query pass rates from the results DB."""
     retrieval_bool = _parse_bool(retrieval)
@@ -209,13 +225,10 @@ def _bench_common(
     limit: int | None,
 ) -> None:
     sandbox_name = sandbox.strip().lower()
-    if sandbox_name not in {"docker", "process", "subprocess"}:
+    if sandbox_name not in {"docker", "process"}:
         raise typer.BadParameter("Unknown --sandbox. Use docker or process.")
 
-    if shard_index is not None and shard_count is None:
-        raise typer.BadParameter("--shard-index requires --shard-count")
-    if shard_count is not None and shard_index is not None and shard_index >= shard_count:
-        raise typer.BadParameter("--shard-index must be < --shard-count")
+    shard_count, shard_index = _validate_shards(shard_count=shard_count, shard_index=shard_index)
 
     config = BenchConfig(
         backend_name=backend,
@@ -246,10 +259,22 @@ def _bench_common(
 def bench_humaneval(
     model: Annotated[str, typer.Option("--model", help="Mellea model id")],
     backend: Annotated[str, typer.Option("--backend", help="Mellea backend name")] = "ollama",
-    samples: Annotated[int, typer.Option("--samples", min=1)] = 1,
-    debug_iters: Annotated[int, typer.Option("--debug-iters", min=0)] = 0,
-    timeout_s: Annotated[int, typer.Option("--timeout", min=1)] = 60,
-    retrieval: Annotated[bool, typer.Option("--retrieval/--no-retrieval")] = False,
+    samples: Annotated[
+        int,
+        typer.Option("--samples", min=1, help="Attempts per task; stop early on pass"),
+    ] = 1,
+    debug_iters: Annotated[
+        int,
+        typer.Option("--debug-iters", min=0, help="Fix attempts after a failed run"),
+    ] = 0,
+    timeout_s: Annotated[
+        int,
+        typer.Option("--timeout", min=1, help="Seconds per sandbox execution attempt"),
+    ] = 60,
+    retrieval: Annotated[
+        bool,
+        typer.Option("--retrieval/--no-retrieval", help="Reserved (no effect yet)"),
+    ] = False,
     sandbox: Annotated[
         str,
         typer.Option(
@@ -257,10 +282,18 @@ def bench_humaneval(
             help="Execution sandbox for code evaluation (docker or process).",
         ),
     ] = "docker",
-    shard_count: Annotated[int | None, typer.Option("--shard-count", min=1)] = None,
-    shard_index: Annotated[int | None, typer.Option("--shard-index", min=0)] = None,
-    db: Annotated[Path, typer.Option("--db")] = Path("experiments/results/results.db"),
-    limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
+    shard_count: Annotated[
+        int | None,
+        typer.Option("--shard-count", min=1, help="Total shards for parallel runs"),
+    ] = None,
+    shard_index: Annotated[
+        int | None,
+        typer.Option("--shard-index", min=0, help="Shard index (0..shard-count-1)"),
+    ] = None,
+    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = Path(
+        "experiments/results/results.db"
+    ),
+    limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
 ) -> None:
     _bench_common(
         benchmark="humaneval",
@@ -282,10 +315,22 @@ def bench_humaneval(
 def bench_mbpp(
     model: Annotated[str, typer.Option("--model", help="Mellea model id")],
     backend: Annotated[str, typer.Option("--backend", help="Mellea backend name")] = "ollama",
-    samples: Annotated[int, typer.Option("--samples", min=1)] = 1,
-    debug_iters: Annotated[int, typer.Option("--debug-iters", min=0)] = 0,
-    timeout_s: Annotated[int, typer.Option("--timeout", min=1)] = 60,
-    retrieval: Annotated[bool, typer.Option("--retrieval/--no-retrieval")] = False,
+    samples: Annotated[
+        int,
+        typer.Option("--samples", min=1, help="Attempts per task; stop early on pass"),
+    ] = 1,
+    debug_iters: Annotated[
+        int,
+        typer.Option("--debug-iters", min=0, help="Fix attempts after a failed run"),
+    ] = 0,
+    timeout_s: Annotated[
+        int,
+        typer.Option("--timeout", min=1, help="Seconds per sandbox execution attempt"),
+    ] = 60,
+    retrieval: Annotated[
+        bool,
+        typer.Option("--retrieval/--no-retrieval", help="Reserved (no effect yet)"),
+    ] = False,
     sandbox: Annotated[
         str,
         typer.Option(
@@ -293,10 +338,18 @@ def bench_mbpp(
             help="Execution sandbox for code evaluation (docker or process).",
         ),
     ] = "docker",
-    shard_count: Annotated[int | None, typer.Option("--shard-count", min=1)] = None,
-    shard_index: Annotated[int | None, typer.Option("--shard-index", min=0)] = None,
-    db: Annotated[Path, typer.Option("--db")] = Path("experiments/results/results.db"),
-    limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
+    shard_count: Annotated[
+        int | None,
+        typer.Option("--shard-count", min=1, help="Total shards for parallel runs"),
+    ] = None,
+    shard_index: Annotated[
+        int | None,
+        typer.Option("--shard-index", min=0, help="Shard index (0..shard-count-1)"),
+    ] = None,
+    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = Path(
+        "experiments/results/results.db"
+    ),
+    limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
 ) -> None:
     _bench_common(
         benchmark="mbpp",
@@ -318,17 +371,25 @@ def bench_mbpp(
 def bench_swebench_lite(
     model: Annotated[str, typer.Option("--model", help="Mellea model id")],
     backend: Annotated[str, typer.Option("--backend", help="Mellea backend name")] = "ollama",
-    samples: Annotated[int, typer.Option("--samples", min=1)] = 1,
-    debug_iters: Annotated[int, typer.Option("--debug-iters", min=0)] = 0,
-    timeout_s: Annotated[int, typer.Option("--timeout", min=1)] = 1800,
+    samples: Annotated[
+        int,
+        typer.Option("--samples", min=1, help="Attempts per task; stop early on pass"),
+    ] = 1,
+    debug_iters: Annotated[
+        int,
+        typer.Option("--debug-iters", min=0, help="Fix attempts after a failed run"),
+    ] = 0,
+    timeout_s: Annotated[
+        int,
+        typer.Option("--timeout", min=1, help="Seconds per SWE-bench eval attempt"),
+    ] = 1800,
     split: Annotated[str, typer.Option("--split", help="Dataset split (dev/test)")] = "test",
     arch: Annotated[
         str,
         typer.Option(
             "--arch",
             help=(
-                "Docker arch for SWE-bench images: auto (default), x86_64, or arm64. "
-                "Auto prefers x86_64 for prebuilt images and uses host arch for local builds."
+                "Image arch: auto/x86_64/arm64 (auto prefers x86_64 for prebuilt images)."
             ),
         ),
     ] = "auto",
@@ -337,24 +398,40 @@ def bench_swebench_lite(
         typer.Option(
             "--namespace",
             help=(
-                "Container registry namespace for prebuilt SWE-bench images (default: swebench). "
-                'Use "none" (or an empty string) to build images locally.'
+                "Prebuilt image namespace (default: swebench); set to \"\" to build locally."
             ),
         ),
     ] = "swebench",
-    max_workers: Annotated[int, typer.Option("--max-workers", min=1)] = 4,
-    force_rebuild: Annotated[bool, typer.Option("--force-rebuild")] = False,
-    mem_limit: Annotated[str, typer.Option("--mem-limit")] = "4g",
-    pids_limit: Annotated[int, typer.Option("--pids-limit", min=64)] = 512,
-    shard_count: Annotated[int | None, typer.Option("--shard-count", min=1)] = None,
-    shard_index: Annotated[int | None, typer.Option("--shard-index", min=0)] = None,
-    db: Annotated[Path, typer.Option("--db")] = Path("experiments/results/results.db"),
-    limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
+    max_workers: Annotated[
+        int,
+        typer.Option("--max-workers", min=1, help="Parallelism for image building"),
+    ] = 4,
+    force_rebuild: Annotated[
+        bool,
+        typer.Option("--force-rebuild", help="Rebuild images even if they exist"),
+    ] = False,
+    mem_limit: Annotated[
+        str,
+        typer.Option("--mem-limit", help="Eval container memory limit"),
+    ] = "4g",
+    pids_limit: Annotated[
+        int,
+        typer.Option("--pids-limit", min=64, help="Eval container process limit"),
+    ] = 512,
+    shard_count: Annotated[
+        int | None,
+        typer.Option("--shard-count", min=1, help="Total shards for parallel runs"),
+    ] = None,
+    shard_index: Annotated[
+        int | None,
+        typer.Option("--shard-index", min=0, help="Shard index (0..shard-count-1)"),
+    ] = None,
+    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = Path(
+        "experiments/results/results.db"
+    ),
+    limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
 ) -> None:
-    if shard_index is not None and shard_count is None:
-        raise typer.BadParameter("--shard-index requires --shard-count")
-    if shard_count is not None and shard_index is not None and shard_index >= shard_count:
-        raise typer.BadParameter("--shard-index must be < --shard-count")
+    shard_count, shard_index = _validate_shards(shard_count=shard_count, shard_index=shard_index)
 
     config = BenchConfig(
         backend_name=backend,

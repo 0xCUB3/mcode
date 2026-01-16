@@ -1,44 +1,27 @@
 # mCode
 
-Benchmarking harness for mCode: a research project exploring whether small local LLMs can match
-frontier models on agentic coding tasks.
+mCode is a lightweight benchmarking harness for coding tasks, which will eventually become an agentic coding tool tailored for small LLMs. It runs a benchmark, executes the
+model’s output, and stores per-task outcomes in SQLite so you can compare models and settings later.
 
-- Benchmarks: HumanEval + MBPP
-- LLM layer: Mellea (pluggable backends; default `ollama`)
-- Execution: Docker sandbox (network disabled, read-only mount, timeouts)
-- Storage: SQLite results DB (run configs + per-task outcomes)
+- Benchmarks: HumanEval, MBPP (SWE-bench Lite optional)
+- LLM interface: Mellea (default backend: `ollama`)
+- Results: SQLite (default: `experiments/results/results.db`)
 
-## Quickstart
+## Install
+
+Two good options:
+
+### Option A: project virtualenv (best for development)
 
 ```bash
-# Create a local virtualenv + install (recommended for development)
 uv venv
 uv pip install -e '.[dev]'
 
-# Run HumanEval
-mcode bench humaneval --model qwen2.5-coder-7b --samples 5
-
-# Show results
-mcode results --benchmark humaneval
-
-# Compare pass rates across sample counts (same model/config)
-mcode results --benchmark humaneval --model qwen2.5-coder-7b --compare-samples
+source .venv/bin/activate
+mcode --help
 ```
 
-## Requirements
-
-- Python 3.11+ (project uses `uv` for packaging/runs)
-- Docker (for secure-ish code execution)
-- A Mellea backend (for local models: Ollama is easiest)
-- For SWE-bench Lite: install the optional dependency `.[swebench]`
-
-## Installing `mcode`
-
-There are two supported ways to run the CLI.
-
-### Option A: install as a global tool (recommended)
-
-This makes `mcode` available on your PATH without activating a virtualenv:
+### Option B: global tool (best for “just run the CLI”)
 
 ```bash
 uv tool install -e .
@@ -47,178 +30,91 @@ uv tool update-shell
 mcode --help
 ```
 
-### Option B: use a project virtualenv
+## Run benchmarks
+
+HumanEval / MBPP:
 
 ```bash
-uv venv
-uv pip install -e '.[dev]'
-
-# Either activate:
-source .venv/bin/activate
-mcode --help
-
-# Or run without activating:
-uv run mcode --help
+mcode bench humaneval --model granite3.3:8b --samples 5
+mcode bench mbpp --model granite3.3:8b --samples 5
 ```
 
-If you installed into a virtualenv but didn’t activate it, you can also run the binary directly:
-`.venv/bin/mcode` (macOS/Linux) or `.venv\\Scripts\\mcode.exe` (Windows).
-
-## Usage
-
-### Commands
-
-- `mcode bench ...`: run a benchmark and write results to SQLite.
-- `mcode results ...`: query pass rates from SQLite.
-
-Tip: add `-v/--verbose` to show Mellea backend logs (useful for debugging backend connectivity).
-
-### `mcode bench`
-
-Run a benchmark:
+Quick smoke test (first N tasks only):
 
 ```bash
-mcode bench humaneval --model granite3.3:8b --samples 100 --debug-iters 0 --timeout 60
-mcode bench mbpp --model qwen2.5-coder-7b --samples 10 --debug-iters 3 --timeout 60
-
-# SWE-bench Lite (requires `uv pip install -e '.[swebench]'` in the same environment)
-mcode bench swebench-lite --model qwen2.5-coder-7b --limit 5 --timeout 1800
+mcode bench humaneval --model granite3.3:8b --limit 10
 ```
 
-Common options (HumanEval + MBPP):
+### What the key flags mean
 
-- `--model`: the Mellea model id (e.g. `granite3.3:8b` for Ollama).
-- `--backend`: Mellea backend name (default: `ollama`).
-- `--samples`: how many independent attempts per task. Stops early on first pass.
-- `--debug-iters`: after a failed attempt, how many “fix” attempts to allow (per sample).
-- `--timeout`: seconds per sandbox execution attempt.
-- `--sandbox`: execution mode for untrusted code (`docker` (default) or `process`).
-- `--limit`: number of tasks to run (takes the first `N` tasks in dataset order).
-- `--shard-count`, `--shard-index`: split tasks into shards for parallel/distributed runs.
-- `--db`: SQLite path (default: `experiments/results/results.db`).
-- `--retrieval/--no-retrieval`: placeholder flag for future ablations (currently off by default).
+- `--samples`: attempts per task (stops early on the first passing attempt).
+- `--debug-iters`: number of “fix” attempts after a failure (per sample).
+- `--timeout`: seconds per execution attempt (per sample/debug iteration).
+- `--limit`: run the first N tasks (useful for quick tests).
+- `--shard-count/--shard-index`: split tasks across multiple runs for parallelism.
+- `--sandbox`:
+  - `docker` (default): runs code in a Docker container (network disabled).
+  - `process`: runs code directly on the host via a local subprocess (useful inside k8s pods).
+    This is not safe isolation; only use it in a locked-down container if you care about security.
+- `--retrieval`: reserved flag (no behavior change yet; stored for later analysis).
 
-SWE-bench Lite specific options:
+### Parallel / Kubernetes runs
 
-- `--split`: dataset split (`dev` or `test`).
-- `--arch`: Docker arch for SWE-bench images:
-  - `auto` (default): uses `x86_64` when pulling prebuilt images; uses host arch for local builds.
-  - `x86_64`: recommended on Apple Silicon for SWE-bench (broad prebuilt image coverage).
-  - `arm64`: may work for some tasks, but coverage is partial and some environments aren’t available on
-    `linux-aarch64`.
-- `--max-workers`: parallelism for image building (lower this to reduce RAM pressure).
-- `--namespace`: container registry namespace for prebuilt SWE-bench images (default: `swebench`).
-  Use `--namespace none` (or `--namespace ""`) to build images locally (much slower and can fail on arm64).
-- `--force-rebuild`: rebuild images even if they exist.
-- `--mem-limit`, `--pids-limit`: limits for the evaluation container (not the image build step).
+Sharding is the simplest “plug-and-play” speedup: run the same command N times with different
+`--shard-index` values.
 
-Note: `mcode` must run in the same environment where you installed the `.[swebench]` extra. If you
-installed `mcode` via `uv tool install ...`, install the extra there too:
+```bash
+mcode bench humaneval --model granite3.3:8b --samples 100 --shard-count 10 --shard-index 0 --db /results/shard-0.db
+```
+
+On Kubernetes/OpenShift, run HumanEval/MBPP inside Jobs with `--sandbox process` (most clusters won’t
+support Docker-in-Docker).
+
+## SWE-bench Lite (optional)
+
+SWE-bench Lite is much heavier than HumanEval/MBPP: it evaluates patches against real repos inside
+Docker images.
+
+Install the extra:
+
+```bash
+uv pip install -e '.[swebench]'
+```
+
+If you installed `mcode` via `uv tool`, install the extra there too:
 
 ```bash
 uv tool install -e '.[swebench]'
 ```
 
-## Running on Kubernetes (plug-and-play?)
-
-You can make `mcode` run on most clusters without any cluster-specific integration by:
-
-- Building a container image that has `mcode` installed.
-- Running `mcode bench ...` inside a `Job`.
-- Using `--sandbox process` (because Docker-in-Docker is usually unavailable/undesirable in pods).
-- Sharding tasks across many Jobs with `--shard-count/--shard-index` for parallelism.
-
-What’s still cluster-specific (usually unavoidable): image registry/auth, GPU resource names,
-node selectors/tolerations, storage (where the SQLite DB lives), and security/network policy.
-
-Example (run 10 parallel shards for HumanEval; each job writes its own DB file):
+Run a small slice:
 
 ```bash
-mcode bench humaneval --model granite3.3:8b --samples 100 --sandbox process --shard-count 10 --shard-index 0 --db /results/shard-0.db
+mcode bench swebench-lite --model granite3.3:8b --limit 5
 ```
 
-Important: `--sandbox process` runs untrusted code in the same container. Only use it in a locked down pod if security is a concern (no privileged mode, restricted egress, `automountServiceAccountToken: false`, etc).
+If you see `ImageNotFound` while pulling `swebench/...` images, force local builds:
 
-### `mcode results`
+```bash
+mcode bench swebench-lite --namespace "" --model granite3.3:8b --limit 5
+```
 
-Query results (pass rates):
+If image building OOMs, try `--max-workers 1` and increase Docker Desktop memory.
+
+## View results
 
 ```bash
 mcode results --benchmark humaneval
 mcode results --benchmark humaneval --model granite3.3:8b --compare-samples
-mcode results --benchmark humaneval --model granite3.3:8b --debug-iters 0 --timeout 60
 ```
-
-Filters:
-
-- `--benchmark`, `--model`, `--backend`
-- `--samples`, `--debug-iters`, `--timeout`
-- `--retrieval` (accepts `true/false`)
-- `--compare-samples`: group by sample count for easy “does sampling help?” comparisons
-
-By default results are stored in `experiments/results/results.db` (override with `--db`).
 
 ## FAQ
 
-### SWE-bench Lite prints a bunch of Hugging Face 404s. Is that bad?
+### SWE-bench Lite prints Hugging Face `404 Not Found` messages. Is that bad?
 
-Usually no. The Hugging Face client probes for optional files (like dataset scripts/metadata) via
-`HEAD` requests; many datasets don’t have those files, so `404 Not Found` is expected as long as the
-actual dataset `GET` requests succeed and instances load.
+Usually no. The HF client probes for optional files via `HEAD` requests; `404` is expected as long
+as the dataset downloads and instances load.
 
 ### SWE-bench Lite fails with `base_image_tag cannot be None`
 
-This typically means you’re running an older `mcode` build. Update/reinstall `mcode` and re-run.
-
-- From a clone: `git pull` then run with `uv run mcode ...`
-- If using `uv tool`: reinstall with `uv tool install -e '.[swebench]'` from the repo root
-
-### SWE-bench Lite fails building env images on Apple Silicon (arm64)
-
-If the build log mentions something like `PackagesNotFoundError` for a pinned old package (for
-example `setuptools==38.2.4` for Python 3.6), that’s an upstream limitation on `linux-aarch64`.
-
-Fix (recommended): use the prebuilt images (default):
-
-```bash
-mcode bench swebench-lite --namespace swebench --arch x86_64 --limit 10 --model granite3.3:8b --samples 1
-```
-
-If you must build locally, run amd64 SWE-bench images via emulation:
-
-```bash
-mcode bench swebench-lite --namespace none --arch x86_64 --max-workers 1 --limit 10 --model granite3.3:8b --samples 1
-```
-
-If you still hit errors like exit code `137`, increase Docker Desktop memory and keep
-`--max-workers 1`.
-
-### SWE-bench Lite fails pulling `swebench/...arm64...` images (ImageNotFound / 404)
-
-The public `swebench` namespace has much better coverage for `x86_64` than `arm64`.
-
-Fix: run with `--arch x86_64` (or leave `--arch` as `auto`):
-
-```bash
-mcode bench swebench-lite --namespace swebench --arch x86_64 --limit 10 --model granite3.3:8b --samples 1
-```
-
-### SWE-bench Lite fails building the x86_64 base image with exit code 133 (Miniconda / rosetta error)
-
-If you see something like:
-
-- `rosetta error: failed to open elf at /lib64/ld-linux-x86-64.so.2`
-- `Trace/breakpoint trap`
-- `returned a non-zero code: 133`
-
-that’s a Docker Desktop amd64-emulation failure while running the Miniconda installer inside the
-`sweb.base.py.x86_64:latest` image build. It’s not caused by missing Python packages in `mcode`.
-
-Checks / mitigations:
-
-- Verify Docker can actually run amd64 containers: `docker run --rm --platform linux/amd64 ubuntu:22.04 uname -m`
-  should print `x86_64`.
-- Prefer prebuilt images to avoid local builds entirely: `mcode bench swebench-lite --namespace swebench --arch x86_64 ...`
-- Restart/upgrade Docker Desktop and retry with `--max-workers 1`.
-- If it still fails, the practical workaround is to build/run SWE-bench Lite on a machine that can build amd64
-  images natively (Linux x86_64 / Intel Mac), or prebuild and distribute images.
+This usually means you’re running an older `mcode`. Reinstall/update and retry.
