@@ -1,7 +1,6 @@
 # mCode
 
-mCode is a lightweight benchmarking harness for coding tasks, which will eventually become an agentic coding tool tailored for small LLMs. It runs a benchmark, executes the
-model’s output, and stores per-task outcomes in SQLite so you can compare models and settings later.
+mCode is a lightweight benchmarking harness for coding tasks through [Mellea](https://mellea.ai), which will eventually become an agentic coding tool tailored for small LLMs. It runs a benchmark and stores per-task outcomes in SQLite so you can compare models and settings later.
 
 - Benchmarks: HumanEval, MBPP (SWE-bench Lite optional -- currently not fully functional on Apple Silicon)
 - LLM interface: Mellea (default backend: `ollama`)
@@ -47,16 +46,16 @@ mcode bench humaneval --model granite3.3:8b --limit 10
 
 ### What the key flags mean
 
-- `--samples`: attempts per task (stops early on the first passing attempt).
-- `--debug-iters`: number of “fix” attempts after a failure (per sample).
+- `--samples`: attempts per task (note: stops early on the first passing attempt).
+- `--debug-iters`: number of “fix” attempts after a failure per sample.
 - `--timeout`: seconds per execution attempt (per sample/debug iteration).
-- `--limit`: run the first N tasks (useful for quick tests).
+- `--limit`: run the first N tasks.
 - `--shard-count/--shard-index`: split tasks across multiple runs for parallelism.
 - `--sandbox`:
   - `docker` (default): runs code in a Docker container (network disabled).
-  - `process`: runs code directly on the host via a local subprocess (useful inside k8s pods).
-    This is not safe isolation; only use it in a locked-down container if you care about security.
-- `--retrieval`: reserved flag (no behavior change yet; stored for later analysis).
+  - `process`: runs code directly on the host via a local subprocess (better for k8s?).
+    This is not safe isolation so only use it in a locked-down container if you care about security.
+- `--retrieval`: reserved flag; currently non-functional.
 
 ### Parallel / Kubernetes runs
 
@@ -67,12 +66,11 @@ Sharding is the simplest “plug-and-play” speedup: run the same command N tim
 mcode bench humaneval --model granite3.3:8b --samples 100 --shard-count 10 --shard-index 0 --db /results/shard-0.db
 ```
 
-On Kubernetes/OpenShift, run HumanEval/MBPP inside Jobs with `--sandbox process` (most clusters won’t
-support Docker-in-Docker).
+On Kubernetes which likely will not support Docker-in-Docker, run HumanEval/MBPP inside Jobs with `--sandbox process`.
 
 ## SWE-bench Lite (optional)
 
-SWE-bench Lite is much heavier than HumanEval/MBPP: it evaluates patches against real repos inside
+SWE-bench Lite is much heavier than HumanEval/MBPP and has compatibility issues with Apple ARM: it evaluates patches against real repos inside
 Docker images.
 
 Install the extra:
