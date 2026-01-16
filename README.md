@@ -1,6 +1,6 @@
 # mCode
 
-mCode is a lightweight benchmarking harness for coding tasks through [Mellea](https://mellea.ai), which will eventually become an agentic coding tool tailored for small LLMs. It runs a benchmark and stores per-task outcomes in SQLite so you can compare models and settings later.
+mCode is a lightweight benchmarking harness for coding tasks through [Mellea](https://mellea.ai), which will eventually become an agentic coding tool tailored for small LLMs.
 
 - Benchmarks: HumanEval, MBPP (SWE-bench Lite optional -- currently not fully functional on Apple Silicon)
 - LLM interface: Mellea (default backend: `ollama`)
@@ -20,7 +20,7 @@ source .venv/bin/activate
 mcode --help
 ```
 
-### Option B: global tool (best for “just run the CLI”)
+### Option B: global tool
 
 ```bash
 uv tool install -e .
