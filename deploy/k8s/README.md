@@ -45,12 +45,20 @@ kubectl apply -f deploy/k8s/results-pvc-rwx.yaml
 
 ### 3) Run a sharded benchmark Job
 
-Edit `deploy/k8s/mcode-bench-indexed-job.yaml`:
+#### Configure knobs (no YAML edits)
+
+Edit `deploy/k8s/bench.env` and apply it as a ConfigMap:
+
+```bash
+kubectl create configmap mcode-bench-config --from-env-file=deploy/k8s/bench.env -o yaml --dry-run=client | kubectl apply -f -
+```
+
+#### Run
+
+Edit `deploy/k8s/mcode-bench-indexed-job.yaml` once:
 
 - set `image: ...`
-- set `BENCHMARK` (`humaneval` or `mbpp`)
-- set `MODEL` and `OLLAMA_HOST` (or change `BACKEND`)
-- keep `completions == parallelism == SHARD_COUNT`
+- keep `spec.completions == SHARD_COUNT` (in `deploy/k8s/bench.env`)
 
 If you are using a ReadWriteOnce (RWO) results PVC (common on block storage), set
 `parallelism: 1` so shards run sequentially.
@@ -58,7 +66,8 @@ If you are using a ReadWriteOnce (RWO) results PVC (common on block storage), se
 Then apply:
 
 ```bash
-kubectl apply -f deploy/k8s/mcode-bench-indexed-job.yaml
+kubectl delete job mcode-bench --ignore-not-found
+kubectl create -f deploy/k8s/mcode-bench-indexed-job.yaml
 kubectl logs -f job/mcode-bench
 ```
 

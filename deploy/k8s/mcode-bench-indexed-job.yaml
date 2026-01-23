@@ -17,35 +17,18 @@ spec:
           #
           # For OpenShift in-namespace builds, this is typically:
           #   image-registry.openshift-image-registry.svc:5000/<namespace>/mcode:latest
-          image: image-registry.openshift-image-registry.svc:5000/mellea-test/mcode:latest
+          image: image-registry.openshift-image-registry.svc:5000/<namespace>/mcode:latest
           imagePullPolicy: IfNotPresent
           env:
-            - name: BENCHMARK
-              value: humaneval
-            - name: MODEL
-              value: granite3-dense:8b
-            - name: BACKEND
-              value: ollama
-            - name: OLLAMA_HOST
-              # If using the Mellea Ollama backend, point this at your service.
-              value: http://ollama:11434
-            - name: SAMPLES
-              value: "1"
-            - name: DEBUG_ITERS
-              value: "0"
-            - name: TIMEOUT_S
-              value: "60"
-            - name: SHARD_COUNT
-              value: "5"
             - name: JOB_COMPLETION_INDEX
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
             - name: MCODE_CACHE_DIR
               value: /cache
-            # Optional: set LIMIT for a quick smoke test (first N tasks).
-            # - name: LIMIT
-            #   value: "10"
+          envFrom:
+            - configMapRef:
+                name: mcode-bench-config
           command: ["sh", "-c"]
           args:
             - |
@@ -93,3 +76,7 @@ spec:
   # Note: create the PVC first and wait until it is `Bound`:
   #   oc apply -f deploy/k8s/results-pvc.yaml
   #   oc get pvc mcode-results -w
+  #
+  # To change knobs without editing this file:
+  #   oc create configmap mcode-bench-config --from-env-file=deploy/k8s/bench.env -o yaml --dry-run=client | oc apply -f -
+  #   oc delete job mcode-bench --ignore-not-found && oc create -f deploy/k8s/mcode-bench-indexed-job.yaml
