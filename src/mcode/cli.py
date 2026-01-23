@@ -13,6 +13,7 @@ from mcode.bench.runner import BenchConfig, BenchmarkRunner
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 bench_app = typer.Typer(add_completion=False, no_args_is_help=True)
 console = Console()
+DEFAULT_DB_PATH = Path("experiments/results/results.db")
 
 
 def _configure_mellea_logging(verbose: bool) -> None:
@@ -67,9 +68,7 @@ def _root(
 
 @app.command("results")
 def results(
-    db: Annotated[Path, typer.Option("--db", help="SQLite DB path")] = Path(
-        "experiments/results/results.db"
-    ),
+    db: Annotated[Path, typer.Option("--db", help="SQLite DB path")] = DEFAULT_DB_PATH,
     benchmark: Annotated[str | None, typer.Option("--benchmark")] = None,
     model: Annotated[str | None, typer.Option("--model")] = None,
     backend: Annotated[str | None, typer.Option("--backend")] = None,
@@ -229,6 +228,18 @@ def _bench_common(
         raise typer.BadParameter("Unknown --sandbox. Use docker or process.")
 
     shard_count, shard_index = _validate_shards(shard_count=shard_count, shard_index=shard_index)
+    if sandbox_name == "process":
+        typer.echo(
+            "Note: --sandbox process runs untrusted code without isolation. "
+            "Use only in a locked-down container.",
+            err=True,
+        )
+    if shard_count and shard_count > 1 and db == DEFAULT_DB_PATH:
+        typer.echo(
+            "Note: when running shards in parallel, use a unique --db per shard to avoid SQLite "
+            "locks.",
+            err=True,
+        )
 
     config = BenchConfig(
         backend_name=backend,
@@ -290,9 +301,7 @@ def bench_humaneval(
         int | None,
         typer.Option("--shard-index", min=0, help="Shard index (0..shard-count-1)"),
     ] = None,
-    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = Path(
-        "experiments/results/results.db"
-    ),
+    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
     limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
 ) -> None:
     _bench_common(
@@ -346,9 +355,7 @@ def bench_mbpp(
         int | None,
         typer.Option("--shard-index", min=0, help="Shard index (0..shard-count-1)"),
     ] = None,
-    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = Path(
-        "experiments/results/results.db"
-    ),
+    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
     limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
 ) -> None:
     _bench_common(
@@ -426,12 +433,16 @@ def bench_swebench_lite(
         int | None,
         typer.Option("--shard-index", min=0, help="Shard index (0..shard-count-1)"),
     ] = None,
-    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = Path(
-        "experiments/results/results.db"
-    ),
+    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
     limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
 ) -> None:
     shard_count, shard_index = _validate_shards(shard_count=shard_count, shard_index=shard_index)
+    if shard_count and shard_count > 1 and db == DEFAULT_DB_PATH:
+        typer.echo(
+            "Note: when running shards in parallel, use a unique --db per shard to avoid SQLite "
+            "locks.",
+            err=True,
+        )
 
     config = BenchConfig(
         backend_name=backend,

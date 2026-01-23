@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import time
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -34,6 +35,13 @@ def load_humaneval(cache_dir: Path) -> Iterable[Task]:
 
 
 def _download(url: str, dest: Path) -> None:
-    resp = requests.get(url, timeout=60)
-    resp.raise_for_status()
-    dest.write_bytes(resp.content)
+    for attempt in range(3):
+        try:
+            resp = requests.get(url, timeout=60)
+            resp.raise_for_status()
+            dest.write_bytes(resp.content)
+            return
+        except Exception:  # pragma: no cover
+            if attempt >= 2:
+                raise
+            time.sleep(2**attempt)

@@ -53,7 +53,9 @@ class BenchmarkRunner:
 
         tasks = load_benchmark(name, cache_dir=self.config.cache_dir, limit=limit)
         tasks = _apply_task_shard(tasks, self.config.task_shard_count, self.config.task_shard_index)
-        run_id = self.results_db.start_run(name, asdict(self.config))
+        config = _augment_run_config(asdict(self.config))
+        config["dataset"] = _dataset_metadata(name, cache_dir=self.config.cache_dir) or {}
+        run_id = self.results_db.start_run(name, config)
 
         passed = 0
         total = 0
@@ -144,7 +146,13 @@ class BenchmarkRunner:
             limit=limit,
         )
         tasks = _apply_task_shard(tasks, self.config.task_shard_count, self.config.task_shard_index)
-        run_id = self.results_db.start_run("swebench-lite", asdict(self.config))
+        config = _augment_run_config(asdict(self.config))
+        config["dataset"] = {
+            "name": "SWE-bench_Lite",
+            "hf_dataset": "SWE-bench/SWE-bench_Lite",
+            "split": self.config.swebench_split,
+        }
+        run_id = self.results_db.start_run("swebench-lite", config)
 
         swe_sandbox = SWEbenchSandbox(
             namespace=self.config.swebench_namespace,
@@ -317,3 +325,80 @@ def _apply_task_shard(tasks: list, shard_count: int | None, shard_index: int | N
     if shard_count == 1 and shard_index == 0:
         return tasks
     return tasks[shard_index::shard_count]
+
+
+def _augment_run_config(config: dict) -> dict:
+    out = dict(config)
+    out.update(_runtime_metadata())
+    return out
+
+
+def _runtime_metadata() -> dict[str, str]:
+    import os
+    import platform
+    import subprocess
+    import sys
+    from importlib.metadata import PackageNotFoundError, version
+
+    meta: dict[str, str] = {}
+    try:
+        meta["mcode_version"] = version("mcode")
+    except PackageNotFoundError:
+        pass
+
+    sha = os.environ.get("MCODE_GIT_SHA") or os.environ.get("GITHUB_SHA")
+    if not sha:
+        try:
+            repo_root = Path(__file__).resolve().parents[3]
+            if (repo_root / ".git").exists():
+                res = subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=str(repo_root),
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                    check=False,
+                )
+                if res.returncode == 0:
+                    sha = (res.stdout or "").strip() or None
+        except Exception:
+            sha = None
+    if sha:
+        meta["mcode_git_sha"] = sha
+
+    meta["python_version"] = sys.version.split()[0]
+    meta["platform"] = platform.platform()
+    return meta
+
+
+def _sha256_path(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _dataset_metadata(benchmark: str, *, cache_dir: Path) -> dict[str, str | None] | None:
+    name = benchmark.lower().strip()
+    if name in {"humaneval", "human-eval"}:
+        from mcode.bench.humaneval import HUMANEVAL_URL
+
+        path = cache_dir / "humaneval" / "HumanEval.jsonl.gz"
+        return {
+            "name": "HumanEval",
+            "url": HUMANEVAL_URL,
+            "sha256": _sha256_path(path),
+        }
+    if name == "mbpp":
+        from mcode.bench.mbpp import MBPP_URL
+
+        path = cache_dir / "mbpp" / "mbpp.jsonl"
+        return {
+            "name": "MBPP",
+            "url": MBPP_URL,
+            "sha256": _sha256_path(path),
+        }
+    return None

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -58,6 +59,13 @@ def _test_code_from_row(row: dict) -> str:
 
 
 def _download(url: str, dest: Path) -> None:
-    resp = requests.get(url, timeout=60)
-    resp.raise_for_status()
-    dest.write_text(resp.text, encoding="utf-8")
+    for attempt in range(3):
+        try:
+            resp = requests.get(url, timeout=60)
+            resp.raise_for_status()
+            dest.write_text(resp.text, encoding="utf-8")
+            return
+        except Exception:  # pragma: no cover
+            if attempt >= 2:
+                raise
+            time.sleep(2**attempt)
