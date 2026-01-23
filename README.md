@@ -68,11 +68,12 @@ mcode bench humaneval --model granite3.3:8b --samples 100 --shard-count 10 --sha
 
 On Kubernetes, run HumanEval/MBPP inside Jobs with `--sandbox process` (Docker-in-Docker is usually not available).
 
-There’s a minimal Dockerfile + k8s templates in:
+There’s a minimal container + k8s/OpenShift setup in:
 
 - `Dockerfile`
-- `deploy/k8s/mcode-bench-indexed-job.yaml`
-- `deploy/k8s/results-pvc.yaml`
+- `deploy/k8s/bench.env` (knobs)
+- `deploy/k8s/mcode-bench-indexed-job.yaml` (indexed sharded Job)
+- `deploy/k8s/run-bench.sh` (recommended submit script)
 
 ## SWE-bench Lite (optional)
 

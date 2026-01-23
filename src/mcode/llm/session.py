@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import json
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -27,6 +28,25 @@ class LLMSession:
     backend_name: str = "ollama"
     _m: object | None = None
 
+    def _default_model_options(self) -> dict | None:
+        raw = os.environ.get("MCODE_MAX_NEW_TOKENS")
+        if not raw:
+            return None
+        try:
+            max_new_tokens = int(raw)
+        except ValueError:
+            raise ValueError(f"MCODE_MAX_NEW_TOKENS must be an int (got {raw!r})")
+        if max_new_tokens < 1:
+            raise ValueError("MCODE_MAX_NEW_TOKENS must be >= 1")
+
+        try:
+            from mellea.backends.types import ModelOption
+        except Exception:
+            # If mellea isn't installed, we don't want to fail until check_available/open.
+            return None
+
+        return {ModelOption.MAX_NEW_TOKENS: max_new_tokens}
+
     def check_available(self) -> None:
         try:
             import mellea
@@ -37,7 +57,11 @@ class LLMSession:
             ) from e
 
         try:
-            with mellea.start_session(backend_name=self.backend_name, model_id=self.model_id):
+            with mellea.start_session(
+                backend_name=self.backend_name,
+                model_id=self.model_id,
+                model_options=self._default_model_options(),
+            ):
                 return
         except Exception as e:  # pragma: no cover
             raise RuntimeError(
@@ -60,7 +84,11 @@ class LLMSession:
                 "install dependencies with `uv pip install -e .`"
             ) from e
 
-        with mellea.start_session(backend_name=self.backend_name, model_id=self.model_id) as m:
+        with mellea.start_session(
+            backend_name=self.backend_name,
+            model_id=self.model_id,
+            model_options=self._default_model_options(),
+        ) as m:
             self._m = m
             try:
                 yield self
@@ -155,12 +183,24 @@ class LLMSession:
 
         m = self._m
         if m is not None:
-            thunk = m.instruct(prompt, format=format_model)
+            thunk = m.instruct(
+                prompt,
+                format=format_model,
+                model_options=self._default_model_options(),
+            )
             out = getattr(thunk, "value", thunk)
             return extractor(out)
 
-        with mellea.start_session(backend_name=self.backend_name, model_id=self.model_id) as m2:
-            thunk = m2.instruct(prompt, format=format_model)
+        with mellea.start_session(
+            backend_name=self.backend_name,
+            model_id=self.model_id,
+            model_options=self._default_model_options(),
+        ) as m2:
+            thunk = m2.instruct(
+                prompt,
+                format=format_model,
+                model_options=self._default_model_options(),
+            )
             out = getattr(thunk, "value", thunk)
             return extractor(out)
 

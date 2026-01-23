@@ -8,10 +8,18 @@ spec:
   completions: 5
   # Concurrency: set this to how many shards you want to run at once (<= completions).
   parallelism: 5
-  backoffLimit: 1
+  backoffLimit: 2
   template:
     spec:
       restartPolicy: Never
+      # Prefer spreading shards across nodes (helps avoid noisy-neighbor OOMs when running many pods).
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              job-name: mcode-bench
       containers:
         - name: mcode
           # Replace with your registry image.
@@ -56,8 +64,8 @@ spec:
               mountPath: /cache
           resources:
             requests:
-              cpu: "1"
-              memory: 4Gi
+              cpu: "500m"
+              memory: 2Gi
             limits:
               cpu: "2"
               memory: 8Gi
@@ -70,14 +78,12 @@ spec:
               type: RuntimeDefault
       volumes:
         - name: results
-          persistentVolumeClaim:
-            claimName: mcode-results
+          # Default: use ephemeral storage for results so sharded Jobs can run concurrently without
+          # requiring RWX storage provisioning. Use `FETCH_RESULTS=1 ./deploy/k8s/run-bench.sh` to
+          # copy per-shard SQLite DBs back to your machine after the Job completes.
+          emptyDir: {}
         - name: cache
           emptyDir: {}
-  # Note: create the PVC first and wait until it is `Bound`:
-  #   oc apply -f deploy/k8s/results-pvc.yaml
-  #   oc get pvc mcode-results -w
-  #
   # To change knobs without editing this file:
   #   oc create configmap mcode-bench-config --from-env-file=deploy/k8s/bench.env -o yaml --dry-run=client | oc apply -f -
   #   oc delete job mcode-bench --ignore-not-found && oc create -f deploy/k8s/mcode-bench-indexed-job.yaml

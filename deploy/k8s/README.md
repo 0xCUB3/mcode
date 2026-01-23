@@ -9,7 +9,7 @@ image, then run sharded benchmark Jobs.
 Jobs.
 
 For the default `ollama` backend, set `OLLAMA_HOST` (for example `http://ollama:11434`) in
-`deploy/k8s/mcode-bench-indexed-job.yaml`.
+`deploy/k8s/bench.env`.
 
 ### 1) Build + push the `mcode` image
 
@@ -26,62 +26,63 @@ docker build -t icr.io/<icr-namespace>/mcode:latest .
 docker push icr.io/<icr-namespace>/mcode:latest
 ```
 
-### 2) Create a results PVC (recommended)
-
-The Job template is configured to write one SQLite DB per shard into `/results/` via a PVC.
-Create the PVC first and wait until it is `Bound` before starting the Job.
-
-```bash
-kubectl apply -f deploy/k8s/results-pvc.yaml
-kubectl get pvc mcode-results -w
-```
-
-If your cluster supports RWX storage and you want true parallel sharded jobs, apply the RWX
-variant instead and set a RWX storage class:
-
-```bash
-kubectl apply -f deploy/k8s/results-pvc-rwx.yaml
-```
-
-### 3) Run a sharded benchmark Job
-
-#### Configure knobs (no YAML edits)
+### 2) Configure knobs (no YAML edits)
 
 Edit `deploy/k8s/bench.env` and apply it as a ConfigMap:
 
 ```bash
-kubectl create configmap mcode-bench-config --from-env-file=deploy/k8s/bench.env -o yaml --dry-run=client | kubectl apply -f -
+oc create configmap mcode-bench-config --from-env-file=deploy/k8s/bench.env -o yaml --dry-run=client | oc apply -f -
 ```
 
-#### Run
+Notes:
+- `MCODE_MAX_NEW_TOKENS` caps output length to prevent rare runaway generations (which can OOM pods).
+- In OpenShift, `PARALLELISM` is also limited by your namespace ResourceQuota. `run-bench.sh` will
+  clamp it down automatically if needed.
 
-Edit `deploy/k8s/mcode-bench-indexed-job.yaml` once:
+### 3) Run a sharded benchmark Job
 
-- set `image: ...`
-- keep `spec.completions == SHARD_COUNT` (in `deploy/k8s/bench.env`)
-
-If you are using a ReadWriteOnce (RWO) results PVC (common on block storage), set
-`parallelism: 1` so shards run sequentially.
-
-Then apply:
+The simplest way to submit the Job is:
 
 ```bash
-kubectl delete job mcode-bench --ignore-not-found
-kubectl create -f deploy/k8s/mcode-bench-indexed-job.yaml
-kubectl logs -f job/mcode-bench
+./deploy/k8s/run-bench.sh
 ```
 
-Tip: with RWX results storage, set `parallelism == completions` for maximum speed, but keep an eye
-on your model server capacity (higher concurrency can saturate inference and increase latency).
+Defaults:
+- Writes shard DBs to an ephemeral `/results` (`emptyDir`), so shards can run concurrently without
+  any storage provisioning.
+- Uses OpenShift internal registry image:
+  `image-registry.openshift-image-registry.svc:5000/<current-namespace>/mcode:latest`
 
-### 4) Collect results
-
-The Job writes one SQLite DB per shard into `/results/` (e.g. `humaneval-shard-0.db`).
-If you used a PVC, those DBs persist after the Job completes.
-
-You can copy them back locally and query them with `mcode results --db ...`:
+Common flags:
 
 ```bash
-kubectl cp <pod-name>:/results ./results
-mcode results --db ./results/humaneval-shard-0.db --benchmark humaneval
+# Copy results back locally after the Job completes (one folder per pod under ./results-.../)
+FETCH_RESULTS=1 ./deploy/k8s/run-bench.sh
+
+# Run fewer shards at once (useful if your model server is the bottleneck)
+PARALLELISM=2 ./deploy/k8s/run-bench.sh
+
+# Quick one-off overrides without editing `bench.env` (prefixed with `OVERRIDE_`)
+OVERRIDE_LIMIT=10 OVERRIDE_SHARD_COUNT=2 PARALLELISM=2 ./deploy/k8s/run-bench.sh
+
+# If a previous run is still active, `run-bench.sh` refuses to delete it.
+# To delete + recreate anyway:
+FORCE_RECREATE=1 ./deploy/k8s/run-bench.sh
+```
+
+If you see `OOMKilled` pods, either lower `PARALLELISM` or increase the container memory request/limit
+in `deploy/k8s/mcode-bench-indexed-job.yaml`.
+
+### 4) Query results locally
+
+If you used `FETCH_RESULTS=1`, query any shard DB:
+
+```bash
+mcode results --db ./results-*/<pod-name>/results/humaneval-shard-0.db --benchmark humaneval
+```
+
+If you already ran the Job and just want to copy results without resubmitting:
+
+```bash
+./deploy/k8s/fetch-results.sh mcode-bench
 ```
