@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from rich.progress import Progress
@@ -11,6 +12,16 @@ from mcode.bench.results import ResultsDB, RunSummary
 from mcode.bench.tasks import Task, load_benchmark
 from mcode.execution.sandbox import DockerSandbox
 from mcode.llm.session import LLMSession
+
+
+def _default_cache_dir() -> Path:
+    override = os.environ.get("MCODE_CACHE_DIR")
+    if override:
+        return Path(override)
+    xdg_cache = os.environ.get("XDG_CACHE_HOME")
+    if xdg_cache:
+        return Path(xdg_cache) / "mcode"
+    return Path("/tmp/mcode-cache")
 
 
 @dataclass(frozen=True)
@@ -24,7 +35,7 @@ class BenchConfig:
     sandbox: str = "docker"
     task_shard_count: int | None = None
     task_shard_index: int | None = None
-    cache_dir: Path = Path.home() / ".cache" / "mcode"
+    cache_dir: Path = field(default_factory=_default_cache_dir)
     swebench_split: str = "test"
     swebench_namespace: str | None = "swebench"
     swebench_arch: str | None = None

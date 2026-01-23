@@ -66,7 +66,13 @@ Sharding is the simplest “plug-and-play” speedup: run the same command N tim
 mcode bench humaneval --model granite3.3:8b --samples 100 --shard-count 10 --shard-index 0 --db /results/shard-0.db
 ```
 
-On Kubernetes which likely will not support Docker-in-Docker, run HumanEval/MBPP inside Jobs with `--sandbox process`.
+On Kubernetes, run HumanEval/MBPP inside Jobs with `--sandbox process` (Docker-in-Docker is usually not available).
+
+There’s a minimal Dockerfile + k8s templates in:
+
+- `Dockerfile`
+- `deploy/k8s/mcode-bench-indexed-job.yaml`
+- `deploy/k8s/results-pvc.yaml`
 
 ## SWE-bench Lite (optional)
 
