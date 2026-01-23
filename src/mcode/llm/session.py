@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import os
 import json
+import os
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
