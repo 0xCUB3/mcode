@@ -16,6 +16,15 @@ kubectl apply -f deploy/k8s/ollama.yaml
 
 Then point `OLLAMA_HOST` to `http://ollama:11434` in `deploy/k8s/mcode-bench-indexed-job.yaml`.
 
+If you need GPU acceleration, use:
+
+```bash
+kubectl apply -f deploy/k8s/ollama-gpu.yaml
+```
+
+Note: this requires GPU worker nodes plus an NVIDIA device plugin/operator so the cluster exposes
+`nvidia.com/gpu` resources to the scheduler.
+
 Option B: use an external endpoint:
 
 - Set `OLLAMA_HOST` to your external URL (must be reachable from the cluster).
