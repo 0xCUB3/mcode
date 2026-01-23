@@ -3,6 +3,23 @@
 This repo is intentionally light on cluster-specific tooling. The goal is: build one `mcode` container
 image, then run sharded benchmark Jobs.
 
+### 0) Inference backend (Mellea)
+
+`mcode` talks to models via Mellea. The default backend is `ollama`, so you need an Ollama endpoint
+reachable from the benchmark Jobs.
+
+Option A: run Ollama in-cluster:
+
+```bash
+kubectl apply -f deploy/k8s/ollama.yaml
+```
+
+Then point `OLLAMA_HOST` to `http://ollama:11434` in `deploy/k8s/mcode-bench-indexed-job.yaml`.
+
+Option B: use an external endpoint:
+
+- Set `OLLAMA_HOST` to your external URL (must be reachable from the cluster).
+
 ### 1) Build + push the `mcode` image
 
 Use any registry your cluster can pull from (IBM Container Registry, OpenShift internal registry, etc).
@@ -54,4 +71,3 @@ You can copy them back locally and query them with `mcode results --db ...`:
 kubectl cp <pod-name>:/results ./results
 mcode results --db ./results/humaneval-shard-0.db --benchmark humaneval
 ```
-

@@ -73,6 +73,7 @@ There’s a minimal Dockerfile + k8s templates in:
 - `Dockerfile`
 - `deploy/k8s/mcode-bench-indexed-job.yaml`
 - `deploy/k8s/results-pvc.yaml`
+- `deploy/k8s/ollama.yaml` (optional, in-cluster Ollama Service)
 
 ## SWE-bench Lite (optional)
 
