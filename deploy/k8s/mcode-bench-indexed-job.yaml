@@ -88,3 +88,5 @@ spec:
         - name: cache
           emptyDir: {}
 
+  # If your `mcode-results` PVC is ReadWriteOnce (RWO), set `parallelism: 1` above so shards run
+  # sequentially. For true parallelism, use a ReadWriteMany (RWX) PVC.

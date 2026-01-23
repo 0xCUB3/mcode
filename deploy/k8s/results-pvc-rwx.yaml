@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mcode-results
+spec:
+  # RWX storage enables true parallel sharded Jobs (multiple pods writing to /results at once).
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  # You must set this to a RWX-capable StorageClass in your cluster (typically NFS/file storage).
+  # Find candidates with: `oc get sc -o wide`
+  # storageClassName: <rwx-storage-class>
+

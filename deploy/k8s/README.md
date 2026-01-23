@@ -53,6 +53,13 @@ set `parallelism: 1` in the Job and shards will run sequentially.
 kubectl apply -f deploy/k8s/results-pvc.yaml
 ```
 
+If your cluster supports RWX storage and you want true parallel sharded jobs, apply the RWX
+variant instead and set a RWX storage class:
+
+```bash
+kubectl apply -f deploy/k8s/results-pvc-rwx.yaml
+```
+
 ### 3) Run a sharded benchmark Job
 
 Edit `deploy/k8s/mcode-bench-indexed-job.yaml`:
@@ -61,6 +68,9 @@ Edit `deploy/k8s/mcode-bench-indexed-job.yaml`:
 - set `BENCHMARK` (`humaneval` or `mbpp`)
 - set `MODEL` and `OLLAMA_HOST` (or change `BACKEND`)
 - keep `completions == parallelism == SHARD_COUNT`
+
+If you are using a ReadWriteOnce (RWO) results PVC (common on block storage), set
+`parallelism: 1` so shards run sequentially.
 
 Then apply:
 

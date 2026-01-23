@@ -3,12 +3,12 @@ kind: PersistentVolumeClaim
 metadata:
   name: mcode-results
 spec:
-  # For parallel sharded Jobs, prefer RWX (file/NFS) storage.
   accessModes:
-    - ReadWriteMany
+    # Most clusters default to block storage which is RWO. With RWO, set the benchmark Job
+    # `parallelism: 1` so shards run sequentially while still writing separate DB files.
+    - ReadWriteOnce
   resources:
     requests:
       storage: 10Gi
   # Uncomment and set if your cluster has multiple storage classes.
-  # storageClassName: <rwx-storage-class>
-
+  # storageClassName: <block-storage-class>
