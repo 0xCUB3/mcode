@@ -17,7 +17,7 @@ bench_env="deploy/k8s/bench.env"
 
 override_keys=()
 override_lines=()
-for key in BENCHMARK MODEL BACKEND OLLAMA_HOST MCODE_MAX_NEW_TOKENS SAMPLES DEBUG_ITERS TIMEOUT_S SHARD_COUNT LIMIT; do
+for key in BENCHMARK MODEL BACKEND OLLAMA_HOST OPENAI_BASE_URL OPENAI_API_KEY MCODE_MAX_NEW_TOKENS SAMPLES DEBUG_ITERS TIMEOUT_S SHARD_COUNT LIMIT; do
   override="OVERRIDE_${key}"
   if [[ -n "${!override:-}" ]]; then
     override_keys+=("${key}")

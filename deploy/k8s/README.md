@@ -8,8 +8,11 @@ image, then run sharded benchmark Jobs.
 `mcode` talks to models via Mellea. You need a model backend endpoint reachable from the benchmark
 Jobs.
 
-For the default `ollama` backend, set `OLLAMA_HOST` (for example `http://ollama:11434`) in
-`deploy/k8s/bench.env`.
+This cluster exposes both:
+- `service/vllm` (OpenAI-compatible; best throughput with parallel shards)
+- `service/ollama` (simple, but easier to bottleneck under load)
+
+Pick one in `deploy/k8s/bench.env`.
 
 ### 1) Build + push the `mcode` image
 
