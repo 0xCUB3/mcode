@@ -9,7 +9,6 @@ spec:
   resources:
     requests:
       storage: 10Gi
-  # You must set this to a RWX-capable StorageClass in your cluster (typically NFS/file storage).
-  # Find candidates with: `oc get sc -o wide`
-  # storageClassName: <rwx-storage-class>
-
+  # IBM Cloud VPC file storage (NFS) is RWX-capable.
+  # Other common options might include "nfs-client" or "efs-sc" depending on your platform.
+  storageClassName: ibmc-vpc-file-regional

@@ -71,6 +71,9 @@ kubectl create -f deploy/k8s/mcode-bench-indexed-job.yaml
 kubectl logs -f job/mcode-bench
 ```
 
+Tip: with RWX results storage, set `parallelism == completions` for maximum speed, but keep an eye
+on your model server capacity (higher concurrency can saturate inference and increase latency).
+
 ### 4) Collect results
 
 The Job writes one SQLite DB per shard into `/results/` (e.g. `humaneval-shard-0.db`).

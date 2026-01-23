@@ -6,7 +6,8 @@ spec:
   # Set these to match SHARD_COUNT below.
   completionMode: Indexed
   completions: 5
-  parallelism: 1
+  # Concurrency: set this to how many shards you want to run at once (<= completions).
+  parallelism: 5
   backoffLimit: 1
   template:
     spec:
