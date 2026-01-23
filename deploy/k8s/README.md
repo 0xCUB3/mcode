@@ -5,29 +5,11 @@ image, then run sharded benchmark Jobs.
 
 ### 0) Inference backend (Mellea)
 
-`mcode` talks to models via Mellea. The default backend is `ollama`, so you need an Ollama endpoint
-reachable from the benchmark Jobs.
+`mcode` talks to models via Mellea. You need a model backend endpoint reachable from the benchmark
+Jobs.
 
-Option A: run Ollama in-cluster:
-
-```bash
-kubectl apply -f deploy/k8s/ollama.yaml
-```
-
-Then point `OLLAMA_HOST` to `http://ollama:11434` in `deploy/k8s/mcode-bench-indexed-job.yaml`.
-
-If you need GPU acceleration, use:
-
-```bash
-kubectl apply -f deploy/k8s/ollama-gpu.yaml
-```
-
-Note: this requires GPU worker nodes plus an NVIDIA device plugin/operator so the cluster exposes
-`nvidia.com/gpu` resources to the scheduler.
-
-Option B: use an external endpoint:
-
-- Set `OLLAMA_HOST` to your external URL (must be reachable from the cluster).
+For the default `ollama` backend, set `OLLAMA_HOST` (for example `http://ollama:11434`) in
+`deploy/k8s/mcode-bench-indexed-job.yaml`.
 
 ### 1) Build + push the `mcode` image
 
@@ -46,11 +28,12 @@ docker push icr.io/<icr-namespace>/mcode:latest
 
 ### 2) Create a results PVC (recommended)
 
-For parallel sharded Jobs, you generally want a RWX volume (file/NFS). If you only have RWO storage,
-set `parallelism: 1` in the Job and shards will run sequentially.
+The Job template is configured to write one SQLite DB per shard into `/results/` via a PVC.
+Create the PVC first and wait until it is `Bound` before starting the Job.
 
 ```bash
 kubectl apply -f deploy/k8s/results-pvc.yaml
+kubectl get pvc mcode-results -w
 ```
 
 If your cluster supports RWX storage and you want true parallel sharded jobs, apply the RWX
