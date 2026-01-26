@@ -3,6 +3,10 @@
 This repo is intentionally light on cluster-specific tooling. The goal is: build one `mcode` container
 image, then run sharded benchmark Jobs.
 
+For a full command reference (local + OpenShift/Kubernetes), see:
+
+- `docs/COMMANDS.md`
+
 ### 0) Inference backend (Mellea)
 
 `mcode` talks to models via Mellea. You need a model backend endpoint reachable from the benchmark

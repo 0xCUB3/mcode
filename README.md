@@ -113,6 +113,12 @@ mcode results --benchmark humaneval
 mcode results --benchmark humaneval --model granite3.3:8b --compare-samples
 ```
 
+## Command cookbook
+
+For a complete “do the thing” list of commands (local + OpenShift/Kubernetes), see:
+
+- `docs/COMMANDS.md`
+
 ## FAQ
 
 ### SWE-bench Lite prints Hugging Face `404 Not Found` messages. Is that bad?
