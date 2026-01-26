@@ -72,6 +72,19 @@ tmp_dir="$(mktemp -d -t mcode-swebench.XXXXXX)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
 uv run python - <<PY
+import logging
+logging.getLogger("httpx").setLevel(logging.WARNING)
+try:
+    from huggingface_hub.utils import logging as hub_logging
+    hub_logging.set_verbosity_error()
+except Exception:
+    pass
+try:
+    from datasets.utils.logging import set_verbosity_error as datasets_set_verbosity_error
+    datasets_set_verbosity_error()
+except Exception:
+    pass
+
 from pathlib import Path
 from swebench.harness.utils import load_swebench_dataset
 from swebench.harness.test_spec.test_spec import make_test_spec
@@ -162,6 +175,7 @@ spec:
           cp -R /testbed "\$workdir"
           chmod -R u+rwX,go+rX "\$workdir"
           cd "\$workdir"
+          git config --global --add safe.directory "\$workdir" || true
 
           patch_file=/inputs/patch.diff
           if [ ! -s "\$patch_file" ]; then
@@ -169,21 +183,16 @@ spec:
             exit 2
           fi
 
-          applied=0
-          for cmd in "git apply --verbose" "git apply --verbose --reject"; do
-            if \$cmd "\$patch_file"; then
-              applied=1
-              break
-            fi
-          done
-          if [ "\$applied" -ne 1 ]; then
-            if patch --batch --fuzz=5 -p1 -i "\$patch_file"; then
-              applied=1
-            fi
-          fi
-          if [ "\$applied" -ne 1 ]; then
-            echo "Failed to apply patch" >&2
-            exit 3
+          if git apply --verbose "\$patch_file"; then
+            echo '>>>>> Applied Patch'
+          elif git apply --verbose --reject "\$patch_file"; then
+            echo '>>>>> Applied Patch'
+          elif patch --batch --fuzz=5 -p1 -i "\$patch_file"; then
+            echo '>>>>> Applied Patch'
+          else
+            echo '>>>>> Patch Apply Failed'
+            # Leave the pod successful; this is a benchmark outcome, not an infra failure.
+            exit 0
           fi
 
           eval_copy=/tmp/eval.sh
@@ -276,6 +285,7 @@ spec:
           cp -R /testbed "\$workdir"
           chmod -R u+rwX,go+rX "\$workdir"
           cd "\$workdir"
+          git config --global --add safe.directory "\$workdir" || true
 
           patch_file=/work/patch.diff
           if [ ! -s "\$patch_file" ]; then
@@ -283,21 +293,16 @@ spec:
             exit 2
           fi
 
-          applied=0
-          for cmd in "git apply --verbose" "git apply --verbose --reject"; do
-            if \$cmd "\$patch_file"; then
-              applied=1
-              break
-            fi
-          done
-          if [ "\$applied" -ne 1 ]; then
-            if patch --batch --fuzz=5 -p1 -i "\$patch_file"; then
-              applied=1
-            fi
-          fi
-          if [ "\$applied" -ne 1 ]; then
-            echo "Failed to apply patch" >&2
-            exit 3
+          if git apply --verbose "\$patch_file"; then
+            echo '>>>>> Applied Patch'
+          elif git apply --verbose --reject "\$patch_file"; then
+            echo '>>>>> Applied Patch'
+          elif patch --batch --fuzz=5 -p1 -i "\$patch_file"; then
+            echo '>>>>> Applied Patch'
+          else
+            echo '>>>>> Patch Apply Failed'
+            # Leave the pod successful; this is a benchmark outcome, not an infra failure.
+            exit 0
           fi
 
           eval_copy=/tmp/eval.sh
@@ -331,9 +336,52 @@ done
 echo "Phase:        ${phase:-unknown}"
 
 if [[ "${mode}" == "model" ]]; then
+  echo "--- gen-patch (tail) ---"
   oc logs "${pod_name}" -c gen-patch --tail=200 || true
 fi
+
+echo "--- eval (tail) ---"
 oc logs "${pod_name}" -c eval --tail=200 || true
+
+echo "--- swebench report ---"
+tmp_log="$(mktemp -t mcode-swebench-log.XXXXXX)"
+oc logs "${pod_name}" -c eval >"${tmp_log}" || true
+uv run python - <<PY || true
+import logging
+logging.getLogger("httpx").setLevel(logging.WARNING)
+try:
+    from huggingface_hub.utils import logging as hub_logging
+    hub_logging.set_verbosity_error()
+except Exception:
+    pass
+try:
+    from datasets.utils.logging import set_verbosity_error as datasets_set_verbosity_error
+    datasets_set_verbosity_error()
+except Exception:
+    pass
+
+from swebench.harness.constants import KEY_INSTANCE_ID, KEY_MODEL, KEY_PREDICTION
+from swebench.harness.grading import get_eval_report
+from swebench.harness.test_spec.test_spec import make_test_spec
+from swebench.harness.utils import load_swebench_dataset
+
+instance_id = ${instance_id@Q}
+split = ${split@Q}
+log_fp = ${tmp_log@Q}
+
+inst = load_swebench_dataset("SWE-bench/SWE-bench_Lite", split, [instance_id])[0]
+spec = make_test_spec(inst, namespace="swebench", arch="x86_64")
+
+pred = {KEY_INSTANCE_ID: instance_id, KEY_MODEL: "mcode", KEY_PREDICTION: "non-empty"}
+report = get_eval_report(spec, pred, log_fp, include_tests_status=False)
+row = report.get(instance_id, {})
+print(
+    f"resolved={row.get('resolved')} "
+    f"patch_successfully_applied={row.get('patch_successfully_applied')} "
+    f"patch_exists={row.get('patch_exists')}"
+)
+PY
+rm -f "${tmp_log}" || true
 
 if [[ "${CLEANUP:-0}" == "1" ]]; then
   oc delete pod "${pod_name}" --ignore-not-found=true >/dev/null
@@ -344,4 +392,3 @@ if [[ "${phase}" != "Succeeded" ]]; then
   echo "ERROR: pod did not succeed (phase=${phase:-unknown})." >&2
   exit 1
 fi
-
