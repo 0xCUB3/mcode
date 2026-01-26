@@ -61,10 +61,22 @@ uv pip install -e '.[swebench]'
 mcode bench swebench-lite --model granite3.3:8b --limit 5
 ```
 
-Note: SWE-bench Lite is **not** supported by the OpenShift Job flow in this repo (it requires a
-Docker daemon to build/run repo images during evaluation).
+Note: SWE-bench Lite is Docker/image-based and heavier than HumanEval/MBPP.
 
-Workable approach: run SWE-bench Lite locally (with Docker Desktop) but point Mellea at your
+Workable approaches:
+
+1) **OpenShift (x86_64) single-instance Pods** (no Docker-in-Docker): use prebuilt `swebench/sweb.eval.x86_64.*`
+images and run one Pod per instance:
+
+```bash
+# smoke test (gold patch)
+MODE=gold ./deploy/k8s/run-swebench-lite-one.sh sympy__sympy-20590
+
+# model-run (initContainer generates patch via Mellea)
+MODE=model ./deploy/k8s/run-swebench-lite-one.sh sympy__sympy-20590
+```
+
+2) **Local Docker + cluster inference**: run SWE-bench Lite locally (with Docker Desktop) but point Mellea at your
 cluster inference service via `oc port-forward`:
 
 ```bash

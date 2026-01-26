@@ -93,3 +93,24 @@ If you already ran the Job and just want to copy results without resubmitting:
 ```bash
 ./deploy/k8s/fetch-results.sh mcode-bench
 ```
+
+### SWE-bench Lite on OpenShift (x86_64)
+
+SWE-bench Lite uses **per-instance** container images (so you can't run it as one indexed Job where each shard
+pulls a different image). The simplest working approach is to run **one Pod per instance** using the prebuilt
+`swebench/sweb.eval.x86_64.*` images on Docker Hub.
+
+This repo includes a helper script to run a single instance:
+
+```bash
+# smoke test (uses the dataset "gold" patch)
+MODE=gold ./deploy/k8s/run-swebench-lite-one.sh sympy__sympy-20590
+
+# model-run (generates a patch via Mellea in an initContainer, then evaluates it)
+MODE=model ./deploy/k8s/run-swebench-lite-one.sh sympy__sympy-20590
+```
+
+Notes:
+- The script generates the instance-specific eval script locally via `uv`, so install the extra first:
+  `uv pip install -e '.[swebench]'`.
+- The first pull of a SWE-bench eval image can take a while (they’re multi-GB).
