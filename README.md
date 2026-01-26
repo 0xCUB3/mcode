@@ -2,7 +2,7 @@
 
 mCode is a lightweight benchmarking harness for coding tasks through [Mellea](https://mellea.ai), which will eventually become an agentic coding tool tailored for small LLMs.
 
-- Benchmarks: HumanEval, MBPP (SWE-bench Lite optional -- currently not fully functional on Apple Silicon)
+- Benchmarks: HumanEval, MBPP (SWE-bench Lite optional; local Docker on Apple Silicon can be finicky)
 - LLM interface: Mellea (default backend: `ollama`)
 - Results: SQLite (default: `experiments/results/results.db`)
 
@@ -96,6 +96,13 @@ Run a small slice:
 
 ```bash
 mcode bench swebench-lite --model granite3.3:8b --limit 5
+```
+
+On OpenShift (x86_64), you can avoid local Docker entirely and run one Pod per SWE-bench instance:
+
+```bash
+# gold-patch smoke test (first N instances)
+MODE=gold LIMIT=5 PARALLELISM=2 ./deploy/k8s/run-swebench-lite.sh
 ```
 
 If you see `ImageNotFound` while pulling `swebench/...` images, force local builds:

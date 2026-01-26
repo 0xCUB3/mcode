@@ -114,3 +114,23 @@ Notes:
 - The script generates the instance-specific eval script locally via `uv`, so install the extra first:
   `uv pip install -e '.[swebench]'`.
 - The first pull of a SWE-bench eval image can take a while (they’re multi-GB).
+
+#### Batch runs + SQLite output
+
+To run multiple instances, use `run-swebench-lite.sh` (it launches one Pod per instance, up to `PARALLELISM` at a time).
+
+```bash
+# Gold-patch smoke test on the first N instances
+MODE=gold LIMIT=5 PARALLELISM=2 ./deploy/k8s/run-swebench-lite.sh
+
+# Model-run via Ollama
+MODE=model LIMIT=5 PARALLELISM=2 \
+  BACKEND=ollama MODEL=granite3-dense:8b \
+  ./deploy/k8s/run-swebench-lite.sh
+```
+
+Outputs:
+- A local folder (default: `results-swebench-lite-<timestamp>/`) with `*.eval.log`, `*.gen.log` (model mode), and
+  `*.result.json` per instance.
+- A local SQLite DB (default: `experiments/results/swebench-lite-<timestamp>.db`) that you can query with
+  `mcode results --db <path> --benchmark swebench-lite`.

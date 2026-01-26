@@ -96,10 +96,39 @@ What those mean:
 
 - `MODE=gold`: apply the dataset’s “gold” patch for that instance (ground-truth fix). This is mainly a smoke test that
   the eval image runs correctly on your cluster.
-- `MODE=model`: `mcode` generates a patch via Mellea, then the eval image applies it and runs tests. It’s normal for
-  this to fail early while the model still lacks repo context/retrieval.
-- `sympy__sympy-20590`: a SWE-bench Lite `instance_id` (here: the `sympy/sympy` repo). Swap this string to run a
-  different instance.
+- `MODE=model`: `mcode` generates a patch via Mellea, then the eval image applies it and runs tests. Expect low pass
+  rates without retrieval / repo context.
+- `sympy__sympy-20590`: a SWE-bench Lite `instance_id`. The prefix is the GitHub repo (`sympy/sympy`), and the suffix
+  is an issue/PR-style number used by SWE-bench as an ID. Swap this string to run a different instance.
+
+#### OpenShift (x86_64): batch runs + SQLite output (recommended)
+
+`run-swebench-lite.sh` runs many instances by launching **one Pod per instance** and saves:
+
+- `*.eval.log` (eval output), `*.gen.log` (patch generation output, `MODE=model` only), and `*.result.json` per instance
+- one SQLite DB you can query with `mcode results`
+
+Examples:
+
+```bash
+# Gold-patch smoke test (fast sanity check)
+MODE=gold LIMIT=5 PARALLELISM=2 ./deploy/k8s/run-swebench-lite.sh
+
+# Model-run via Ollama
+MODE=model LIMIT=5 PARALLELISM=2 \
+  BACKEND=ollama MODEL=granite3-dense:8b \
+  ./deploy/k8s/run-swebench-lite.sh
+
+# Pick specific instances
+MODE=gold PARALLELISM=2 ./deploy/k8s/run-swebench-lite.sh \
+  sympy__sympy-20590 astropy__astropy-12907
+```
+
+After it finishes, query the DB it prints:
+
+```bash
+uv run mcode results --db experiments/results/swebench-lite-*.db --benchmark swebench-lite
+```
 
 #### Local Docker + cluster inference (optional)
 
