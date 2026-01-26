@@ -104,13 +104,17 @@ out = Path(${tmp_dir@Q})
 out.mkdir(parents=True, exist_ok=True)
 
 (out / "eval.sh").write_text(spec.eval_script, encoding="utf-8", errors="replace")
-(out / "repo.txt").write_text(str(inst["repo"]), encoding="utf-8")
-(out / "problem.txt").write_text(str(inst.get("problem_statement", "")), encoding="utf-8", errors="replace")
-(out / "hints.txt").write_text(str(inst.get("hints_text", "")), encoding="utf-8", errors="replace")
-(out / "instance_id.txt").write_text(str(inst["instance_id"]), encoding="utf-8")
 
 if mode == "gold":
     (out / "patch.diff").write_text(str(inst["patch"]), encoding="utf-8", errors="replace")
+else:
+    (out / "repo.txt").write_text(str(inst["repo"]), encoding="utf-8")
+    (out / "problem.txt").write_text(
+        str(inst.get("problem_statement", "")),
+        encoding="utf-8",
+        errors="replace",
+    )
+    (out / "hints.txt").write_text(str(inst.get("hints_text", "")), encoding="utf-8", errors="replace")
 PY
 
 oc delete pod "${pod_name}" --ignore-not-found=true >/dev/null
@@ -120,17 +124,14 @@ if [[ "${mode}" == "gold" ]]; then
   oc create configmap "${cm_name}" \
     --from-file=eval.sh="${tmp_dir}/eval.sh" \
     --from-file=patch.diff="${tmp_dir}/patch.diff" \
-    --from-file=repo.txt="${tmp_dir}/repo.txt" \
-    --from-file=problem.txt="${tmp_dir}/problem.txt" \
-    --from-file=hints.txt="${tmp_dir}/hints.txt" \
-    --from-file=instance_id.txt="${tmp_dir}/instance_id.txt" >/dev/null
+    >/dev/null
 else
   oc create configmap "${cm_name}" \
     --from-file=eval.sh="${tmp_dir}/eval.sh" \
     --from-file=repo.txt="${tmp_dir}/repo.txt" \
     --from-file=problem.txt="${tmp_dir}/problem.txt" \
     --from-file=hints.txt="${tmp_dir}/hints.txt" \
-    --from-file=instance_id.txt="${tmp_dir}/instance_id.txt" >/dev/null
+    >/dev/null
 fi
 
 mcode_image_default="image-registry.openshift-image-registry.svc:5000/${namespace}/mcode:latest"
