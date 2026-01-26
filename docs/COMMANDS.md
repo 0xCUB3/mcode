@@ -3,7 +3,7 @@
 This page is only about running `mcode` on OpenShift/Kubernetes. It assumes:
 
 - you’re already logged in with `oc` and on the right namespace (`oc project -q`)
-- the cluster can reach your model backend (typically `service/vllm` or `service/ollama`)
+- the cluster can reach your model backend (`service/vllm` or `service/ollama`)
 - you have `uv` available locally (the SWE-bench helpers use it to pull metadata)
 
 ## 1) Build the `mcode` image (OpenShift internal registry)
@@ -38,7 +38,7 @@ Backend selection:
 PARALLELISM=4 ./deploy/k8s/run-bench.sh
 ```
 
-Quick overrides (no editing `bench.env`):
+Quick overrides:
 
 ```bash
 OVERRIDE_BENCHMARK=mbpp \
@@ -79,8 +79,7 @@ uv run mcode results --db ./results-*/**/*.db --benchmark humaneval
 
 ## 3) SWE-bench Lite: one Pod per instance (x86_64)
 
-SWE-bench Lite is image-based and doesn’t fit the “one sharded Job” pattern. The working approach here is:
-**one Pod per instance**, optionally many at once.
+SWE-bench Lite is image-based and doesn’t fit the one sharded Job pattern. The hack to make it work is one Pod per instance, optionally many at once.
 
 Before running SWE-bench Lite, install the extra locally (needed for metadata / eval scripts):
 
@@ -88,18 +87,16 @@ Before running SWE-bench Lite, install the extra locally (needed for metadata / 
 uv pip install -e '.[swebench]'
 ```
 
-### What “gold” and `sympy__sympy-20590` mean
-
-- `MODE=gold`: apply the dataset’s ground-truth patch and run tests. This is mostly a cluster sanity check.
-- `MODE=model`: `mcode` generates a patch via Mellea, then the eval image applies it and runs tests.
-- `sympy__sympy-20590`: SWE-bench Lite `instance_id` (repo + issue-style ID). Swap this string to run a different one.
-
 ### Single instance (debugging)
 
 ```bash
 MODE=gold ./deploy/k8s/run-swebench-lite-one.sh sympy__sympy-20590
 MODE=model BACKEND=ollama MODEL=granite3-dense:8b ./deploy/k8s/run-swebench-lite-one.sh sympy__sympy-20590
 ```
+
+- `MODE=gold`: apply the dataset’s ground-truth patch and run tests. This is mostly a cluster sanity check.
+- `MODE=model`: `mcode` generates a patch via Mellea, then the eval image applies it and runs tests.
+- `sympy__sympy-20590`: SWE-bench Lite `instance_id` (repo + issue-style ID). Swap this string to run a different one.
 
 ### Batch (recommended) + SQLite output
 
