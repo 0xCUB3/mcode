@@ -1,10 +1,10 @@
 # mCode command cookbook
 
-Copy/paste recipes for running `mcode` locally or on OpenShift.
+Quick copy/paste recipes for running `mcode` locally or on OpenShift.
 
 ## Install / run
 
-Pick one install mode:
+Pick one:
 
 ### Option A: virtualenv (repo checkout)
 
@@ -14,7 +14,7 @@ source .venv/bin/activate
 uv pip install -e '.[dev]'
 ```
 
-### Option B: `uv tool` (installs `mcode` on your PATH)
+### Option B: `uv tool` (puts `mcode` on your PATH)
 
 ```bash
 uv tool install -e .
@@ -22,7 +22,7 @@ uv tool update-shell
 # restart your shell
 ```
 
-Sanity check:
+Quick sanity check:
 
 ```bash
 mcode --help
@@ -35,8 +35,8 @@ uv run mcode --help
 
 ## Run benchmarks locally
 
-Note: the default sandbox is `docker` (network disabled). Start Docker Desktop first.
-If you must run without Docker, add `--sandbox process` (unsafe; runs untrusted code directly).
+By default we run untrusted code in a Docker sandbox (`--sandbox docker`, network disabled). Make sure Docker Desktop
+is running. If you can’t use Docker, `--sandbox process` runs code directly on your machine (unsafe).
 
 ```bash
 # HumanEval
@@ -49,7 +49,7 @@ mcode bench mbpp --model granite3.3:8b --samples 1
 mcode bench humaneval --model granite3.3:8b --limit 10
 ```
 
-### Key knobs
+### Useful flags
 
 - `--samples`: attempts per task (stops early on the first passing attempt)
 - `--debug-iters`: “fix” attempts after a failure (per sample)
@@ -74,7 +74,7 @@ wait
 
 ### SWE-bench Lite (optional / heavy)
 
-SWE-bench Lite is Docker/image-based and much heavier than HumanEval/MBPP.
+SWE-bench Lite is image-based and way heavier than HumanEval/MBPP.
 
 First:
 
@@ -96,7 +96,7 @@ MODE=model ./deploy/k8s/run-swebench-lite-one.sh sympy__sympy-20590
 
 #### Local Docker + cluster inference (optional)
 
-Run SWE-bench Lite locally (Docker Desktop) but point Mellea at a cluster service via `oc port-forward`:
+Run SWE-bench Lite locally (Docker Desktop), but point Mellea at a cluster service via `oc port-forward`:
 
 ```bash
 # vLLM (OpenAI-compatible)
@@ -131,12 +131,12 @@ Compare across sample counts:
 mcode results --db experiments/results/results.db --benchmark humaneval --model granite3.3:8b --compare-samples
 ```
 
-## OpenShift jobs (recommended for large HumanEval/MBPP runs)
+## OpenShift jobs (recommended for big HumanEval/MBPP runs)
 
-Assumes:
+Before you start:
 
 - You’re logged in with `oc` and already on the right project/namespace.
-- Your project has a `BuildConfig` named `mcode` if you want to build via `oc start-build`.
+- There’s a `BuildConfig` named `mcode` if you want to build with `oc start-build`.
 
 ### Build + push the `mcode` image (OpenShift internal registry)
 
@@ -146,9 +146,9 @@ oc start-build mcode --from-dir=. --follow
 
 ### Configure a benchmark run
 
-Edit `deploy/k8s/bench.env` (these values are injected into the Job as env vars).
+Edit `deploy/k8s/bench.env` (it gets injected into the Job as env vars).
 
-Important keys:
+The main knobs:
 
 - `BENCHMARK`: `humaneval` or `mbpp`
 - `SAMPLES`, `DEBUG_ITERS`, `TIMEOUT_S`
@@ -157,10 +157,10 @@ Important keys:
   - vLLM (OpenAI-compatible): `BACKEND=openai` + `OPENAI_BASE_URL=http://vllm:8000/v1`
   - Ollama: `BACKEND=ollama` + `OLLAMA_HOST=http://ollama:11434`
 
-Guardrails (recommended):
+Guardrails (worth keeping on):
 
-- `MCODE_MAX_NEW_TOKENS`: caps generation length (prevents rare runaway outputs)
-- `MCODE_SANDBOX_MAX_OUTPUT_BYTES`: caps stdout/stderr captured from test runs (prevents OOM in `--sandbox process`)
+- `MCODE_MAX_NEW_TOKENS`: caps generation length (avoids rare runaway outputs)
+- `MCODE_SANDBOX_MAX_OUTPUT_BYTES`: caps captured stdout/stderr (helps avoid OOMs in `--sandbox process`)
 
 ### Submit the Job
 
@@ -174,7 +174,7 @@ Copy per-shard SQLite DBs back locally after the Job completes:
 PARALLELISM=4 FETCH_RESULTS=1 ./deploy/k8s/run-bench.sh
 ```
 
-Quick one-off overrides (without editing `bench.env`):
+Quick one-off overrides (no editing `bench.env`):
 
 ```bash
 OVERRIDE_BENCHMARK=mbpp \
@@ -184,7 +184,7 @@ PARALLELISM=4 \
 ./deploy/k8s/run-bench.sh
 ```
 
-Switch backends quickly (same benchmark/shards):
+Switch backends quickly (keep everything else the same):
 
 ```bash
 # vLLM (OpenAI-compatible)
