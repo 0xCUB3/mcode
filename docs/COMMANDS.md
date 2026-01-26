@@ -61,6 +61,25 @@ uv pip install -e '.[swebench]'
 mcode bench swebench-lite --model granite3.3:8b --limit 5
 ```
 
+Note: SWE-bench Lite is **not** supported by the OpenShift Job flow in this repo (it requires a
+Docker daemon to build/run repo images during evaluation).
+
+Workable approach: run SWE-bench Lite locally (with Docker Desktop) but point Mellea at your
+cluster inference service via `oc port-forward`:
+
+```bash
+# vLLM (OpenAI-compatible)
+oc port-forward svc/vllm 8000:8000
+export OPENAI_BASE_URL=http://127.0.0.1:8000/v1
+export OPENAI_API_KEY=dummy
+mcode bench swebench-lite --backend openai --model ibm-granite/granite-3.0-8b-instruct --namespace "" --limit 5
+
+# (or) Ollama
+oc port-forward svc/ollama 11434:11434
+export OLLAMA_HOST=http://127.0.0.1:11434
+mcode bench swebench-lite --backend ollama --model granite3-dense:8b --namespace "" --limit 5
+```
+
 ### Key knobs
 
 - `--samples`: attempts per task (stops early on the first passing attempt)
