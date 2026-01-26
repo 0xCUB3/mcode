@@ -1,7 +1,5 @@
 # mCode command cookbook
 
-Quick copy/paste recipes for running `mcode` locally or on OpenShift.
-
 ## Install / run
 
 Pick one:
