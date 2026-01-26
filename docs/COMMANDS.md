@@ -92,6 +92,15 @@ MODE=gold ./deploy/k8s/run-swebench-lite-one.sh sympy__sympy-20590
 MODE=model ./deploy/k8s/run-swebench-lite-one.sh sympy__sympy-20590
 ```
 
+What those mean:
+
+- `MODE=gold`: apply the dataset’s “gold” patch for that instance (ground-truth fix). This is mainly a smoke test that
+  the eval image runs correctly on your cluster.
+- `MODE=model`: `mcode` generates a patch via Mellea, then the eval image applies it and runs tests. It’s normal for
+  this to fail early while the model still lacks repo context/retrieval.
+- `sympy__sympy-20590`: a SWE-bench Lite `instance_id` (here: the `sympy/sympy` repo). Swap this string to run a
+  different instance.
+
 #### Local Docker + cluster inference (optional)
 
 Run SWE-bench Lite locally (Docker Desktop), but point Mellea at a cluster service via `oc port-forward`:
