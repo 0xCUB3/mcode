@@ -7,9 +7,14 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from mcode.bench.export_csv import export_results_csv
-from mcode.bench.merge_shards import merge_shard_dbs
-from mcode.bench.results import ResultsDB, RunSummary
+from mcode.bench.results import (
+    ResultsDB,
+    RunSummary,
+    merge_shard_dbs,
+)
+from mcode.bench.results import (
+    export_csv as export_csv_results,
+)
 from mcode.bench.runner import BenchConfig, BenchmarkRunner
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -181,9 +186,9 @@ def merge_shards(
     """Merge shard SQLite DBs into a single run DB."""
     report = merge_shard_dbs(out_path=out, shard_paths=shards, force=force)
     console.print(
-        f"out={report.out_path} benchmark={report.benchmark} run_id={report.run_id} "
-        f"tasks={report.tasks_written} shards_used={report.shards_used} "
-        f"shards_ignored={report.shards_ignored}"
+        f"out={report['out_path']} benchmark={report['benchmark']} run_id={report['run_id']} "
+        f"tasks={report['tasks_written']} shards_used={report['shards_used']} "
+        f"shards_ignored={report['shards_ignored']}"
     )
 
 
@@ -204,15 +209,25 @@ def export_csv(
     prefix: Annotated[
         str, typer.Option("--prefix", help="Output filename prefix (writes <prefix>.runs.csv, etc)")
     ] = "mcode",
+    include_logs: Annotated[
+        bool,
+        typer.Option(
+            "--include-logs",
+            help="Include stdout/stderr/error columns (can make CSV rows very large).",
+        ),
+    ] = False,
 ) -> None:
     """Export one or more results DBs to CSV (runs + task_results)."""
     if not inputs:
         raise typer.BadParameter("Provide at least one --input (DB file or directory).")
-    report = export_results_csv(inputs=inputs, out_dir=out_dir, prefix=prefix)
+    report = export_csv_results(
+        inputs=inputs, out_dir=out_dir, prefix=prefix, include_logs=include_logs
+    )
     console.print(
-        f"exported dbs={report.dbs} runs={report.runs} task_results={report.task_results}\n"
-        f"runs_csv={report.runs_csv}\n"
-        f"task_results_csv={report.task_results_csv}"
+        f"exported dbs={report['dbs']} runs={report['runs']} "
+        f"task_results={report['task_results']}\n"
+        f"runs_csv={report['runs_csv']}\n"
+        f"task_results_csv={report['task_results_csv']}"
     )
 
 

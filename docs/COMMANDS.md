@@ -36,6 +36,13 @@ After a suite run, export everything to CSV:
 uv run mcode export-csv -i experiments/results/suite-<timestamp> --out-dir experiments/results/suite-<timestamp> --prefix suite
 ```
 
+By default this **does not** include giant log fields (stdout/stderr/error) to keep CSVs usable.
+If you really want them:
+
+```bash
+uv run mcode export-csv -i experiments/results/suite-<timestamp> --out-dir experiments/results/suite-<timestamp> --prefix suite --include-logs
+```
+
 ## 2) HumanEval / MBPP: sharded Job (recommended)
 
 ### Configure the run (no YAML edits)

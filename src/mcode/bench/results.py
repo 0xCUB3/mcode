@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 import json
+import re
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -281,3 +283,313 @@ class ResultsDB:
                 }
             )
         return out
+
+
+def merge_shard_dbs(*, out_path: Path, shard_paths: list[Path], force: bool = False) -> dict:
+    """
+    Merge shard SQLite DBs (from sharded runs) into a single run DB.
+
+    If an indexed job retries a shard, multiple DBs for the same shard index may exist.
+    We pick the shard DB with the most task_results rows (tie-breaker: newest mtime).
+    """
+
+    if not shard_paths:
+        raise ValueError("No shard DBs provided")
+
+    missing = [p for p in shard_paths if not p.exists()]
+    if missing:
+        raise FileNotFoundError(f"Missing shard DB(s): {', '.join(str(p) for p in missing)}")
+
+    pat = re.compile(r"^(?P<bench>.+)-shard-(?P<idx>\d+)\.db$")
+    groups: dict[str, list[Path]] = {}
+    for p in shard_paths:
+        m = pat.match(p.name)
+        key = f"{m.group('bench')}-shard-{m.group('idx')}" if m else p.name
+        groups.setdefault(key, []).append(p)
+
+    chosen: list[Path] = []
+    ignored: list[Path] = []
+    for _, paths in sorted(groups.items()):
+        if len(paths) == 1:
+            chosen.append(paths[0])
+            continue
+
+        best: Path | None = None
+        best_count = -1
+        best_mtime = -1.0
+        for p in paths:
+            try:
+                conn = sqlite3.connect(p)
+                try:
+                    count = int(conn.execute("SELECT COUNT(*) FROM task_results").fetchone()[0])
+                finally:
+                    conn.close()
+            except Exception:
+                count = 0
+            mtime = p.stat().st_mtime
+            if (count > best_count) or (count == best_count and mtime > best_mtime):
+                best = p
+                best_count = count
+                best_mtime = mtime
+        assert best is not None
+        chosen.append(best)
+        ignored.extend([p for p in paths if p != best])
+
+    if out_path.exists():
+        if not force:
+            raise FileExistsError(f"Output DB already exists: {out_path} (use --force)")
+        out_path.unlink()
+
+    # Read config from the first shard.
+    first = sqlite3.connect(chosen[0])
+    first.row_factory = sqlite3.Row
+    try:
+        row = first.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1").fetchone()
+        if row is None:
+            raise RuntimeError("No runs found in shard DB")
+        benchmark = str(row["benchmark"])
+        config = json.loads(row["config_json"])
+    finally:
+        first.close()
+
+    out_db = ResultsDB(out_path)
+    run_id = out_db.start_run(benchmark, dict(config))
+
+    seen: set[str] = set()
+    written = 0
+    for shard in chosen:
+        conn = sqlite3.connect(shard)
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(
+                """
+                SELECT
+                  task_id, passed, samples_generated, debug_iterations_used, time_ms,
+                  exit_code, timed_out, stdout, stderr, error, code_sha256
+                FROM task_results
+                """
+            ).fetchall()
+            for r in rows:
+                task_id = str(r["task_id"])
+                if task_id in seen:
+                    continue
+                seen.add(task_id)
+                out_db.save_task_result(
+                    run_id,
+                    {
+                        "task_id": task_id,
+                        "passed": bool(r["passed"]),
+                        "samples_generated": int(r["samples_generated"]),
+                        "debug_iterations_used": int(r["debug_iterations_used"]),
+                        "time_ms": int(r["time_ms"]),
+                        "exit_code": r["exit_code"],
+                        "timed_out": bool(r["timed_out"]),
+                        "stdout": r["stdout"],
+                        "stderr": r["stderr"],
+                        "error": r["error"],
+                        "code_sha256": r["code_sha256"],
+                    },
+                )
+                written += 1
+        finally:
+            conn.close()
+
+    return {
+        "out_path": out_path,
+        "benchmark": benchmark,
+        "run_id": run_id,
+        "tasks_written": written,
+        "shards_used": len(chosen),
+        "shards_ignored": len(ignored),
+    }
+
+
+def export_csv(
+    *,
+    inputs: list[Path],
+    out_dir: Path,
+    prefix: str = "mcode",
+    include_logs: bool = False,
+) -> dict:
+    """
+    Export one or more results DBs to CSV.
+
+    - Inputs may be .db files and/or directories (dirs: exports top-level *.db).
+    - Shard DBs are excluded by default (they are intermediate artifacts).
+    - Large text fields (stdout/stderr/error) are excluded by default; set include_logs=True to
+      include.
+    """
+
+    db_paths: list[Path] = []
+    for p in inputs:
+        if p.is_dir():
+            db_paths.extend(sorted(p.glob("*.db")))
+        else:
+            db_paths.append(p)
+    db_paths = [p for p in db_paths if p.exists() and p.suffix == ".db" and "shard-" not in p.name]
+    db_paths = sorted(set(db_paths))
+    if not db_paths:
+        raise FileNotFoundError("No .db files found (pass --input <db|dir> ...).")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    runs_csv = out_dir / f"{prefix}.runs.csv"
+    tasks_csv = out_dir / f"{prefix}.task_results.csv"
+
+    runs_fields = [
+        "source_db",
+        "run_id",
+        "timestamp",
+        "benchmark",
+        "backend_name",
+        "model_id",
+        "samples",
+        "max_debug_iterations",
+        "timeout_s",
+        "retrieval",
+        "total",
+        "passed",
+        "pass_rate",
+        "config_json",
+    ]
+
+    task_fields = [
+        "source_db",
+        "run_id",
+        "timestamp",
+        "benchmark",
+        "backend_name",
+        "model_id",
+        "samples",
+        "max_debug_iterations",
+        "timeout_s",
+        "retrieval",
+        "task_id",
+        "passed",
+        "samples_generated",
+        "debug_iterations_used",
+        "time_ms",
+        "exit_code",
+        "timed_out",
+        "code_sha256",
+        "config_json",
+    ]
+    if include_logs:
+        task_fields.extend(["stdout", "stderr", "error"])
+
+    run_rows = 0
+    task_rows = 0
+
+    with runs_csv.open("w", newline="", encoding="utf-8") as rf, tasks_csv.open(
+        "w", newline="", encoding="utf-8"
+    ) as tf:
+        runs_writer = csv.DictWriter(rf, fieldnames=runs_fields)
+        tasks_writer = csv.DictWriter(tf, fieldnames=task_fields)
+        runs_writer.writeheader()
+        tasks_writer.writeheader()
+
+        for db_path in db_paths:
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                runs = conn.execute(
+                    """
+                    SELECT
+                      r.*,
+                      COUNT(tr.id) AS total,
+                      SUM(tr.passed) AS passed
+                    FROM runs r
+                    LEFT JOIN task_results tr ON tr.run_id = r.id
+                    GROUP BY r.id
+                    ORDER BY r.timestamp ASC
+                    """
+                ).fetchall()
+
+                for r in runs:
+                    total = int(r["total"] or 0)
+                    passed = int(r["passed"] or 0)
+                    pass_rate = (passed / total) if total else 0.0
+
+                    config_json = str(r["config_json"] or "")
+                    runs_writer.writerow(
+                        {
+                            "source_db": str(db_path),
+                            "run_id": int(r["id"]),
+                            "timestamp": str(r["timestamp"]),
+                            "benchmark": str(r["benchmark"]),
+                            "backend_name": str(r["backend_name"]),
+                            "model_id": str(r["model_id"]),
+                            "samples": int(r["samples"]),
+                            "max_debug_iterations": int(r["max_debug_iterations"]),
+                            "timeout_s": int(r["timeout_s"]),
+                            "retrieval": int(r["retrieval"]),
+                            "total": total,
+                            "passed": passed,
+                            "pass_rate": f"{pass_rate:.6f}",
+                            "config_json": config_json,
+                        }
+                    )
+                    run_rows += 1
+
+                    tasks = conn.execute(
+                        """
+                        SELECT
+                          tr.task_id,
+                          tr.passed,
+                          tr.samples_generated,
+                          tr.debug_iterations_used,
+                          tr.time_ms,
+                          tr.exit_code,
+                          tr.timed_out,
+                          tr.stdout,
+                          tr.stderr,
+                          tr.error,
+                          tr.code_sha256
+                        FROM task_results tr
+                        WHERE tr.run_id = ?
+                        ORDER BY tr.task_id ASC
+                        """,
+                        (int(r["id"]),),
+                    ).fetchall()
+
+                    for tr in tasks:
+                        row = {
+                            "source_db": str(db_path),
+                            "run_id": int(r["id"]),
+                            "timestamp": str(r["timestamp"]),
+                            "benchmark": str(r["benchmark"]),
+                            "backend_name": str(r["backend_name"]),
+                            "model_id": str(r["model_id"]),
+                            "samples": int(r["samples"]),
+                            "max_debug_iterations": int(r["max_debug_iterations"]),
+                            "timeout_s": int(r["timeout_s"]),
+                            "retrieval": int(r["retrieval"]),
+                            "task_id": str(tr["task_id"]),
+                            "passed": int(tr["passed"]),
+                            "samples_generated": int(tr["samples_generated"]),
+                            "debug_iterations_used": int(tr["debug_iterations_used"]),
+                            "time_ms": int(tr["time_ms"]),
+                            "exit_code": tr["exit_code"],
+                            "timed_out": int(tr["timed_out"]),
+                            "code_sha256": tr["code_sha256"],
+                            "config_json": config_json,
+                        }
+                        if include_logs:
+                            row.update(
+                                {
+                                    "stdout": tr["stdout"],
+                                    "stderr": tr["stderr"],
+                                    "error": tr["error"],
+                                }
+                            )
+                        tasks_writer.writerow(row)
+                        task_rows += 1
+            finally:
+                conn.close()
+
+    return {
+        "dbs": len(db_paths),
+        "runs": run_rows,
+        "task_results": task_rows,
+        "runs_csv": runs_csv,
+        "task_results_csv": tasks_csv,
+    }
