@@ -14,6 +14,7 @@ namespace="$(oc project -q)"
 tmp_env="$(mktemp -t mcode-bench.XXXXXX.env)"
 trap 'rm -f "${tmp_env}"' EXIT
 bench_env="deploy/k8s/bench.env"
+configmap_name="${CONFIGMAP_NAME:-${job_name}-config}"
 
 override_keys=()
 override_lines=()
@@ -142,7 +143,7 @@ echo "Image:          ${image}"
 echo "Completions:    ${SHARD_COUNT}"
 echo "Parallelism:    ${parallelism}"
 
-oc create configmap mcode-bench-config \
+oc create configmap "${configmap_name}" \
   --from-env-file="${tmp_env}" \
   -o yaml --dry-run=client \
   | oc apply -f -
@@ -157,20 +158,34 @@ if oc get job "${job_name}" >/dev/null 2>&1; then
   fi
   echo "Deleting existing job ${job_name}..."
   oc delete job "${job_name}"
+  oc delete configmap "${configmap_name}" --ignore-not-found=true >/dev/null || true
 fi
 
 sed -E \
-  -e "s#^([[:space:]]*completions:).*#\\1 ${SHARD_COUNT}#" \
-  -e "s#^([[:space:]]*parallelism:).*#\\1 ${parallelism}#" \
-  -e "s#^([[:space:]]*image:).*#\\1 ${image}#" \
+  -e "s|^([[:space:]]*name:)[[:space:]]*mcode-bench$|\\1 ${job_name}|" \
+  -e "s|job-name:[[:space:]]*mcode-bench$|job-name: ${job_name}|g" \
+  -e "s|^([[:space:]]*name:)[[:space:]]*mcode-bench-config$|\\1 ${configmap_name}|g" \
+  -e "s|^([[:space:]]*completions:).*|\\1 ${SHARD_COUNT}|" \
+  -e "s|^([[:space:]]*parallelism:).*|\\1 ${parallelism}|" \
+  -e "s|^([[:space:]]*image:).*|\\1 ${image}|" \
   "${manifest}" \
   | oc create -f -
+
+if [[ "${FETCH_RESULTS:-0}" == "1" ]]; then
+  CLEANUP=0 ./deploy/k8s/fetch-results.sh "${job_name}"
+fi
 
 if [[ "${WAIT:-1}" == "1" ]]; then
   wait_timeout="${WAIT_TIMEOUT:-2h}"
   oc wait --for=condition=complete "job/${job_name}" --timeout="${wait_timeout}"
 fi
 
-if [[ "${FETCH_RESULTS:-0}" == "1" ]]; then
-  ./deploy/k8s/fetch-results.sh "${job_name}"
+cleanup_job="${CLEANUP_JOB:-}"
+if [[ -z "${cleanup_job}" && "${FETCH_RESULTS:-0}" == "1" ]]; then
+  cleanup_job=1
+fi
+cleanup_job="${cleanup_job:-0}"
+if [[ "${cleanup_job}" == "1" ]]; then
+  oc delete job "${job_name}" --ignore-not-found=true >/dev/null || true
+  oc delete configmap "${configmap_name}" --ignore-not-found=true >/dev/null || true
 fi

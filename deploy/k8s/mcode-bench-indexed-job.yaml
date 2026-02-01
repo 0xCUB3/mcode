@@ -46,7 +46,7 @@ spec:
               if [ -n "${LIMIT:-}" ]; then
                 limit_args="--limit ${LIMIT}"
               fi
-              exec mcode bench "${BENCHMARK}" \
+              mcode bench "${BENCHMARK}" \
                 --model "${MODEL}" \
                 --backend "${BACKEND}" \
                 --samples "${SAMPLES}" \
@@ -57,6 +57,8 @@ spec:
                 --shard-index "${JOB_COMPLETION_INDEX}" \
                 --db "/results/${BENCHMARK}-shard-${JOB_COMPLETION_INDEX}.db" \
                 ${limit_args}
+              # Signal to the fetcher that results are ready to copy out of the pod.
+              touch /results/_READY
           volumeMounts:
             - name: results
               mountPath: /results
@@ -76,11 +78,38 @@ spec:
             runAsNonRoot: true
             seccompProfile:
               type: RuntimeDefault
+        - name: hold
+          image: registry.access.redhat.com/ubi9/ubi-minimal
+          command: ["bash", "-lc"]
+          args:
+            - |
+              set -eu
+              # Keep the pod alive so an external fetcher can `oc cp` the results.
+              # The fetcher signals completion by creating /results/_COPIED.
+              while [ ! -f /results/_COPIED ]; do
+                sleep 1
+              done
+          volumeMounts:
+            - name: results
+              mountPath: /results
+            - name: cache
+              mountPath: /cache
+          resources:
+            requests:
+              cpu: "50m"
+              memory: 64Mi
+            limits:
+              cpu: "200m"
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
       volumes:
         - name: results
-          # Default: use ephemeral storage for results so sharded Jobs can run concurrently without
-          # requiring RWX storage provisioning. Use `FETCH_RESULTS=1 ./deploy/k8s/run-bench.sh` to
-          # copy per-shard SQLite DBs back to your machine after the Job completes.
           emptyDir: {}
         - name: cache
           emptyDir: {}

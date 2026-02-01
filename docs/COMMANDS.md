@@ -14,6 +14,22 @@ If your project has a `BuildConfig` named `mcode`:
 oc start-build mcode --from-dir=. --follow
 ```
 
+## 0) One-command suite runner (recommended)
+
+If you just want “run a bunch of benchmarks and save the DBs”, use:
+
+```bash
+# Default is SMOKE=1 (small LIMITs) so you can validate the pipeline first.
+./deploy/k8s/run-suite.sh
+
+# Full suite (takes a while)
+SMOKE=0 ./deploy/k8s/run-suite.sh
+```
+
+Defaults:
+- Uses `BACKEND=ollama` and `MODEL=granite4` (override with `MODEL=...`).
+- Writes everything under `experiments/results/suite-<timestamp>/`.
+
 ## 2) HumanEval / MBPP: sharded Job (recommended)
 
 ### Configure the run (no YAML edits)
