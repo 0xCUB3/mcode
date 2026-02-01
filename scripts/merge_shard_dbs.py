@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sqlite3
+import sys
 from pathlib import Path
 
 from mcode.bench.results import ResultsDB
@@ -49,8 +51,61 @@ def _iter_task_results(conn: sqlite3.Connection) -> list[dict]:
     return out
 
 
+def _pick_best_shards(shard_paths: list[Path]) -> list[Path]:
+    # When Indexed Jobs retry a shard, we can end up with multiple DBs for the same shard index.
+    # Prefer the DB that has the most task_results rows (tie-breaker: newest mtime).
+    pat = re.compile(r"^(?P<bench>.+)-shard-(?P<idx>\d+)\.db$")
+
+    groups: dict[str, list[Path]] = {}
+    for p in shard_paths:
+        m = pat.match(p.name)
+        key = f"{m.group('bench')}-shard-{m.group('idx')}" if m else p.name
+        groups.setdefault(key, []).append(p)
+
+    picked: list[Path] = []
+    dropped: list[tuple[str, list[Path]]] = []
+
+    for key, paths in sorted(groups.items()):
+        if len(paths) == 1:
+            picked.append(paths[0])
+            continue
+
+        best: Path | None = None
+        best_count = -1
+        best_mtime = -1.0
+
+        for p in paths:
+            try:
+                conn = sqlite3.connect(p)
+                try:
+                    count = int(conn.execute("SELECT COUNT(*) FROM task_results").fetchone()[0])
+                finally:
+                    conn.close()
+            except Exception:
+                count = 0
+            mtime = p.stat().st_mtime
+            if (count > best_count) or (count == best_count and mtime > best_mtime):
+                best = p
+                best_count = count
+                best_mtime = mtime
+
+        assert best is not None
+        picked.append(best)
+        dropped.append((key, [p for p in paths if p != best]))
+
+    for key, paths in dropped:
+        print(
+            f"NOTE: duplicate shard DBs for {key}; ignoring: {', '.join(str(p) for p in paths)}",
+            file=sys.stderr,
+        )
+
+    return picked
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Merge mCode shard SQLite DBs into a single run DB.")
+    parser = argparse.ArgumentParser(
+        description="Merge mCode shard SQLite DBs into a single run DB."
+    )
     parser.add_argument("--out", required=True, type=Path, help="Output SQLite DB path")
     parser.add_argument(
         "--force",
@@ -61,7 +116,7 @@ def main() -> int:
     args = parser.parse_args()
 
     out_path: Path = args.out
-    shard_paths: list[Path] = args.shards
+    shard_paths: list[Path] = _pick_best_shards(list(args.shards))
 
     missing = [p for p in shard_paths if not p.exists()]
     if missing:
@@ -107,4 +162,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
