@@ -7,6 +7,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from mcode.bench.export_csv import export_results_csv
+from mcode.bench.merge_shards import merge_shard_dbs
 from mcode.bench.results import ResultsDB, RunSummary
 from mcode.bench.runner import BenchConfig, BenchmarkRunner
 
@@ -165,6 +167,53 @@ def results(
             f"{row['pass_rate']:.1%}",
         )
     console.print(table)
+
+
+@app.command("merge-shards")
+def merge_shards(
+    out: Annotated[Path, typer.Option("--out", help="Output SQLite DB path")],
+    shards: Annotated[list[Path], typer.Argument(..., help="Shard SQLite DB paths")],
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Overwrite output DB if it exists"),
+    ] = False,
+) -> None:
+    """Merge shard SQLite DBs into a single run DB."""
+    report = merge_shard_dbs(out_path=out, shard_paths=shards, force=force)
+    console.print(
+        f"out={report.out_path} benchmark={report.benchmark} run_id={report.run_id} "
+        f"tasks={report.tasks_written} shards_used={report.shards_used} "
+        f"shards_ignored={report.shards_ignored}"
+    )
+
+
+@app.command("export-csv")
+def export_csv(
+    inputs: Annotated[
+        list[Path],
+        typer.Option(
+            "--input",
+            "-i",
+            help=(
+                "DB file or directory (directories: exports all top-level *.db; "
+                "shard DBs excluded)."
+            ),
+        ),
+    ],
+    out_dir: Annotated[Path, typer.Option("--out-dir", help="Output directory")] = Path("."),
+    prefix: Annotated[
+        str, typer.Option("--prefix", help="Output filename prefix (writes <prefix>.runs.csv, etc)")
+    ] = "mcode",
+) -> None:
+    """Export one or more results DBs to CSV (runs + task_results)."""
+    if not inputs:
+        raise typer.BadParameter("Provide at least one --input (DB file or directory).")
+    report = export_results_csv(inputs=inputs, out_dir=out_dir, prefix=prefix)
+    console.print(
+        f"exported dbs={report.dbs} runs={report.runs} task_results={report.task_results}\n"
+        f"runs_csv={report.runs_csv}\n"
+        f"task_results_csv={report.task_results_csv}"
+    )
 
 
 app.add_typer(bench_app, name="bench")

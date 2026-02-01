@@ -1,14 +1,23 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
-import argparse
 import json
 import re
 import sqlite3
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from mcode.bench.results import ResultsDB
+
+
+@dataclass(frozen=True)
+class MergeReport:
+    out_path: Path
+    benchmark: str
+    run_id: int
+    tasks_written: int
+    shards_used: int
+    shards_ignored: int
 
 
 def _read_single_run(conn: sqlite3.Connection) -> dict:
@@ -51,9 +60,12 @@ def _iter_task_results(conn: sqlite3.Connection) -> list[dict]:
     return out
 
 
-def _pick_best_shards(shard_paths: list[Path]) -> list[Path]:
-    # When Indexed Jobs retry a shard, we can end up with multiple DBs for the same shard index.
-    # Prefer the DB that has the most task_results rows (tie-breaker: newest mtime).
+def pick_best_shards(shard_paths: list[Path]) -> tuple[list[Path], list[Path]]:
+    """
+    When an Indexed Job retries a shard, multiple DBs for the same shard index may exist.
+    Prefer the DB with the most task_results rows (tie-breaker: newest mtime).
+    """
+
     pat = re.compile(r"^(?P<bench>.+)-shard-(?P<idx>\d+)\.db$")
 
     groups: dict[str, list[Path]] = {}
@@ -63,9 +75,9 @@ def _pick_best_shards(shard_paths: list[Path]) -> list[Path]:
         groups.setdefault(key, []).append(p)
 
     picked: list[Path] = []
-    dropped: list[tuple[str, list[Path]]] = []
+    ignored: list[Path] = []
 
-    for key, paths in sorted(groups.items()):
+    for _, paths in sorted(groups.items()):
         if len(paths) == 1:
             picked.append(paths[0])
             continue
@@ -91,43 +103,26 @@ def _pick_best_shards(shard_paths: list[Path]) -> list[Path]:
 
         assert best is not None
         picked.append(best)
-        dropped.append((key, [p for p in paths if p != best]))
+        ignored.extend([p for p in paths if p != best])
 
-    for key, paths in dropped:
-        print(
-            f"NOTE: duplicate shard DBs for {key}; ignoring: {', '.join(str(p) for p in paths)}",
-            file=sys.stderr,
-        )
-
-    return picked
+    return picked, ignored
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Merge mCode shard SQLite DBs into a single run DB."
-    )
-    parser.add_argument("--out", required=True, type=Path, help="Output SQLite DB path")
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Overwrite output DB if it already exists",
-    )
-    parser.add_argument("shards", nargs="+", type=Path, help="Shard SQLite DB paths")
-    args = parser.parse_args()
-
-    out_path: Path = args.out
-    shard_paths: list[Path] = _pick_best_shards(list(args.shards))
-
+def merge_shard_dbs(*, out_path: Path, shard_paths: list[Path], force: bool) -> MergeReport:
     missing = [p for p in shard_paths if not p.exists()]
     if missing:
-        raise SystemExit(f"Missing shard DB(s): {', '.join(str(p) for p in missing)}")
+        raise FileNotFoundError(f"Missing shard DB(s): {', '.join(str(p) for p in missing)}")
+
+    chosen, ignored = pick_best_shards(shard_paths)
 
     if out_path.exists():
-        if not args.force:
-            raise SystemExit(f"Output DB already exists: {out_path} (use --force to overwrite)")
+        if not force:
+            raise FileExistsError(
+                f"Output DB already exists: {out_path} (use --force to overwrite)"
+            )
         out_path.unlink()
 
-    first = sqlite3.connect(shard_paths[0])
+    first = sqlite3.connect(chosen[0])
     first.row_factory = sqlite3.Row
     try:
         run = _read_single_run(first)
@@ -142,7 +137,7 @@ def main() -> int:
 
     seen: set[str] = set()
     total_rows = 0
-    for shard_path in shard_paths:
+    for shard_path in chosen:
         conn = sqlite3.connect(shard_path)
         conn.row_factory = sqlite3.Row
         try:
@@ -156,9 +151,14 @@ def main() -> int:
         finally:
             conn.close()
 
-    print(f"out={out_path} benchmark={benchmark} run_id={run_id} tasks={total_rows}")
-    return 0
+    # This is intentionally printed by the CLI command that wraps this helper.
+    _ = sys.stderr
 
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+    return MergeReport(
+        out_path=out_path,
+        benchmark=benchmark,
+        run_id=run_id,
+        tasks_written=total_rows,
+        shards_used=len(chosen),
+        shards_ignored=len(ignored),
+    )

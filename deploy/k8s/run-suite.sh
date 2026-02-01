@@ -218,7 +218,7 @@ run_job() {
     return 1
   fi
 
-  uv run python scripts/merge_shard_dbs.py --out "${merged_db}" --force "${python_shards[@]}"
+  uv run mcode merge-shards --out "${merged_db}" --force "${python_shards[@]}"
   uv run mcode results --db "${merged_db}" --benchmark "${bench}" >"${suite_dir}/${bench}-s${samples}-d${debug}-t${timeout}.results.txt"
   echo "Merged: ${merged_db}"
 }

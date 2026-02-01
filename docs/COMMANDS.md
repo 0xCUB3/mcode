@@ -30,6 +30,12 @@ Defaults:
 - Uses `BACKEND=ollama` and `MODEL=granite4` (override with `MODEL=...`).
 - Writes everything under `experiments/results/suite-<timestamp>/`.
 
+After a suite run, export everything to CSV:
+
+```bash
+uv run mcode export-csv -i experiments/results/suite-<timestamp> --out-dir experiments/results/suite-<timestamp> --prefix suite
+```
+
 ## 2) HumanEval / MBPP: sharded Job (recommended)
 
 ### Configure the run (no YAML edits)
