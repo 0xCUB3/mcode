@@ -6,15 +6,7 @@ This page is only about running `mcode` on OpenShift/Kubernetes. It assumes:
 - the cluster can reach your model backend (`service/vllm` or `service/ollama`)
 - you have `uv` available locally (the SWE-bench helpers use it to pull metadata)
 
-## 1) Build the `mcode` image (OpenShift internal registry)
-
-If your project has a `BuildConfig` named `mcode`:
-
-```bash
-oc start-build mcode --from-dir=. --follow
-```
-
-## 0) One-command suite runner (recommended)
+## One-command suite runner (recommended)
 
 If you just want “run a bunch of benchmarks and save the DBs”, use:
 
@@ -52,6 +44,14 @@ python scripts/make_suite_chart.py experiments/results/suite-<timestamp>
 Notes:
 - The script writes `suite.summary.svg` and `suite.summary.png` into the suite directory.
 - PNG rendering requires one of: `rsvg-convert` (recommended), `inkscape`, or ImageMagick (`magick`/`convert`).
+
+## Build the `mcode` image (OpenShift internal registry)
+
+If your project has a `BuildConfig` named `mcode`:
+
+```bash
+oc start-build mcode --from-dir=. --follow
+```
 
 ## 2) HumanEval / MBPP: sharded Job (recommended)
 
