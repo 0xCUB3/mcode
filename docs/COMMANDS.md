@@ -1,14 +1,26 @@
-# OpenShift / Kubernetes command cookbook
+# OpenShift / Kubernetes: `mcode` cookbook
 
-This page is only about running `mcode` on OpenShift/Kubernetes. It assumes:
+This page is only about running `mcode` on OpenShift/Kubernetes (no local Docker instructions).
 
-- you’re already logged in with `oc` and on the right namespace (`oc project -q`)
-- the cluster can reach your model backend (`service/vllm` or `service/ollama`)
-- you have `uv` available locally (the SWE-bench helpers use it to pull metadata)
+## Prereqs (quick checklist)
 
-## One-command suite runner (recommended)
+- Logged in with `oc` and on the right namespace: `oc project -q`
+- Your model backend is reachable from the namespace:
+  - `service/vllm` (OpenAI-compatible; usually best throughput), or
+  - `service/ollama` (simple, easier to bottleneck under load)
+- You have `uv` locally (SWE-bench helpers use it to pull metadata)
 
-If you just want “run a bunch of benchmarks and save the DBs”, use:
+## Start here: run a suite + export + chart
+
+### 1) (Optional) Build the `mcode` image (OpenShift internal registry)
+
+If your project has a `BuildConfig` named `mcode`:
+
+```bash
+oc start-build mcode --from-dir=. --follow
+```
+
+### 2) Run the suite
 
 ```bash
 # Default is SMOKE=1 (small LIMITs) so you can validate the pipeline first.
@@ -19,41 +31,42 @@ SMOKE=0 ./deploy/k8s/run-suite.sh
 ```
 
 Defaults:
-- Uses `BACKEND=ollama` and `MODEL=granite4` (override with `MODEL=...`).
-- Writes everything under `experiments/results/suite-<timestamp>/`.
+- Backend: `ollama`
+- Model: `granite4` (the script resolves this to whatever tag exists, e.g. `granite4:latest`)
+- Outputs: `experiments/results/suite-<timestamp>/`
 
-After a suite run, export everything to CSV:
-
-```bash
-uv run mcode export-csv -i experiments/results/suite-<timestamp> --out-dir experiments/results/suite-<timestamp> --prefix suite
-```
-
-By default this **does not** include giant log fields (stdout/stderr/error) to keep CSVs usable.
-If you really want them:
+### 3) Export CSV
 
 ```bash
-uv run mcode export-csv -i experiments/results/suite-<timestamp> --out-dir experiments/results/suite-<timestamp> --prefix suite --include-logs
+uv run mcode export-csv \
+  -i experiments/results/suite-<timestamp> \
+  --out-dir experiments/results/suite-<timestamp> \
+  --prefix suite
 ```
 
-Generate a readable chart (SVG + PNG) from `suite.runs.csv`:
+By default, export omits huge log fields (`stdout`/`stderr`/`error`) so the CSVs are usable. If you want them:
+
+```bash
+uv run mcode export-csv \
+  -i experiments/results/suite-<timestamp> \
+  --out-dir experiments/results/suite-<timestamp> \
+  --prefix suite \
+  --include-logs
+```
+
+### 4) Generate a chart (SVG + PNG)
 
 ```bash
 python scripts/make_suite_chart.py experiments/results/suite-<timestamp>
 ```
 
-Notes:
-- The script writes `suite.summary.svg` and `suite.summary.png` into the suite directory.
-- PNG rendering requires one of: `rsvg-convert` (recommended), `inkscape`, or ImageMagick (`magick`/`convert`).
+This writes `suite.summary.svg` and `suite.summary.png` into the suite directory.
 
-## Build the `mcode` image (OpenShift internal registry)
+PNG rendering requires one of: `rsvg-convert` (recommended), `inkscape`, or ImageMagick (`magick`/`convert`).
 
-If your project has a `BuildConfig` named `mcode`:
+## HumanEval / MBPP: sharded Job (`run-bench.sh`)
 
-```bash
-oc start-build mcode --from-dir=. --follow
-```
-
-## 2) HumanEval / MBPP: sharded Job (recommended)
+Use this when you want one benchmark with specific knobs, or you want to integrate into your own pipeline.
 
 ### Configure the run (no YAML edits)
 
@@ -61,10 +74,10 @@ Edit `deploy/k8s/bench.env`.
 
 Main knobs:
 - `BENCHMARK`: `humaneval` or `mbpp`
-- `SAMPLES`: attempts per task (stops early on first pass)
-- `DEBUG_ITERS`: fix attempts after a failure
+- `SAMPLES`: attempts per task (stops early on the first pass)
+- `DEBUG_ITERS`: “fix and retry” iterations after a failure
 - `TIMEOUT_S`: seconds per code execution attempt
-- `SHARD_COUNT`: total shards (must match the Job’s completions)
+- `SHARD_COUNT`: number of shards (the indexed Job completions)
 
 Backend selection:
 - vLLM (OpenAI-compatible): `BACKEND=openai` + `OPENAI_BASE_URL=http://vllm:8000/v1`
@@ -77,7 +90,7 @@ Backend selection:
 PARALLELISM=4 ./deploy/k8s/run-bench.sh
 ```
 
-Quick overrides:
+Quick one-off overrides (without editing `bench.env`):
 
 ```bash
 OVERRIDE_BENCHMARK=mbpp \
@@ -99,6 +112,22 @@ Or fetch later:
 ./deploy/k8s/fetch-results.sh mcode-bench
 ```
 
+### Outputs + querying
+
+After fetching, you’ll have one folder per pod under `./results-.../`, each containing a shard DB.
+
+Query any shard DB:
+
+```bash
+uv run mcode results --db ./results-*/**/*.db --benchmark humaneval
+```
+
+If you want a single merged DB for the run (instead of per-shard DBs), use:
+
+```bash
+uv run mcode merge-shards --out merged.db --force ./results-*/**/*-shard-*.db
+```
+
 ### Watch / debug
 
 ```bash
@@ -108,36 +137,29 @@ oc logs -l job-name=mcode-bench --tail=200
 oc get events --sort-by=.lastTimestamp | tail -n 30
 ```
 
-### Query results (SQLite)
+## SWE-bench Lite: one Pod per instance (x86_64)
 
-Each shard writes its own SQLite DB. After fetching, point `mcode results` at any shard DB:
+SWE-bench Lite is image-based and doesn’t fit the one-indexed-Job pattern. The simplest working approach is one Pod per instance, optionally many at once.
 
-```bash
-uv run mcode results --db ./results-*/**/*.db --benchmark humaneval
-```
-
-## 3) SWE-bench Lite: one Pod per instance (x86_64)
-
-SWE-bench Lite is image-based and doesn’t fit the one sharded Job pattern. The hack to make it work is one Pod per instance, optionally many at once.
-
-Before running SWE-bench Lite, install the extra locally (needed for metadata / eval scripts):
+Before running, install the extra locally (needed for metadata / eval scripts):
 
 ```bash
 uv pip install -e '.[swebench]'
 ```
 
+### Gold vs model
+
+- `MODE=gold`: apply the dataset’s reference patch and run tests (sanity check for the harness + cluster).
+- `MODE=model`: generate a patch with `mcode` (via Mellea) and evaluate it (real benchmark mode).
+
 ### Single instance (debugging)
 
 ```bash
 MODE=gold ./deploy/k8s/run-swebench-lite-one.sh sympy__sympy-20590
-MODE=model BACKEND=ollama MODEL=granite3-dense:8b ./deploy/k8s/run-swebench-lite-one.sh sympy__sympy-20590
+MODE=model BACKEND=ollama MODEL=granite4:latest ./deploy/k8s/run-swebench-lite-one.sh sympy__sympy-20590
 ```
 
-- `MODE=gold`: apply the dataset’s ground-truth patch and run tests. This is mostly a cluster sanity check.
-- `MODE=model`: `mcode` generates a patch via Mellea, then the eval image applies it and runs tests.
-- `sympy__sympy-20590`: SWE-bench Lite `instance_id` (repo + issue-style ID). Swap this string to run a different one.
-
-### Batch (recommended) + SQLite output
+### Batch + SQLite output
 
 `run-swebench-lite.sh` launches multiple instance Pods (up to `PARALLELISM` at a time) and creates one SQLite DB at the end.
 
@@ -147,12 +169,8 @@ MODE=gold LIMIT=5 PARALLELISM=2 ./deploy/k8s/run-swebench-lite.sh
 
 # Model-run via Ollama (first N instances)
 MODE=model LIMIT=5 PARALLELISM=2 \
-  BACKEND=ollama MODEL=granite3-dense:8b \
+  BACKEND=ollama MODEL=granite4:latest \
   ./deploy/k8s/run-swebench-lite.sh
-
-# Pick specific instances
-MODE=gold PARALLELISM=2 ./deploy/k8s/run-swebench-lite.sh \
-  sympy__sympy-20590 astropy__astropy-12907
 ```
 
 Query the DB it prints:
