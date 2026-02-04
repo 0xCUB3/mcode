@@ -43,6 +43,16 @@ If you really want them:
 uv run mcode export-csv -i experiments/results/suite-<timestamp> --out-dir experiments/results/suite-<timestamp> --prefix suite --include-logs
 ```
 
+Generate a readable chart (SVG + PNG) from `suite.runs.csv`:
+
+```bash
+python scripts/make_suite_chart.py experiments/results/suite-<timestamp>
+```
+
+Notes:
+- The script writes `suite.summary.svg` and `suite.summary.png` into the suite directory.
+- PNG rendering requires one of: `rsvg-convert` (recommended), `inkscape`, or ImageMagick (`magick`/`convert`).
+
 ## 2) HumanEval / MBPP: sharded Job (recommended)
 
 ### Configure the run (no YAML edits)

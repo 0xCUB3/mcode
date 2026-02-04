@@ -53,8 +53,8 @@ mcode bench humaneval --model granite3.3:8b --limit 10
 - `--shard-count/--shard-index`: split tasks across multiple runs for parallelism.
 - `--sandbox`:
   - `docker` (default): runs code in a Docker container (network disabled).
-  - `process`: runs code directly on the host via a local subprocess (better for k8s?).
-    This is not safe isolation so only use it in a locked-down container if you care about security.
+  - `process`: runs code directly as a local subprocess (useful inside locked-down containers / k8s Jobs).
+    This is not safe isolation; prefer `docker` when you can.
 - `--retrieval`: reserved flag; currently non-functional.
 
 ### Parallel / Kubernetes runs
@@ -120,9 +120,29 @@ mcode results --benchmark humaneval
 mcode results --benchmark humaneval --model granite3.3:8b --compare-samples
 ```
 
+## Export results (CSV) + charts
+
+Export one or more results DBs to CSV (runs + per-task rows):
+
+```bash
+uv run mcode export-csv -i experiments/results --out-dir experiments/results --prefix mcode
+```
+
+By default, CSV export omits very large fields (`stdout`/`stderr`/`error`). If you want them:
+
+```bash
+uv run mcode export-csv -i experiments/results --out-dir experiments/results --prefix mcode --include-logs
+```
+
+If you ran an OpenShift suite (`experiments/results/suite-...`), you can generate a legible summary chart:
+
+```bash
+python scripts/make_suite_chart.py experiments/results/suite-<timestamp>
+```
+
 ## Command cookbook
 
-For a complete “do the thing” list of commands (local + OpenShift/Kubernetes), see:
+For OpenShift/Kubernetes “do the thing” commands, see:
 
 - `docs/COMMANDS.md`
 
