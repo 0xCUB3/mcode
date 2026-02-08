@@ -118,6 +118,13 @@ If image building OOMs, try `--max-workers 1` and increase Docker Desktop memory
 ```bash
 mcode results --benchmark humaneval
 mcode results --benchmark humaneval --model granite3.3:8b --compare-samples
+mcode results --benchmark humaneval --time
+
+# Aggregate shard DBs copied from k8s
+mcode results --db-dir ./results --benchmark humaneval --compare-samples --time
+
+# Lightweight HTML report (pass rate vs time-to-solve)
+mcode report --db-dir ./results --benchmark humaneval --out ./results/report.html
 ```
 
 ## Export results (CSV) + charts
@@ -145,6 +152,9 @@ python scripts/make_suite_chart.py experiments/results/suite-<timestamp>
 For OpenShift/Kubernetes “do the thing” commands, see:
 
 - `docs/COMMANDS.md`
+
+Canonical benchmark + report docs (including OpenShift sweep workflow): `docs/benchmarking.md`.
+If you want durable notes per run (and a snapshot of the HTML report), add an entry under `research/`.
 
 ## FAQ
 

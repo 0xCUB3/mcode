@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import re
 import sqlite3
 from collections.abc import Sequence
@@ -28,6 +29,18 @@ class ResultsDB:
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
         self._init_schema()
+
+    def close(self) -> None:
+        try:
+            self.conn.close()
+        except Exception:
+            pass
+
+    def __enter__(self) -> ResultsDB:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
 
     def _init_schema(self) -> None:
         self.conn.execute(
@@ -283,6 +296,405 @@ class ResultsDB:
                 }
             )
         return out
+
+    def run_metrics_grouped(
+        self,
+        *,
+        benchmark: str | None,
+        model_id: str | None,
+        backend_name: str | None = None,
+        max_debug_iterations: int | None = None,
+        timeout_s: int | None = None,
+        group_by: Sequence[str],
+        retrieval: bool | None = None,
+        samples: int | None = None,
+        include_percentiles: bool = True,
+    ) -> list[dict]:
+        group_map = {
+            "samples": "r.samples",
+            "backend_name": "r.backend_name",
+            "max_debug_iterations": "r.max_debug_iterations",
+            "timeout_s": "r.timeout_s",
+        }
+        if any(g not in group_map for g in group_by):
+            raise ValueError(f"Unsupported group_by: {group_by}")
+
+        where = ["1=1"]
+        params: list[object] = []
+        if benchmark:
+            where.append("r.benchmark = ?")
+            params.append(benchmark)
+        if model_id:
+            where.append("r.model_id = ?")
+            params.append(model_id)
+        if backend_name:
+            where.append("r.backend_name = ?")
+            params.append(backend_name)
+        if max_debug_iterations is not None:
+            where.append("r.max_debug_iterations = ?")
+            params.append(int(max_debug_iterations))
+        if timeout_s is not None:
+            where.append("r.timeout_s = ?")
+            params.append(int(timeout_s))
+        if retrieval is not None:
+            where.append("r.retrieval = ?")
+            params.append(1 if retrieval else 0)
+        if samples is not None:
+            where.append("r.samples = ?")
+            params.append(int(samples))
+
+        if not group_by:
+            sql = f"""
+              SELECT
+                r.id AS run_id,
+                r.timestamp AS timestamp,
+                r.benchmark AS benchmark,
+                r.backend_name AS backend_name,
+                r.model_id AS model_id,
+                r.retrieval AS retrieval,
+                r.samples AS samples,
+                r.max_debug_iterations AS max_debug_iterations,
+                r.timeout_s AS timeout_s,
+                COUNT(*) AS total,
+                SUM(tr.passed) AS passed,
+                SUM(tr.timed_out) AS timed_out,
+                SUM(tr.time_ms) AS time_ms_total
+              FROM runs r
+              JOIN task_results tr ON tr.run_id = r.id
+              WHERE {' AND '.join(where)}
+              GROUP BY r.id
+              ORDER BY r.timestamp DESC
+            """
+            rows = self.conn.execute(sql, params).fetchall()
+            run_ids = [int(r["run_id"]) for r in rows]
+            time_stats: dict[int, dict[str, float | None]] = {}
+            if include_percentiles and run_ids:
+                q = ",".join("?" for _ in run_ids)
+                time_rows = self.conn.execute(
+                    f"SELECT run_id, time_ms FROM task_results WHERE run_id IN ({q})",
+                    run_ids,
+                ).fetchall()
+                times_by_run: dict[int, list[int]] = {}
+                for tr in time_rows:
+                    rid = int(tr["run_id"])
+                    times_by_run.setdefault(rid, []).append(int(tr["time_ms"]))
+                for rid, times in times_by_run.items():
+                    time_stats[rid] = _time_percentiles_ms(times)
+
+            out: list[dict] = []
+            for row in rows:
+                total = int(row["total"])
+                passed = int(row["passed"] or 0)
+                timed_out = int(row["timed_out"] or 0)
+                time_ms_total = int(row["time_ms_total"] or 0)
+                avg_ms = (time_ms_total / total) if total else 0.0
+                total_s = time_ms_total / 1000.0
+                sec_per_solve = (total_s / passed) if passed else None
+                solves_per_hour = (passed * 3600.0 / total_s) if total_s > 0 else 0.0
+
+                rid = int(row["run_id"])
+                p = time_stats.get(rid) if include_percentiles else None
+                p50_ms = p.get("p50_ms") if p else None
+                p95_ms = p.get("p95_ms") if p else None
+
+                out.append(
+                    {
+                        "run_id": rid,
+                        "timestamp": str(row["timestamp"]),
+                        "benchmark": str(row["benchmark"]),
+                        "backend_name": str(row["backend_name"]),
+                        "model_id": str(row["model_id"]),
+                        "retrieval": bool(int(row["retrieval"])),
+                        "samples": int(row["samples"]),
+                        "max_debug_iterations": int(row["max_debug_iterations"]),
+                        "timeout_s": int(row["timeout_s"]),
+                        "total": total,
+                        "passed": passed,
+                        "timed_out": timed_out,
+                        "pass_rate": passed / total if total else 0.0,
+                        "timeout_rate": timed_out / total if total else 0.0,
+                        "time_ms_total": time_ms_total,
+                        "time_ms_avg": avg_ms,
+                        "time_ms_p50": p50_ms,
+                        "time_ms_p95": p95_ms,
+                        "time_s_total": total_s,
+                        "time_s_avg": avg_ms / 1000.0,
+                        "time_s_p50": (p50_ms / 1000.0) if p50_ms is not None else None,
+                        "time_s_p95": (p95_ms / 1000.0) if p95_ms is not None else None,
+                        "sec_per_solve": sec_per_solve,
+                        "solves_per_hour": solves_per_hour,
+                    }
+                )
+            return out
+
+        group_exprs = [group_map[g] for g in group_by]
+        base_group_cols = [
+            "r.benchmark",
+            "r.backend_name",
+            "r.model_id",
+            "r.max_debug_iterations",
+            "r.timeout_s",
+            "r.retrieval",
+            "r.samples",
+        ]
+        group_cols = list(dict.fromkeys([*base_group_cols, *group_exprs]))
+        sql = f"""
+          SELECT
+            r.benchmark AS benchmark,
+            r.backend_name AS backend_name,
+            r.model_id AS model_id,
+            r.retrieval AS retrieval,
+            r.samples AS samples,
+            r.max_debug_iterations AS max_debug_iterations,
+            r.timeout_s AS timeout_s,
+            COUNT(DISTINCT r.id) AS runs,
+            COUNT(*) AS total,
+            SUM(tr.passed) AS passed,
+            SUM(tr.timed_out) AS timed_out,
+            SUM(tr.time_ms) AS time_ms_total
+          FROM runs r
+          JOIN task_results tr ON tr.run_id = r.id
+          WHERE {' AND '.join(where)}
+          GROUP BY {', '.join(group_cols)}
+          ORDER BY
+            r.benchmark,
+            r.model_id,
+            r.backend_name,
+            r.max_debug_iterations,
+            r.timeout_s,
+            r.samples
+        """
+        rows = self.conn.execute(sql, params).fetchall()
+
+        time_stats: dict[tuple, dict[str, float | None]] = {}
+        if include_percentiles and rows:
+            detail_sql = f"""
+              SELECT
+                r.benchmark AS benchmark,
+                r.backend_name AS backend_name,
+                r.model_id AS model_id,
+                r.max_debug_iterations AS max_debug_iterations,
+                r.timeout_s AS timeout_s,
+                r.retrieval AS retrieval,
+                r.samples AS samples,
+                tr.time_ms AS time_ms
+              FROM runs r
+              JOIN task_results tr ON tr.run_id = r.id
+              WHERE {' AND '.join(where)}
+            """
+            detail_rows = self.conn.execute(detail_sql, params).fetchall()
+            times_by_key: dict[tuple, list[int]] = {}
+            for dr in detail_rows:
+                key = (
+                    str(dr["benchmark"]),
+                    str(dr["backend_name"]),
+                    str(dr["model_id"]),
+                    int(dr["max_debug_iterations"]),
+                    int(dr["timeout_s"]),
+                    bool(int(dr["retrieval"])),
+                    int(dr["samples"]),
+                )
+                times_by_key.setdefault(key, []).append(int(dr["time_ms"]))
+            for key, times in times_by_key.items():
+                time_stats[key] = _time_percentiles_ms(times)
+
+        out: list[dict] = []
+        for row in rows:
+            total = int(row["total"])
+            passed = int(row["passed"] or 0)
+            timed_out = int(row["timed_out"] or 0)
+            time_ms_total = int(row["time_ms_total"] or 0)
+            avg_ms = (time_ms_total / total) if total else 0.0
+            total_s = time_ms_total / 1000.0
+            sec_per_solve = (total_s / passed) if passed else None
+            solves_per_hour = (passed * 3600.0 / total_s) if total_s > 0 else 0.0
+
+            key = (
+                str(row["benchmark"]),
+                str(row["backend_name"]),
+                str(row["model_id"]),
+                int(row["max_debug_iterations"]),
+                int(row["timeout_s"]),
+                bool(int(row["retrieval"])),
+                int(row["samples"]),
+            )
+            p = time_stats.get(key) if include_percentiles else None
+            p50_ms = p.get("p50_ms") if p else None
+            p95_ms = p.get("p95_ms") if p else None
+
+            out.append(
+                {
+                    "benchmark": str(row["benchmark"]),
+                    "backend_name": str(row["backend_name"]),
+                    "model_id": str(row["model_id"]),
+                    "retrieval": bool(int(row["retrieval"])),
+                    "samples": int(row["samples"]),
+                    "max_debug_iterations": int(row["max_debug_iterations"]),
+                    "timeout_s": int(row["timeout_s"]),
+                    "runs": int(row["runs"] or 0),
+                    "total": total,
+                    "passed": passed,
+                    "timed_out": timed_out,
+                    "pass_rate": passed / total if total else 0.0,
+                    "timeout_rate": timed_out / total if total else 0.0,
+                    "time_ms_total": time_ms_total,
+                    "time_ms_avg": avg_ms,
+                    "time_ms_p50": p50_ms,
+                    "time_ms_p95": p95_ms,
+                    "time_s_total": total_s,
+                    "time_s_avg": avg_ms / 1000.0,
+                    "time_s_p50": (p50_ms / 1000.0) if p50_ms is not None else None,
+                    "time_s_p95": (p95_ms / 1000.0) if p95_ms is not None else None,
+                    "sec_per_solve": sec_per_solve,
+                    "solves_per_hour": solves_per_hour,
+                }
+            )
+        return out
+
+    def merge_from(self, inputs: Sequence[Path]) -> None:
+        if not inputs:
+            return
+
+        self.conn.execute("BEGIN")
+        try:
+            for p in inputs:
+                self._ingest_one(p)
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def _ingest_one(self, input_db: Path) -> None:
+        if self.path.resolve() == input_db.resolve():
+            raise ValueError("Refusing to merge a DB into itself.")
+
+        src = sqlite3.connect(input_db)
+        src.row_factory = sqlite3.Row
+        try:
+            runs = src.execute(
+                """
+                SELECT
+                  id,
+                  timestamp,
+                  benchmark,
+                  backend_name,
+                  model_id,
+                  samples,
+                  max_debug_iterations,
+                  timeout_s,
+                  retrieval,
+                  config_json
+                FROM runs
+                ORDER BY id
+                """
+            ).fetchall()
+            for run in runs:
+                cur = self.conn.execute(
+                    """
+                    INSERT INTO runs
+                    (
+                      timestamp,
+                      benchmark,
+                      backend_name,
+                      model_id,
+                      samples,
+                      max_debug_iterations,
+                      timeout_s,
+                      retrieval,
+                      config_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(run["timestamp"]),
+                        str(run["benchmark"]),
+                        str(run["backend_name"]),
+                        str(run["model_id"]),
+                        int(run["samples"]),
+                        int(run["max_debug_iterations"]),
+                        int(run["timeout_s"]),
+                        int(run["retrieval"]),
+                        str(run["config_json"]),
+                    ),
+                )
+                new_run_id = int(cur.lastrowid)
+                old_run_id = int(run["id"])
+
+                task_rows = src.execute(
+                    """
+                    SELECT
+                      task_id,
+                      passed,
+                      samples_generated,
+                      debug_iterations_used,
+                      time_ms,
+                      exit_code,
+                      timed_out,
+                      stdout,
+                      stderr,
+                      error,
+                      code_sha256
+                    FROM task_results
+                    WHERE run_id = ?
+                    ORDER BY id
+                    """,
+                    (old_run_id,),
+                ).fetchall()
+
+                self.conn.executemany(
+                    """
+                    INSERT OR REPLACE INTO task_results
+                    (run_id, task_id, passed, samples_generated, debug_iterations_used, time_ms,
+                     exit_code, timed_out, stdout, stderr, error, code_sha256)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            new_run_id,
+                            str(tr["task_id"]),
+                            int(tr["passed"]),
+                            int(tr["samples_generated"]),
+                            int(tr["debug_iterations_used"]),
+                            int(tr["time_ms"]),
+                            tr["exit_code"],
+                            int(tr["timed_out"]),
+                            tr["stdout"],
+                            tr["stderr"],
+                            tr["error"],
+                            tr["code_sha256"],
+                        )
+                        for tr in task_rows
+                    ],
+                )
+        finally:
+            src.close()
+
+
+def _percentile(sorted_values: list[int], p: float) -> float | None:
+    if not sorted_values:
+        return None
+    if p <= 0:
+        return float(sorted_values[0])
+    if p >= 1:
+        return float(sorted_values[-1])
+    n = len(sorted_values)
+    if n == 1:
+        return float(sorted_values[0])
+    h = (n - 1) * p
+    lower = int(math.floor(h))
+    upper = int(math.ceil(h))
+    if lower == upper:
+        return float(sorted_values[lower])
+    frac = h - lower
+    return float(sorted_values[lower] + frac * (sorted_values[upper] - sorted_values[lower]))
+
+
+def _time_percentiles_ms(time_ms: list[int]) -> dict[str, float | None]:
+    values = sorted(int(v) for v in time_ms if v is not None)
+    return {
+        "p50_ms": _percentile(values, 0.50),
+        "p95_ms": _percentile(values, 0.95),
+    }
 
 
 def merge_shard_dbs(*, out_path: Path, shard_paths: list[Path], force: bool = False) -> dict:
