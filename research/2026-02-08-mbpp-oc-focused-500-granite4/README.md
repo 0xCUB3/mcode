@@ -35,9 +35,10 @@ Report build:
 
 ## Findings
 
-- Objective: timeout behavior is not the bottleneck (`0/2000` timed out across this run).
-- Objective: increasing debug from `d=0` to `d=1` improves pass rate for both sample counts, but adds meaningful latency.
-- Objective: `s=3 d=0` is slightly less accurate than `s=2 d=1` (59.8% vs 60.0%) while being faster (7.35 vs 8.87 sec/solve).
-- Subjective: for balanced operation, `s=2 d=1 t=60` is currently the best midpoint in this focused set.
-- Subjective: for max accuracy, `s=3 d=1 t=60` is best but should be opt-in because latency is highest in this set.
-- Decision: set default to `s=2 d=1 t=60`, with `s=3 d=1 t=60` as an explicit accuracy mode.
+- Timeout behavior is not the bottleneck (`0/2000` timed out across this run).
+- Increasing debug from `d=0` to `d=1` improves pass rate for both sample counts, but adds meaningful latency.
+- `s=3 d=0` is slightly less accurate than `s=2 d=1` (59.8% vs 60.0%) while being faster (7.35 vs 8.87 sec/solve).
+- For balanced operation, `s=2 d=1 t=60` is currently the best midpoint in this focused set.
+- For max accuracy, `s=3 d=1 t=60` is best but should be opt-in because latency is highest in this set.
+
+Recommended default is `s=2 d=1 t=60`, with `s=3 d=1 t=60` as an explicit accuracy mode.

@@ -5,7 +5,7 @@ Short, durable notes for benchmark runs and parameter sweeps. Each entry should 
 - goal (what are we optimizing for)
 - exact command(s) used
 - key results (tables + rendered HTML report link + source link)
-- findings (objective + subjective, in one section)
+- findings (plain bullets; no objective/subjective labels)
 
 ## Entries
 

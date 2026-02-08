@@ -64,9 +64,9 @@ Configs where no other config is both faster and more accurate.
 
 ## Findings
 
-- Objective: `timeout=120` is usually a poor tradeoff here; it adds major latency for small pass-rate gains.
-- Objective: `debug-iters=2` is generally not worth it on MBPP with this model; slowdown is large without consistent pass-rate improvement.
-- Objective: best speed/accuracy band in this grid is `s=2 d=0 t=60`, `s=3 d=0 t=60`, `s=3 d=1 t=60`.
-- Subjective: operator default should be `s=2 d=0 t=60` for a strong speed/accuracy balance.
-- Subjective: `s=3 d=1 t=60` should be an opt-in accuracy mode due to latency cost.
-- Subjective: confidence is medium because this was `limit=100`; ranking should be confirmed on a larger slice.
+- `timeout=120` is usually a poor tradeoff here; it adds major latency for small pass-rate gains.
+- `debug-iters=2` is generally not worth it on MBPP with this model; slowdown is large without consistent pass-rate improvement.
+- Best speed/accuracy band in this grid is `s=2 d=0 t=60`, `s=3 d=0 t=60`, `s=3 d=1 t=60`.
+- A practical default is `s=2 d=0 t=60` for a strong speed/accuracy balance.
+- `s=3 d=1 t=60` is a better fit as an opt-in accuracy mode due to latency cost.
+- Confidence is medium because this was `limit=100`; ranking should be confirmed on a larger slice.
