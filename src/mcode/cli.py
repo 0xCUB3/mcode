@@ -432,91 +432,91 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
         font-size: 13px;
         color: #374151;
       }}
-	      .controls label {{
-	        display: inline-flex;
-	        gap: 6px;
-	        align-items: center;
-	      }}
-	      details.dd {{
-	        position: relative;
-	        display: inline-block;
-	      }}
-	      summary.dd-btn {{
-	        font-size: 13px;
-	        padding: 4px 10px;
-	        border: 1px solid #d1d5db;
-	        border-radius: 8px;
-	        background: #fff;
-	        color: #111827;
-	        cursor: pointer;
-	        list-style: none;
-	      }}
-	      summary.dd-btn::-webkit-details-marker {{
-	        display: none;
-	      }}
-	      summary.dd-btn::marker {{
-	        content: "";
-	      }}
-	      summary.dd-btn:hover {{
-	        background: #f9fafb;
-	      }}
-	      details.dd > .dd-menu {{
-	        display: none;
-	      }}
-	      details.dd[open] > .dd-menu {{
-	        display: block;
-	      }}
-	      .dd-menu {{
-	        position: absolute;
-	        top: calc(100% + 6px);
-	        left: 0;
-	        z-index: 1000;
-	        min-width: 220px;
-	        max-width: 320px;
-	        background: #fff;
-	        border: 1px solid #e5e7eb;
-	        border-radius: 12px;
-	        padding: 8px;
-	        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
-	      }}
-	      .dd-actions {{
-	        display: flex;
-	        gap: 8px;
-	        margin-bottom: 6px;
-	      }}
-	      .dd-action {{
-	        font-size: 12px;
-	        padding: 2px 8px;
-	        border: 1px solid #e5e7eb;
-	        border-radius: 8px;
-	        background: #f9fafb;
-	        color: #111827;
-	        cursor: pointer;
-	      }}
-	      .dd-action:hover {{
-	        background: #f3f4f6;
-	      }}
-	      .dd-items {{
-	        max-height: 240px;
-	        overflow: auto;
-	      }}
-	      label.dd-item {{
-	        display: flex;
-	        gap: 8px;
-	        align-items: center;
-	        width: 100%;
-	        box-sizing: border-box;
-	        padding: 4px 6px;
-	        border-radius: 8px;
-	        cursor: pointer;
-	        user-select: none;
-	      }}
-	      label.dd-item:hover {{
-	        background: #f3f4f6;
-	      }}
-	      .dd-item input[type="checkbox"] {{
-	        margin: 0;
-	      }}
+        .controls label {{
+          display: inline-flex;
+          gap: 6px;
+          align-items: center;
+        }}
+        details.dd {{
+          position: relative;
+          display: inline-block;
+        }}
+        summary.dd-btn {{
+          font-size: 13px;
+          padding: 4px 10px;
+          border: 1px solid #d1d5db;
+          border-radius: 8px;
+          background: #fff;
+          color: #111827;
+          cursor: pointer;
+          list-style: none;
+        }}
+        summary.dd-btn::-webkit-details-marker {{
+          display: none;
+        }}
+        summary.dd-btn::marker {{
+          content: "";
+        }}
+        summary.dd-btn:hover {{
+          background: #f9fafb;
+        }}
+        details.dd > .dd-menu {{
+          display: none;
+        }}
+        details.dd[open] > .dd-menu {{
+          display: block;
+        }}
+        .dd-menu {{
+          position: absolute;
+          top: calc(100% + 6px);
+          left: 0;
+          z-index: 1000;
+          min-width: 220px;
+          max-width: 320px;
+          background: #fff;
+          border: 1px solid #e5e7eb;
+          border-radius: 12px;
+          padding: 8px;
+          box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        }}
+        .dd-actions {{
+          display: flex;
+          gap: 8px;
+          margin-bottom: 6px;
+        }}
+        .dd-action {{
+          font-size: 12px;
+          padding: 2px 8px;
+          border: 1px solid #e5e7eb;
+          border-radius: 8px;
+          background: #f9fafb;
+          color: #111827;
+          cursor: pointer;
+        }}
+        .dd-action:hover {{
+          background: #f3f4f6;
+        }}
+        .dd-items {{
+          max-height: 240px;
+          overflow: auto;
+        }}
+        label.dd-item {{
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          width: 100%;
+          box-sizing: border-box;
+          padding: 4px 6px;
+          border-radius: 8px;
+          cursor: pointer;
+          user-select: none;
+        }}
+        label.dd-item:hover {{
+          background: #f3f4f6;
+        }}
+        .dd-item input[type="checkbox"] {{
+          margin: 0;
+        }}
       select {{
         font-size: 13px;
         padding: 4px 8px;
@@ -571,26 +571,29 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
       }});
 
       if (typeof Plotly === "undefined") {{
-        showError("Plotly failed to load. If you're offline or the CDN is blocked, the graphs won't render.");
+        const plotlyLoadMsg =
+          "Plotly failed to load. If you're offline or the CDN is blocked, " +
+          "the graphs won't render.";
+        showError(plotlyLoadMsg);
       }}
 
       const CONTROLS = document.getElementById("controls");
       const SUMMARY_CONTROLS = document.getElementById("summary_controls");
 
-	      function uniqVals(rs, field) {{
-	        const s = new Set();
-	        for (const r of rs) {{
-	          const v = r[field];
-	          if (v === undefined || v === null) continue;
-	          s.add(JSON.stringify(v));
-	        }}
-	        return Array.from(s).map(x => JSON.parse(x));
-	      }}
+        function uniqVals(rs, field) {{
+          const s = new Set();
+          for (const r of rs) {{
+            const v = r[field];
+            if (v === undefined || v === null) continue;
+            s.add(JSON.stringify(v));
+          }}
+          return Array.from(s).map(x => JSON.parse(x));
+        }}
 
-	      function constantValue(rs, field) {{
-	        const u = uniqVals(rs, field);
-	        return (u.length === 1) ? u[0] : null;
-	      }}
+        function constantValue(rs, field) {{
+          const u = uniqVals(rs, field);
+          return (u.length === 1) ? u[0] : null;
+        }}
 
       function fmtBool(v) {{
         return v ? "on" : "off";
@@ -631,13 +634,17 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
       const fixedSamples = constantValue(points, "samples");
       const fixedDebug = constantValue(points, "max_debug_iterations");
       const fixedTimeout = constantValue(points, "timeout_s");
-      if (fixedSamples !== null && fixedSamples !== undefined) fixedTokens.push(`s=${{fixedSamples}}`);
+      if (fixedSamples !== null && fixedSamples !== undefined) {{
+        fixedTokens.push(`s=${{fixedSamples}}`);
+      }}
       if (fixedDebug !== null && fixedDebug !== undefined) fixedTokens.push(`d=${{fixedDebug}}`);
-      if (fixedTimeout !== null && fixedTimeout !== undefined) fixedTokens.push(`t=${{fixedTimeout}}s`);
+      if (fixedTimeout !== null && fixedTimeout !== undefined) {{
+        fixedTokens.push(`t=${{fixedTimeout}}s`);
+      }}
 
-      let subtitle =
-        `Plotting ${{points.length}} configs` + (dropped ? ` (hidden: ${{dropped}} with 0 solves)` : "") +
-        ". X = seconds/solve (lower is better). Y = pass rate (higher is better).";
+      const droppedText = dropped ? ` (hidden: ${{dropped}} with 0 solves)` : "";
+      let subtitle = `Plotting ${{points.length}} configs` + droppedText;
+      subtitle += ". X = seconds/solve (lower is better). Y = pass rate (higher is better).";
       if (fixedTokens.length) subtitle += ` Fixed: ${{fixedTokens.join(" ")}}.`;
       document.getElementById("subtitle").textContent = subtitle;
 
@@ -686,35 +693,43 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
         return parts.join(" ");
       }}
 
-	      function paretoFrontier(rs) {{
-	        // Maximize pass_rate, minimize sec_per_solve.
-	        const pts = rs
-	          .filter(r => r.sec_per_solve !== null && r.sec_per_solve !== undefined)
-	          .filter(r => r.pass_rate !== null && r.pass_rate !== undefined)
-	          .map(r => ({{ r, x: Number(r.sec_per_solve), y: Number(r.pass_rate) }}))
-	          .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y))
-	          // Sort by x asc, then y desc. Keep strictly improving y as x increases.
-	          .sort((a, b) => (a.x - b.x) || (b.y - a.y));
+        function paretoFrontier(rs) {{
+          // Maximize pass_rate, minimize sec_per_solve.
+          const pts = rs
+            .filter(r => r.sec_per_solve !== null && r.sec_per_solve !== undefined)
+            .filter(r => r.pass_rate !== null && r.pass_rate !== undefined)
+            .map(r => ({{ r, x: Number(r.sec_per_solve), y: Number(r.pass_rate) }}))
+            .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y))
+            // Sort by x asc, then y desc. Keep strictly improving y as x increases.
+            .sort((a, b) => (a.x - b.x) || (b.y - a.y));
 
-	        const out = [];
-	        let bestY = -Infinity;
-	        for (const p of pts) {{
-	          if (p.y > bestY) {{
-	            out.push(p);
-	            bestY = p.y;
-	          }}
-	        }}
-	        return out;
-	      }}
+          const out = [];
+          let bestY = -Infinity;
+          for (const p of pts) {{
+            if (p.y > bestY) {{
+              out.push(p);
+              bestY = p.y;
+            }}
+          }}
+          return out;
+        }}
 
       const PALETTE = ["#2563eb", "#dc2626", "#16a34a", "#7c3aed", "#ea580c", "#0891b2", "#6b7280"];
-      const COLOR_PRIORITY = ["samples", "max_debug_iterations", "timeout_s", "retrieval", "benchmark", "model_id", "backend_name"];
+      const COLOR_PRIORITY = [
+        "samples",
+        "max_debug_iterations",
+        "timeout_s",
+        "retrieval",
+        "benchmark",
+        "model_id",
+        "backend_name",
+      ];
 
-	      function buildSelect(id, labelText, options, initial) {{
-	        const wrap = document.createElement("label");
-	        wrap.htmlFor = id;
-	        wrap.textContent = labelText;
-	        const sel = document.createElement("select");
+        function buildSelect(id, labelText, options, initial) {{
+          const wrap = document.createElement("label");
+          wrap.htmlFor = id;
+          wrap.textContent = labelText;
+          const sel = document.createElement("select");
         sel.id = id;
         for (const [value, text] of options) {{
           const opt = document.createElement("option");
@@ -723,99 +738,103 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
           if (value === initial) opt.selected = true;
           sel.appendChild(opt);
         }}
-	        wrap.appendChild(sel);
-	        return sel;
-	      }}
+          wrap.appendChild(sel);
+          return sel;
+        }}
 
-	      function buildCheckbox(id, labelText, initial) {{
-	        const wrap = document.createElement("label");
-	        const cb = document.createElement("input");
-	        cb.type = "checkbox";
-	        cb.id = id;
-	        cb.checked = !!initial;
-	        wrap.appendChild(cb);
-	        const span = document.createElement("span");
-	        span.textContent = labelText;
-	        wrap.appendChild(span);
-	        return cb;
-	      }}
+        function buildCheckbox(id, labelText, initial) {{
+          const wrap = document.createElement("label");
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.id = id;
+          cb.checked = !!initial;
+          wrap.appendChild(cb);
+          const span = document.createElement("span");
+          span.textContent = labelText;
+          wrap.appendChild(span);
+          return cb;
+        }}
 
-	      function buildMultiSelectDropdown(field, labelText, values) {{
-	        const wrap = document.createElement("details");
-	        wrap.className = "dd";
+        function buildMultiSelectDropdown(field, labelText, values) {{
+          const wrap = document.createElement("details");
+          wrap.className = "dd";
 
-	        const summary = document.createElement("summary");
-	        summary.className = "dd-btn";
+          const summary = document.createElement("summary");
+          summary.className = "dd-btn";
 
-	        const menu = document.createElement("div");
-	        menu.className = "dd-menu";
+          const menu = document.createElement("div");
+          menu.className = "dd-menu";
 
-	        const actions = document.createElement("div");
-	        actions.className = "dd-actions";
-	        const allBtn = document.createElement("button");
-	        allBtn.type = "button";
-	        allBtn.className = "dd-action";
-	        allBtn.textContent = "All";
-	        const noneBtn = document.createElement("button");
-	        noneBtn.type = "button";
-	        noneBtn.className = "dd-action";
-	        noneBtn.textContent = "None";
-	        actions.appendChild(allBtn);
-	        actions.appendChild(noneBtn);
+          const actions = document.createElement("div");
+          actions.className = "dd-actions";
+          const allBtn = document.createElement("button");
+          allBtn.type = "button";
+          allBtn.className = "dd-action";
+          allBtn.textContent = "All";
+          const noneBtn = document.createElement("button");
+          noneBtn.type = "button";
+          noneBtn.className = "dd-action";
+          noneBtn.textContent = "None";
+          actions.appendChild(allBtn);
+          actions.appendChild(noneBtn);
 
-	        const items = document.createElement("div");
-	        items.className = "dd-items";
+          const items = document.createElement("div");
+          items.className = "dd-items";
 
-	        const checkboxes = [];
-	        for (const v of values) {{
-	          const lab = document.createElement("label");
-	          lab.className = "dd-item";
-	          const cb = document.createElement("input");
-	          cb.type = "checkbox";
-	          cb.checked = true;
-	          cb.dataset.field = field;
-	          cb.dataset.key = valueKey(v);
-	          lab.appendChild(cb);
-	          const span = document.createElement("span");
-	          span.textContent = fmtValue(field, v);
-	          lab.appendChild(span);
-	          items.appendChild(lab);
-	          checkboxes.push(cb);
-	        }}
+          const checkboxes = [];
+          for (const v of values) {{
+            const lab = document.createElement("label");
+            lab.className = "dd-item";
+            const cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.checked = true;
+            cb.dataset.field = field;
+            cb.dataset.key = valueKey(v);
+            lab.appendChild(cb);
+            const span = document.createElement("span");
+            span.textContent = fmtValue(field, v);
+            lab.appendChild(span);
+            items.appendChild(lab);
+            checkboxes.push(cb);
+          }}
 
-	        function update() {{
-	          const selected = checkboxes.filter(cb => cb.checked).map(cb => JSON.parse(cb.dataset.key));
-	          let summaryText = "all";
-	          if (selected.length === 0) summaryText = "none";
-	          else if (selected.length !== checkboxes.length) {{
-	            const texts = selected.map(v => fmtValue(field, v));
-	            summaryText = (texts.length <= 3) ? texts.join(", ") : `${{texts.length}}/${{checkboxes.length}}`;
-	          }}
-	          summary.textContent = `${{labelText}}: ${{truncate(summaryText, 28)}} ▾`;
-	        }}
+          function update() {{
+            const selected = checkboxes
+              .filter(cb => cb.checked)
+              .map(cb => JSON.parse(cb.dataset.key));
+            let summaryText = "all";
+            if (selected.length === 0) summaryText = "none";
+            else if (selected.length !== checkboxes.length) {{
+              const texts = selected.map(v => fmtValue(field, v));
+              summaryText = (texts.length <= 3)
+                ? texts.join(", ")
+                : `${{texts.length}}/${{checkboxes.length}}`;
+            }}
+            summary.textContent = `${{labelText}}: ${{truncate(summaryText, 28)}} ▾`;
+          }}
 
-	        update();
+          update();
 
-	        allBtn.addEventListener("click", (e) => {{
-	          e.preventDefault();
-	          for (const cb of checkboxes) cb.checked = true;
-	          update();
-	          render();
-	        }});
-	        noneBtn.addEventListener("click", (e) => {{
-	          e.preventDefault();
-	          for (const cb of checkboxes) cb.checked = false;
-	          update();
-	          render();
-	        }});
+          allBtn.addEventListener("click", (e) => {{
+            e.preventDefault();
+            for (const cb of checkboxes) cb.checked = true;
+            update();
+            render();
+          }});
+          noneBtn.addEventListener("click", (e) => {{
+            e.preventDefault();
+            for (const cb of checkboxes) cb.checked = false;
+            update();
+            render();
+          }});
 
-	        wrap.appendChild(summary);
-	        menu.appendChild(actions);
-	        menu.appendChild(items);
-	        wrap.appendChild(menu);
+          wrap.appendChild(summary);
+          menu.appendChild(actions);
+          menu.appendChild(items);
+          wrap.appendChild(menu);
 
-	        return {{ wrap, checkboxes, update }};
-	      }}
+          return {{ wrap, checkboxes, update }};
+        }}
 
       function varyingFields() {{
         const out = [];
@@ -825,30 +844,30 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
         return out;
       }}
 
-	      const vfields = varyingFields();
+        const vfields = varyingFields();
 
-	      // Filters: allow narrowing by any varying config field, while staying compact.
-	      const filterCheckboxes = new Map();
-	      const filterUpdaters = new Map();
+        // Filters: allow narrowing by any varying config field, while staying compact.
+        const filterCheckboxes = new Map();
+        const filterUpdaters = new Map();
 
-	      function sortedUnique(field) {{
-	        const u = uniqVals(points, field);
-	        return u.slice().sort((a, b) => {{
-	          const na = Number(a), nb = Number(b);
-	          if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
-	          return String(a).localeCompare(String(b));
-	        }});
-	      }}
+        function sortedUnique(field) {{
+          const u = uniqVals(points, field);
+          return u.slice().sort((a, b) => {{
+            const na = Number(a), nb = Number(b);
+            if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
+            return String(a).localeCompare(String(b));
+          }});
+        }}
 
-	      function currentFilters() {{
-	        const out = new Map();
-	        for (const [f, cbs] of filterCheckboxes.entries()) {{
-	          const selected = cbs.filter(cb => cb.checked).map(cb => cb.dataset.key);
-	          if (selected.length === cbs.length) continue; // no-op filter
-	          out.set(f, new Set(selected));
-	        }}
-	        return out;
-	      }}
+        function currentFilters() {{
+          const out = new Map();
+          for (const [f, cbs] of filterCheckboxes.entries()) {{
+            const selected = cbs.filter(cb => cb.checked).map(cb => cb.dataset.key);
+            if (selected.length === cbs.length) continue; // no-op filter
+            out.set(f, new Set(selected));
+          }}
+          return out;
+        }}
 
       function applyFilters(rs, filters) {{
         if (!filters.size) return rs;
@@ -878,66 +897,69 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
 
       // Controls: keep it minimal.
       const colorOptions = [["none", "none"]];
-	      for (const f of cfields) {{
-	        const label = CONFIG_FIELDS.find(x => x[0] === f)?.[1] ?? f;
-	        colorOptions.push([f, label]);
-	      }}
-	      const colorBySel = buildSelect("color_by", "Color:", colorOptions, defaultColorBy);
-	      const paretoCb = buildCheckbox("show_pareto", "Best tradeoffs (Pareto)", true);
-	      const onlyFrontierCb = buildCheckbox("only_frontier", "Only best tradeoffs", false);
-	      paretoCb.parentElement.title = "Best tradeoffs = configs where no other config is both faster and more accurate.";
-	      onlyFrontierCb.parentElement.title = "Hide configs that are dominated on both accuracy and speed.";
+        for (const f of cfields) {{
+          const label = CONFIG_FIELDS.find(x => x[0] === f)?.[1] ?? f;
+          colorOptions.push([f, label]);
+        }}
+        const colorBySel = buildSelect("color_by", "Color:", colorOptions, defaultColorBy);
+        const paretoCb = buildCheckbox("show_pareto", "Best tradeoffs (Pareto)", true);
+        const onlyFrontierCb = buildCheckbox("only_frontier", "Only best tradeoffs", false);
+        paretoCb.parentElement.title =
+          "Best tradeoffs = configs where no other config is both faster and more accurate.";
+        onlyFrontierCb.parentElement.title =
+          "Hide configs that are dominated on both accuracy and speed.";
 
-	      CONTROLS.appendChild(colorBySel.parentElement);
-	      CONTROLS.appendChild(paretoCb.parentElement);
-	      CONTROLS.appendChild(onlyFrontierCb.parentElement);
+        CONTROLS.appendChild(colorBySel.parentElement);
+        CONTROLS.appendChild(paretoCb.parentElement);
+        CONTROLS.appendChild(onlyFrontierCb.parentElement);
 
-	      // Summary controls (simple + focused on accuracy/speed).
-	      const summarySetSel = buildSelect(
-	        "summary_set",
-	        "Summary:",
-	        [["frontier", "best tradeoffs"], ["shown", "all shown"]],
-	        "frontier",
-	      );
-	      const speedMetricSel = buildSelect(
-	        "speed_metric",
-	        "Speed:",
-	        [
-	          ["sec_per_solve", "sec/solve"],
-	          ["time_s_avg", "avg_s"],
-	          ["time_s_p95", "p95_s"],
-	        ],
-	        "sec_per_solve",
-	      );
-	      speedMetricSel.parentElement.title =
-	        "sec/solve = total seconds / passed tasks. avg_s = mean seconds per task. p95_s = 95th percentile seconds per task.";
-	      const summaryViewSel = buildSelect(
-	        "summary_view",
-	        "View:",
-	        [["split", "split"], ["overlay", "overlay"]],
-	        "split",
-	      );
-	      const defaultTop = (points.length <= 20) ? "all" : "20";
-	      const topNSel = buildSelect(
-	        "top_n",
-	        "Top:",
-	        [["5", "5"], ["10", "10"], ["15", "15"], ["20", "20"], ["30", "30"], ["all", "all"]],
-	        defaultTop,
-	      );
+        // Summary controls (simple + focused on accuracy/speed).
+        const summarySetSel = buildSelect(
+          "summary_set",
+          "Summary:",
+          [["frontier", "best tradeoffs"], ["shown", "all shown"]],
+          "frontier",
+        );
+        const speedMetricSel = buildSelect(
+          "speed_metric",
+          "Speed:",
+          [
+            ["sec_per_solve", "sec/solve"],
+            ["time_s_avg", "avg_s"],
+            ["time_s_p95", "p95_s"],
+          ],
+          "sec_per_solve",
+        );
+        speedMetricSel.parentElement.title =
+          "sec/solve = total seconds / passed tasks. avg_s = mean seconds per task. " +
+          "p95_s = 95th percentile seconds per task.";
+        const summaryViewSel = buildSelect(
+          "summary_view",
+          "View:",
+          [["split", "split"], ["overlay", "overlay"]],
+          "split",
+        );
+        const defaultTop = (points.length <= 20) ? "all" : "20";
+        const topNSel = buildSelect(
+          "top_n",
+          "Top:",
+          [["5", "5"], ["10", "10"], ["15", "15"], ["20", "20"], ["30", "30"], ["all", "all"]],
+          defaultTop,
+        );
 
-	      SUMMARY_CONTROLS.appendChild(summarySetSel.parentElement);
-	      SUMMARY_CONTROLS.appendChild(speedMetricSel.parentElement);
-	      SUMMARY_CONTROLS.appendChild(summaryViewSel.parentElement);
-	      SUMMARY_CONTROLS.appendChild(topNSel.parentElement);
+        SUMMARY_CONTROLS.appendChild(summarySetSel.parentElement);
+        SUMMARY_CONTROLS.appendChild(speedMetricSel.parentElement);
+        SUMMARY_CONTROLS.appendChild(summaryViewSel.parentElement);
+        SUMMARY_CONTROLS.appendChild(topNSel.parentElement);
 
-	      for (const f of vfields) {{
-	        const label = CONFIG_FIELDS.find(x => x[0] === f)?.[1] ?? f;
-	        const u = sortedUnique(f);
-	        const dd = buildMultiSelectDropdown(f, label, u);
-	        filterCheckboxes.set(f, dd.checkboxes);
-	        filterUpdaters.set(f, dd.update);
-	        SUMMARY_CONTROLS.appendChild(dd.wrap);
-	      }}
+        for (const f of vfields) {{
+          const label = CONFIG_FIELDS.find(x => x[0] === f)?.[1] ?? f;
+          const u = sortedUnique(f);
+          const dd = buildMultiSelectDropdown(f, label, u);
+          filterCheckboxes.set(f, dd.checkboxes);
+          filterUpdaters.set(f, dd.update);
+          SUMMARY_CONTROLS.appendChild(dd.wrap);
+        }}
 
       function makeTraces(rs, colorBy) {{
         const baseCustom = r => [
@@ -989,10 +1011,11 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
         for (let i = 0; i < sorted.length; i++) {{
           const v = sorted[i];
           const sub = rs.filter(r => r[colorBy] === v);
+          const colorLabel = CONFIG_FIELDS.find(x => x[0] === colorBy)?.[1] ?? colorBy;
           traces.push({{
             type: "scatter",
             mode: "markers",
-            name: `${{CONFIG_FIELDS.find(x => x[0] === colorBy)?.[1] ?? colorBy}}=${{fmtValue(colorBy, v)}}`,
+            name: `${{colorLabel}}=${{fmtValue(colorBy, v)}}`,
             x: sub.map(r => r.sec_per_solve),
             y: sub.map(r => r.pass_rate),
             text: sub.map(r => label(r)),
@@ -1027,11 +1050,11 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
         return parts.join(" ");
       }}
 
-	      function renderSummary(rs, setName, speedField, viewMode) {{
-	        const rows = rs
-	          .filter(r => r.pass_rate !== null && r.pass_rate !== undefined)
-	          .filter(r => r[speedField] !== null && r[speedField] !== undefined)
-	          .slice();
+        function renderSummary(rs, setName, speedField, viewMode) {{
+          const rows = rs
+            .filter(r => r.pass_rate !== null && r.pass_rate !== undefined)
+            .filter(r => r[speedField] !== null && r[speedField] !== undefined)
+            .slice();
 
         const speedTitle =
           (speedMetricSel.options && speedMetricSel.selectedIndex >= 0)
@@ -1064,105 +1087,107 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
         const timedOutTotal = timedOut.reduce((acc, v) => acc + v, 0);
         const tasksTotal = totals.reduce((acc, v) => acc + v, 0);
         const timeoutRateOverall = tasksTotal > 0 ? timedOutTotal / tasksTotal : 0;
+        const timeoutSummary =
+          `${{timedOutTotal}}/${{tasksTotal}} (${{(timeoutRateOverall * 100).toFixed(1)}}%)`;
         const summaryCustom = details.map((d, i) => [d, totals[i], timedOut[i], timeoutRates[i]]);
 
-	        const height = Math.max(260, Math.min(1400, 140 + rows.length * 28));
-	        const summaryDiv = document.getElementById("summary");
-	        if (summaryDiv) summaryDiv.style.height = height + "px";
+          const height = Math.max(260, Math.min(1400, 140 + rows.length * 28));
+          const summaryDiv = document.getElementById("summary");
+          if (summaryDiv) summaryDiv.style.height = height + "px";
 
-	        const overlay = (viewMode === "overlay");
-	        const passTrace = {{
-	          type: "bar",
-	          orientation: "h",
-	          name: "pass_rate",
-	          x: pass,
-	          y: ids,
-	          xaxis: "x",
-	          marker: {{ color: overlay ? "rgba(37,99,235,0.70)" : "rgba(37,99,235,0.75)" }},
-	          width: overlay ? 0.70 : undefined,
-	          customdata: summaryCustom,
-	          hovertemplate:
-	            "%{{customdata[0]}}" +
-	            "<br>pass_rate=%{{x:.1%}}" +
-	            "<br>timed_out=%{{customdata[2]}}/%{{customdata[1]}} (%{{customdata[3]:.1%}})" +
-	            "<extra></extra>",
-	        }};
-	        const speedTrace = {{
-	          type: "bar",
-	          orientation: "h",
-	          name: speedTitle,
-	          x: speed,
-	          y: ids,
-	          xaxis: "x2",
-	          marker: {{ color: overlay ? "rgba(17,24,39,0.28)" : "rgba(17,24,39,0.20)" }},
-	          width: overlay ? 0.34 : undefined,
-	          customdata: summaryCustom,
-	          hovertemplate:
-	            "%{{customdata[0]}}" +
-	            "<br>" + speedTitle + "=%{{x:.2f}}" +
-	            "<br>timed_out=%{{customdata[2]}}/%{{customdata[1]}} (%{{customdata[3]:.1%}})" +
-	            "<extra></extra>",
-	        }};
+          const overlay = (viewMode === "overlay");
+          const passTrace = {{
+            type: "bar",
+            orientation: "h",
+            name: "pass_rate",
+            x: pass,
+            y: ids,
+            xaxis: "x",
+            marker: {{ color: overlay ? "rgba(37,99,235,0.70)" : "rgba(37,99,235,0.75)" }},
+            width: overlay ? 0.70 : undefined,
+            customdata: summaryCustom,
+            hovertemplate:
+              "%{{customdata[0]}}" +
+              "<br>pass_rate=%{{x:.1%}}" +
+              "<br>timed_out=%{{customdata[2]}}/%{{customdata[1]}} (%{{customdata[3]:.1%}})" +
+              "<extra></extra>",
+          }};
+          const speedTrace = {{
+            type: "bar",
+            orientation: "h",
+            name: speedTitle,
+            x: speed,
+            y: ids,
+            xaxis: "x2",
+            marker: {{ color: overlay ? "rgba(17,24,39,0.28)" : "rgba(17,24,39,0.20)" }},
+            width: overlay ? 0.34 : undefined,
+            customdata: summaryCustom,
+            hovertemplate:
+              "%{{customdata[0]}}" +
+              "<br>" + speedTitle + "=%{{x:.2f}}" +
+              "<br>timed_out=%{{customdata[2]}}/%{{customdata[1]}} (%{{customdata[3]:.1%}})" +
+              "<extra></extra>",
+          }};
 
-	        Plotly.react("summary", [
-	          passTrace,
-	          speedTrace,
-	        ], {{
-	          title: `Summary (${{setName}}, n=${{rows.length}}, timed_out=${{timedOutTotal}}/${{tasksTotal}} (${{(timeoutRateOverall * 100).toFixed(1)}}%))`,
-	          showlegend: false,
-	          barmode: "overlay",
-	          template: "plotly_white",
-	          margin: {{ t: overlay ? 80 : 60, r: 55, b: 30, l: 10 }},
-	          yaxis: {{
-	            tickvals: ids,
-	            ticktext: ticks,
-	            tickfont: {{ size: 11 }},
-	            automargin: true,
-	            autorange: "reversed",
-	          }},
-	          xaxis: {{
-	            domain: overlay ? [0.0, 1.0] : [0.0, 0.47],
-	            title: "pass rate",
-	            tickformat: ".0%",
-	            range: [0, 1],
-	            gridcolor: "rgba(0,0,0,0.06)",
-	            zerolinecolor: "rgba(0,0,0,0.12)",
-	          }},
-	          xaxis2: {{
-	            domain: overlay ? [0.0, 1.0] : [0.53, 1.0],
-	            overlaying: overlay ? "x" : undefined,
-	            side: overlay ? "top" : undefined,
-	            title: speedTitle,
-	            rangemode: "tozero",
-	            showgrid: overlay ? false : true,
-	            gridcolor: "rgba(0,0,0,0.06)",
-	            zerolinecolor: "rgba(0,0,0,0.12)",
-	          }},
-	          shapes: overlay
-	            ? []
-	            : [{{
-	              type: "line",
-	              xref: "paper",
-	              yref: "paper",
-	              x0: 0.5,
-	              x1: 0.5,
-	              y0: 0,
-	              y1: 1,
-	              line: {{ color: "rgba(0,0,0,0.12)", width: 1 }},
-	            }}],
-	        }}, {{
-	          displaylogo: false,
-	          responsive: true,
-	        }});
+          Plotly.react("summary", [
+            passTrace,
+            speedTrace,
+          ], {{
+            title: `Summary (${{setName}}, n=${{rows.length}}, timed_out=${{timeoutSummary}})`,
+            showlegend: false,
+            barmode: "overlay",
+            template: "plotly_white",
+            margin: {{ t: overlay ? 80 : 60, r: 55, b: 30, l: 10 }},
+            yaxis: {{
+              tickvals: ids,
+              ticktext: ticks,
+              tickfont: {{ size: 11 }},
+              automargin: true,
+              autorange: "reversed",
+            }},
+            xaxis: {{
+              domain: overlay ? [0.0, 1.0] : [0.0, 0.47],
+              title: "pass rate",
+              tickformat: ".0%",
+              range: [0, 1],
+              gridcolor: "rgba(0,0,0,0.06)",
+              zerolinecolor: "rgba(0,0,0,0.12)",
+            }},
+            xaxis2: {{
+              domain: overlay ? [0.0, 1.0] : [0.53, 1.0],
+              overlaying: overlay ? "x" : undefined,
+              side: overlay ? "top" : undefined,
+              title: speedTitle,
+              rangemode: "tozero",
+              showgrid: overlay ? false : true,
+              gridcolor: "rgba(0,0,0,0.06)",
+              zerolinecolor: "rgba(0,0,0,0.12)",
+            }},
+            shapes: overlay
+              ? []
+              : [{{
+                type: "line",
+                xref: "paper",
+                yref: "paper",
+                x0: 0.5,
+                x1: 0.5,
+                y0: 0,
+                y1: 1,
+                line: {{ color: "rgba(0,0,0,0.12)", width: 1 }},
+              }}],
+          }}, {{
+            displaylogo: false,
+            responsive: true,
+          }});
       }}
 
-	      function render() {{
-	        for (const u of filterUpdaters.values()) u();
-	        const colorBy = colorBySel.value;
-	        const filters = currentFilters();
-	        const base = applyFilters(points, filters);
-	        const frontierPts = paretoFrontier(base);
-	        const frontierRows = frontierPts.map(p => p.r);
+        function render() {{
+          for (const u of filterUpdaters.values()) u();
+          const colorBy = colorBySel.value;
+          const filters = currentFilters();
+          const base = applyFilters(points, filters);
+          const frontierPts = paretoFrontier(base);
+          const frontierRows = frontierPts.map(p => p.r);
 
         let rs = base;
         if (onlyFrontierCb.checked) {{
@@ -1177,79 +1202,82 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
           (base.length === points.length)
             ? `Showing ${{base.length}} configs. `
             : `Showing ${{base.length}} / ${{points.length}} configs (filtered). `;
-        const timeoutText = `Timed out: ${{shownTimedOut}}/${{shownTotal}} (${{(shownTimeoutRate * 100).toFixed(1)}}%). `;
+        const shownTimeoutPct = (shownTimeoutRate * 100).toFixed(1);
+        const timeoutText =
+          `Timed out: ${{shownTimedOut}}/${{shownTotal}} (${{shownTimeoutPct}}%). `;
         const fixedText = fixedTokens.length ? `Fixed: ${{fixedTokens.join(" ")}}.` : "";
+        const axisHelp = "X = seconds/solve (lower is better). Y = pass rate (higher is better). ";
         document.getElementById("subtitle").textContent =
-          shownText + timeoutText + "X = seconds/solve (lower is better). Y = pass rate (higher is better). " + fixedText;
+          shownText + timeoutText + axisHelp + fixedText;
 
-	        const traces = makeTraces(rs, colorBy);
-	        if (paretoCb.checked && frontierPts.length >= 2) {{
-	          traces.push({{
-	            type: "scatter",
-	            mode: "lines",
-	            name: "Best tradeoffs",
-	            x: frontierPts.map(p => p.x),
-	            y: frontierPts.map(p => p.y),
-	            hoverinfo: "skip",
-	            line: {{ color: "rgba(17,24,39,0.55)", width: 2, dash: "dot" }},
-	          }});
-	        }}
+          const traces = makeTraces(rs, colorBy);
+          if (paretoCb.checked && frontierPts.length >= 2) {{
+            traces.push({{
+              type: "scatter",
+              mode: "lines",
+              name: "Best tradeoffs",
+              x: frontierPts.map(p => p.x),
+              y: frontierPts.map(p => p.y),
+              hoverinfo: "skip",
+              line: {{ color: "rgba(17,24,39,0.55)", width: 2, dash: "dot" }},
+            }});
+          }}
 
-	        Plotly.react("scatter", traces, {{
-	          title: "Pass rate vs seconds/solve",
-	          xaxis: {{
-	            title: {{ text: "seconds per solve (lower is better)", standoff: 18 }},
-	            rangemode: "tozero",
-	          }},
-	          yaxis: {{
-	            title: {{ text: "pass rate (higher is better)", standoff: 10 }},
-	            tickformat: ".0%",
-	            rangemode: "tozero",
-	          }},
-	          legend: {{
-	            orientation: "h",
-	            y: -0.50,
-	            yanchor: "top",
-	            x: 0,
-	            xanchor: "left",
-	          }},
-	          margin: {{ t: 60, r: 20, b: 150, l: 65 }},
-	          template: "plotly_white",
-	        }}, {{
+          Plotly.react("scatter", traces, {{
+            title: "Pass rate vs seconds/solve",
+            xaxis: {{
+              title: {{ text: "seconds per solve (lower is better)", standoff: 18 }},
+              rangemode: "tozero",
+            }},
+            yaxis: {{
+              title: {{ text: "pass rate (higher is better)", standoff: 10 }},
+              tickformat: ".0%",
+              rangemode: "tozero",
+            }},
+            legend: {{
+              orientation: "h",
+              y: -0.50,
+              yanchor: "top",
+              x: 0,
+              xanchor: "left",
+            }},
+            margin: {{ t: 60, r: 20, b: 150, l: 65 }},
+            template: "plotly_white",
+          }}, {{
           displaylogo: false,
           responsive: true,
         }});
 
-	        const speedField = speedMetricSel.value;
-	        const summarySet = summarySetSel.value;
-	        const viewMode = summaryViewSel.value;
-	        let summaryRows = (summarySet === "shown") ? rs.slice() : frontierRows.slice();
-	        summaryRows = summaryRows
-	          .filter(r => r[speedField] !== null && r[speedField] !== undefined)
-	          .sort((a, b) => Number(a[speedField]) - Number(b[speedField]));
+          const speedField = speedMetricSel.value;
+          const summarySet = summarySetSel.value;
+          const viewMode = summaryViewSel.value;
+          let summaryRows = (summarySet === "shown") ? rs.slice() : frontierRows.slice();
+          summaryRows = summaryRows
+            .filter(r => r[speedField] !== null && r[speedField] !== undefined)
+            .sort((a, b) => Number(a[speedField]) - Number(b[speedField]));
 
         const topVal = topNSel.value;
         if (topVal !== "all") {{
           const n = parseInt(topVal, 10);
           if (!Number.isNaN(n) && n > 0) summaryRows = summaryRows.slice(0, n);
         }}
-	        const summarySetName =
-	          (summarySetSel.options && summarySetSel.selectedIndex >= 0)
-	            ? summarySetSel.options[summarySetSel.selectedIndex].textContent
-	            : summarySet;
-	        renderSummary(summaryRows, summarySetName, speedField, viewMode);
-	      }}
+          const summarySetName =
+            (summarySetSel.options && summarySetSel.selectedIndex >= 0)
+              ? summarySetSel.options[summarySetSel.selectedIndex].textContent
+              : summarySet;
+          renderSummary(summaryRows, summarySetName, speedField, viewMode);
+        }}
 
       colorBySel.addEventListener("change", render);
       paretoCb.addEventListener("change", render);
       onlyFrontierCb.addEventListener("change", render);
-	      for (const cbs of filterCheckboxes.values()) {{
-	        for (const cb of cbs) cb.addEventListener("change", render);
-	      }}
-	      summarySetSel.addEventListener("change", render);
-	      speedMetricSel.addEventListener("change", render);
-	      summaryViewSel.addEventListener("change", render);
-	      topNSel.addEventListener("change", render);
+        for (const cbs of filterCheckboxes.values()) {{
+          for (const cb of cbs) cb.addEventListener("change", render);
+        }}
+        summarySetSel.addEventListener("change", render);
+        speedMetricSel.addEventListener("change", render);
+        summaryViewSel.addEventListener("change", render);
+        topNSel.addEventListener("change", render);
 
       render();
     </script>
