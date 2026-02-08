@@ -2,7 +2,7 @@
 
 Goal: tune for pass rate vs time-to-solve using `granite4:latest` on the OpenShift cluster (Ollama backend).
 
-HTML snapshot: [`mbpp-sweep.html`](mbpp-sweep.html)
+HTML snapshot: [`mbpp-sweep.html`](https://htmlpreview.github.io/?https://raw.githubusercontent.com/0xCUB3/mcode/main/research/2026-02-08-mbpp-oc-sweep-granite4/mbpp-sweep.html) ([source](mbpp-sweep.html))
 
 Data sources:
 

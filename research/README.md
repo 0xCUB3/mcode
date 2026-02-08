@@ -4,7 +4,7 @@ Short, durable notes for benchmark runs and parameter sweeps. Each entry should 
 
 - goal (what are we optimizing for)
 - exact command(s) used
-- key results (tables + link to HTML report snapshot)
+- key results (tables + rendered HTML report link + source link)
 - findings (objective + subjective, in one section)
 
 ## Entries
@@ -20,3 +20,7 @@ Use this structure for consistency:
 2. Environment + commands
 3. Key results
 4. Findings
+
+Rendered HTML link pattern (GitHub-friendly):
+
+`https://htmlpreview.github.io/?https://raw.githubusercontent.com/<org>/<repo>/main/research/<entry>/mbpp-sweep.html`
