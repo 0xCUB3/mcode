@@ -29,6 +29,14 @@ class SweepConfig:
     parallelism: int
     limit: int | None
     extra_env: dict[str, str]
+    mcode_cpu_request: str
+    mcode_memory_request: str
+    mcode_cpu_limit: str
+    mcode_memory_limit: str
+    hold_cpu_request: str
+    hold_memory_request: str
+    hold_cpu_limit: str
+    hold_memory_limit: str
 
     @staticmethod
     def make_job_name(
@@ -204,11 +212,11 @@ spec:
               mountPath: /cache
           resources:
             requests:
-              cpu: "500m"
-              memory: 2Gi
+              cpu: {_yaml_string(cfg.mcode_cpu_request)}
+              memory: {_yaml_string(cfg.mcode_memory_request)}
             limits:
-              cpu: "2"
-              memory: 8Gi
+              cpu: {_yaml_string(cfg.mcode_cpu_limit)}
+              memory: {_yaml_string(cfg.mcode_memory_limit)}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -230,11 +238,11 @@ spec:
               mountPath: /cache
           resources:
             requests:
-              cpu: "50m"
-              memory: 64Mi
+              cpu: {_yaml_string(cfg.hold_cpu_request)}
+              memory: {_yaml_string(cfg.hold_memory_request)}
             limits:
-              cpu: "200m"
-              memory: 256Mi
+              cpu: {_yaml_string(cfg.hold_cpu_limit)}
+              memory: {_yaml_string(cfg.hold_memory_limit)}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -274,6 +282,47 @@ def _job_failed(namespace: str, job_name: str) -> tuple[bool, str]:
     return False, ""
 
 
+def _patch_job_parallelism(namespace: str, job_name: str, parallelism: int) -> None:
+    payload = json.dumps({"spec": {"parallelism": int(parallelism)}})
+    _oc(
+        ["patch", "job", job_name, "--type=merge", "-p", payload],
+        namespace=namespace,
+    )
+
+
+def _job_events(namespace: str, job_name: str) -> list[dict]:
+    raw = _oc(
+        [
+            "get",
+            "events",
+            "--field-selector",
+            f"involvedObject.kind=Job,involvedObject.name={job_name}",
+            "-o",
+            "json",
+        ],
+        namespace=namespace,
+    )
+    items = list(json.loads(raw).get("items") or [])
+    items.sort(
+        key=lambda e: (
+            str(e.get("eventTime") or ""),
+            str(e.get("lastTimestamp") or ""),
+            str((e.get("metadata") or {}).get("creationTimestamp") or ""),
+        )
+    )
+    return items
+
+
+def _event_text(event: dict) -> str:
+    reason = str(event.get("reason") or "").strip()
+    message = str(event.get("message") or "").strip()
+    if reason and message:
+        return f"{reason}: {message}"
+    if reason:
+        return reason
+    return message or "<no message>"
+
+
 def _container_state(pod: dict, container_name: str) -> dict | None:
     statuses = (pod.get("status") or {}).get("containerStatuses") or []
     for st in statuses:
@@ -297,6 +346,57 @@ def _container_running(pod: dict, container_name: str) -> bool:
     if not state:
         return False
     return "running" in state
+
+
+def _container_waiting_message(pod: dict, container_name: str) -> str:
+    state = _container_state(pod, container_name)
+    if not state:
+        return ""
+    waiting = state.get("waiting")
+    if not isinstance(waiting, dict):
+        return ""
+    reason = str(waiting.get("reason") or "").strip()
+    message = str(waiting.get("message") or "").strip()
+    if reason and message:
+        return f"{reason}: {message}"
+    if reason:
+        return reason
+    return message
+
+
+def _pod_unschedulable_message(pod: dict) -> str:
+    conditions = (pod.get("status") or {}).get("conditions") or []
+    for condition in conditions:
+        if condition.get("type") != "PodScheduled":
+            continue
+        if str(condition.get("status") or "").lower() != "false":
+            continue
+        reason = str(condition.get("reason") or "").strip()
+        message = str(condition.get("message") or "").strip()
+        if reason and message:
+            return f"{reason}: {message}"
+        if reason:
+            return reason
+        return message
+    return ""
+
+
+def _waiting_reason_counts(pods: list[dict], container_name: str) -> list[tuple[str, int]]:
+    counts: dict[str, int] = {}
+    for pod in pods:
+        reason = _container_waiting_message(pod, container_name)
+        if not reason:
+            reason = _pod_unschedulable_message(pod)
+        if not reason:
+            continue
+        counts[reason] = counts.get(reason, 0) + 1
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+
+
+def _short_reason(text: str, limit: int = 96) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
 
 
 def _pod_index(pod: dict) -> int | None:
@@ -338,12 +438,21 @@ def _logs(namespace: str, pod_name: str, container: str) -> str:
     return (proc.stdout or "") + (proc.stderr or "")
 
 
-def _fetch_results(cfg: SweepConfig, *, out_dir: Path, save_all_logs: bool) -> Path:
+def _fetch_results(
+    cfg: SweepConfig,
+    *,
+    out_dir: Path,
+    save_all_logs: bool,
+    stalled_seconds: int,
+    auto_reduce_parallelism: bool,
+) -> Path:
     job_dir = out_dir / cfg.job_name
     job_dir.mkdir(parents=True, exist_ok=True)
 
     todo = set(range(cfg.shard_count))
     last_status = time.time()
+    last_progress = time.time()
+    current_parallelism = int(cfg.parallelism)
     print(f"==> Fetching results for {cfg.job_name} ...", file=sys.stderr)
 
     while todo:
@@ -398,6 +507,7 @@ def _fetch_results(cfg: SweepConfig, *, out_dir: Path, save_all_logs: bool) -> P
                         if hold_running:
                             _exec_hold(cfg.namespace, pod_name, "touch /results/_COPIED")
                         todo.remove(idx)
+                        last_progress = time.time()
                         print(
                             f"  - shard {idx}: ok (already copied {db_name})",
                             file=sys.stderr,
@@ -407,7 +517,8 @@ def _fetch_results(cfg: SweepConfig, *, out_dir: Path, save_all_logs: bool) -> P
                     if isinstance(exit_code, int) and exit_code == 0:
                         if not hold_running:
                             raise RuntimeError(
-                                f"Shard {idx} completed but DB not present locally and pod is not accessible."
+                                f"Shard {idx} completed but DB not present locally "
+                                "and pod is not accessible."
                             )
 
                         last_err: Exception | None = None
@@ -432,6 +543,7 @@ def _fetch_results(cfg: SweepConfig, *, out_dir: Path, save_all_logs: bool) -> P
 
                         _exec_hold(cfg.namespace, pod_name, "touch /results/_COPIED")
                         todo.remove(idx)
+                        last_progress = time.time()
                         print(f"  - shard {idx}: ok (copied {db_name})", file=sys.stderr)
                         continue
 
@@ -467,6 +579,7 @@ def _fetch_results(cfg: SweepConfig, *, out_dir: Path, save_all_logs: bool) -> P
                 if db_dst.exists():
                     _exec_hold(cfg.namespace, pod_name, "touch /results/_COPIED")
                     todo.remove(idx)
+                    last_progress = time.time()
                     print(f"  - shard {idx}: ok (already copied {db_name})", file=sys.stderr)
                     continue
 
@@ -496,6 +609,7 @@ def _fetch_results(cfg: SweepConfig, *, out_dir: Path, save_all_logs: bool) -> P
 
                 _exec_hold(cfg.namespace, pod_name, "touch /results/_COPIED")
                 todo.remove(idx)
+                last_progress = time.time()
                 print(f"  - shard {idx}: ok (copied {db_name})", file=sys.stderr)
                 continue
 
@@ -515,8 +629,91 @@ def _fetch_results(cfg: SweepConfig, *, out_dir: Path, save_all_logs: bool) -> P
             print(f"  - shard {idx}: failed (exit={exit_code}); waiting for retry", file=sys.stderr)
 
         if time.time() - last_status > 30:
-            print(f"  ... remaining shards: {len(todo)}", file=sys.stderr)
+            pod_list = list(idx_to_pod.values())
+            running_mcode = sum(1 for p in pod_list if _container_running(p, "mcode"))
+            waiting_reasons = _waiting_reason_counts(pod_list, "mcode")
+            waiting_mcode = sum(c for _, c in waiting_reasons)
+            reason_text = ""
+            if waiting_reasons:
+                top = "; ".join(
+                    f"{count}x {_short_reason(reason)}"
+                    for reason, count in waiting_reasons[:2]
+                )
+                reason_text = f" waiting={top}"
+            print(
+                f"  ... remaining shards: {len(todo)} "
+                f"(active_pods={len(idx_to_pod)} "
+                f"mcode_running={running_mcode} mcode_waiting={waiting_mcode})"
+                f"{reason_text}",
+                file=sys.stderr,
+            )
             last_status = time.time()
+
+        now = time.time()
+        if stalled_seconds > 0 and (now - last_progress) > stalled_seconds:
+            pod_list = list(idx_to_pod.values())
+            running_mcode = sum(1 for p in pod_list if _container_running(p, "mcode"))
+            if running_mcode > 0:
+                print(
+                    "  ... no completed shards yet; mcode containers are still running "
+                    f"({running_mcode}).",
+                    file=sys.stderr,
+                )
+                last_progress = now
+            else:
+                events = _job_events(cfg.namespace, cfg.job_name)
+                recent_events = events[-3:]
+                waiting_reasons = _waiting_reason_counts(pod_list, "mcode")
+                active_pods = len(pod_list)
+                quota_blocked = any(
+                    "exceeded quota" in _event_text(event).lower() for event in recent_events
+                )
+                unschedulable = any(
+                    "unschedulable" in reason.lower() for reason, _ in waiting_reasons
+                )
+                no_active_pods = active_pods == 0
+
+                auto_reduce_reason = ""
+                if quota_blocked:
+                    auto_reduce_reason = "quota pressure"
+                elif unschedulable:
+                    auto_reduce_reason = "pods unschedulable"
+                elif no_active_pods:
+                    auto_reduce_reason = "no active pods"
+
+                if (
+                    auto_reduce_reason
+                    and auto_reduce_parallelism
+                    and current_parallelism > 1
+                ):
+                    new_parallelism = max(1, current_parallelism // 2)
+                    if new_parallelism < current_parallelism:
+                        _patch_job_parallelism(cfg.namespace, cfg.job_name, new_parallelism)
+                        print(
+                            "  ... auto-reduced parallelism due "
+                            f"{auto_reduce_reason}: "
+                            f"{current_parallelism} -> {new_parallelism}",
+                            file=sys.stderr,
+                        )
+                        current_parallelism = new_parallelism
+                        last_progress = now
+                        continue
+
+                recent_text = "; ".join(_event_text(event) for event in recent_events) or "none"
+                waiting_text = (
+                    "; ".join(
+                        f"{count}x {_short_reason(reason)}"
+                        for reason, count in waiting_reasons[:3]
+                    )
+                    if waiting_reasons
+                    else "none"
+                )
+                raise RuntimeError(
+                    f"Job {cfg.job_name} stalled with {len(todo)} shards remaining "
+                    f"for >{stalled_seconds}s. "
+                    f"Recent events: {recent_text}. "
+                    f"Waiting reasons: {waiting_text}"
+                )
 
         time.sleep(2)
 
@@ -585,6 +782,64 @@ def main() -> int:
     p.add_argument("--shard-count", type=int, default=20)
     p.add_argument("--parallelism", type=int, default=2)
     p.add_argument(
+        "--stalled-seconds",
+        type=int,
+        default=600,
+        help="Detect and diagnose no-progress stalls after this many seconds (0 disables)",
+    )
+    p.add_argument(
+        "--auto-reduce-parallelism",
+        dest="auto_reduce_parallelism",
+        action="store_true",
+        help="Auto-reduce Job parallelism when quota pressure stalls scheduling (default)",
+    )
+    p.add_argument(
+        "--no-auto-reduce-parallelism",
+        dest="auto_reduce_parallelism",
+        action="store_false",
+        help="Disable automatic parallelism reduction on quota stalls",
+    )
+    p.add_argument(
+        "--mcode-cpu-request",
+        default="500m",
+        help="CPU request for mcode container (default: 500m)",
+    )
+    p.add_argument(
+        "--mcode-memory-request",
+        default="2Gi",
+        help="Memory request for mcode container (default: 2Gi)",
+    )
+    p.add_argument(
+        "--mcode-cpu-limit",
+        default="2",
+        help="CPU limit for mcode container (default: 2)",
+    )
+    p.add_argument(
+        "--mcode-memory-limit",
+        default="8Gi",
+        help="Memory limit for mcode container (default: 8Gi)",
+    )
+    p.add_argument(
+        "--hold-cpu-request",
+        default="50m",
+        help="CPU request for hold container (default: 50m)",
+    )
+    p.add_argument(
+        "--hold-memory-request",
+        default="64Mi",
+        help="Memory request for hold container (default: 64Mi)",
+    )
+    p.add_argument(
+        "--hold-cpu-limit",
+        default="200m",
+        help="CPU limit for hold container (default: 200m)",
+    )
+    p.add_argument(
+        "--hold-memory-limit",
+        default="256Mi",
+        help="Memory limit for hold container (default: 256Mi)",
+    )
+    p.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -633,6 +888,10 @@ def main() -> int:
         args.build = True
     if args.build is None:
         args.build = True
+    if not hasattr(args, "auto_reduce_parallelism"):
+        args.auto_reduce_parallelism = True
+    if args.auto_reduce_parallelism is None:
+        args.auto_reduce_parallelism = True
 
     namespace = args.namespace.strip() or _current_namespace()
     from_dir = Path.cwd()
@@ -683,6 +942,14 @@ def main() -> int:
             parallelism=int(args.parallelism),
             limit=args.limit,
             extra_env=extra_env,
+            mcode_cpu_request=str(args.mcode_cpu_request),
+            mcode_memory_request=str(args.mcode_memory_request),
+            mcode_cpu_limit=str(args.mcode_cpu_limit),
+            mcode_memory_limit=str(args.mcode_memory_limit),
+            hold_cpu_request=str(args.hold_cpu_request),
+            hold_memory_request=str(args.hold_memory_request),
+            hold_cpu_limit=str(args.hold_cpu_limit),
+            hold_memory_limit=str(args.hold_memory_limit),
         )
 
         print(
@@ -692,7 +959,13 @@ def main() -> int:
         )
         _apply(namespace, _render_configmap(cfg))
         _apply(namespace, _render_job(cfg))
-        _fetch_results(cfg, out_dir=out_dir, save_all_logs=bool(args.save_all_logs))
+        _fetch_results(
+            cfg,
+            out_dir=out_dir,
+            save_all_logs=bool(args.save_all_logs),
+            stalled_seconds=int(args.stalled_seconds),
+            auto_reduce_parallelism=bool(args.auto_reduce_parallelism),
+        )
 
         if not args.keep_cluster_resources:
             _oc(["delete", "job", cfg.job_name], namespace=namespace)
