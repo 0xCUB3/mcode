@@ -21,6 +21,6 @@ Use this structure for consistency:
 3. Key results
 4. Findings
 
-Rendered HTML link pattern (GitHub-friendly):
+Rendered HTML link pattern (interactive + Plotly-friendly):
 
-`https://htmlpreview.github.io/?https://raw.githubusercontent.com/<org>/<repo>/main/research/<entry>/mbpp-sweep.html`
+`https://raw.githack.com/<org>/<repo>/main/research/<entry>/mbpp-sweep.html`

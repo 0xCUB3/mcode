@@ -2,7 +2,7 @@
 
 Goal: validate the best speed/accuracy band from the earlier 18-config sweep on a larger slice.
 
-HTML snapshot: [`mbpp-sweep.html`](https://htmlpreview.github.io/?https://raw.githubusercontent.com/0xCUB3/mcode/main/research/2026-02-08-mbpp-oc-focused-500-granite4/mbpp-sweep.html) ([source](mbpp-sweep.html))
+HTML snapshot: [`mbpp-sweep.html`](https://raw.githack.com/0xCUB3/mcode/main/research/2026-02-08-mbpp-oc-focused-500-granite4/mbpp-sweep.html) ([source](mbpp-sweep.html))
 
 Data source:
 
