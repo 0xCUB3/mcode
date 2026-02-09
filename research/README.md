@@ -1,6 +1,6 @@
 # Research log
 
-Short, durable notes for benchmark runs and parameter sweeps. Each entry should include:
+Short notes for benchmark runs and parameter sweeps. Each entry should include:
 
 - goal (what are we optimizing for)
 - exact command(s) used
@@ -15,8 +15,6 @@ Short, durable notes for benchmark runs and parameter sweeps. Each entry should 
 
 ## Entry template
 
-Use this structure for consistency:
-
 1. Goal / scope
 2. Environment + commands
 3. Key results
@@ -24,4 +22,4 @@ Use this structure for consistency:
 
 Rendered HTML link pattern (interactive + Plotly-friendly):
 
-`https://raw.githack.com/<org>/<repo>/main/research/<entry>/mbpp-sweep.html`
+`https://raw.githack.com/<org>/<repo>/main/research/<entry>/<benchmark>-sweep.html`
