@@ -156,6 +156,8 @@ For OpenShift/Kubernetes “do the thing” commands, see:
 Canonical benchmark + report docs (including OpenShift sweep workflow): `docs/benchmarking.md`.
 If you want durable notes per run (and a snapshot of the HTML report), add an entry under `research/`.
 
+For long OpenShift runs, use `--run-id` and `--resume` with `deploy/k8s/oc_bench_sweep.py` so you can reconnect after network drops.
+
 ## FAQ
 
 ### SWE-bench Lite prints Hugging Face `404 Not Found` messages. Is that bad?

@@ -83,12 +83,73 @@ def _run(
     return proc
 
 
-def _oc(args: list[str], *, namespace: str | None = None, input_text: str | None = None) -> str:
+def _oc(
+    args: list[str],
+    *,
+    namespace: str | None = None,
+    input_text: str | None = None,
+    timeout_s: int | None = 120,
+    retries: int = 12,
+    retry_delay_s: float = 5.0,
+) -> str:
     cmd = ["oc", *args]
     if namespace and "-n" not in args and "--namespace" not in args:
         cmd = ["oc", "-n", namespace, *args]
-    proc = _run(cmd, input_text=input_text, capture=True, check=True)
-    return (proc.stdout or "").strip()
+    last_err: RuntimeError | None = None
+    for attempt in range(1, max(1, retries) + 1):
+        try:
+            proc = _run(cmd, input_text=input_text, capture=True, check=True, timeout_s=timeout_s)
+            return (proc.stdout or "").strip()
+        except RuntimeError as err:
+            last_err = err
+            if not _is_transient_oc_error(str(err)) or attempt >= retries:
+                raise
+            print(
+                f"  ... transient oc error ({attempt}/{retries}), retrying in {retry_delay_s:.0f}s",
+                file=sys.stderr,
+            )
+            time.sleep(retry_delay_s)
+    assert last_err is not None
+    raise last_err
+
+
+def _is_transient_oc_error(text: str) -> bool:
+    haystack = text.lower()
+    needles = (
+        "unable to connect to the server",
+        "no such host",
+        "dial tcp",
+        "i/o timeout",
+        "context deadline exceeded",
+        "connection refused",
+        "tls handshake timeout",
+        "server closed idle connection",
+    )
+    return any(needle in haystack for needle in needles)
+
+
+def _normalize_run_id(value: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() else "-" for ch in value.strip().lower())
+    cleaned = "-".join(part for part in cleaned.split("-") if part)
+    if not cleaned:
+        raise ValueError("Invalid run id; expected letters/numbers or separators.")
+    return cleaned
+
+
+def _latest_run_id(out_root: Path) -> str | None:
+    if not out_root.exists():
+        return None
+    dirs = [path for path in out_root.iterdir() if path.is_dir()]
+    if not dirs:
+        return None
+    dirs.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    return dirs[0].name
+
+
+def _job_token(run_id: str) -> str:
+    # Keep job names compact and k8s-safe.
+    token = _normalize_run_id(run_id)
+    return token[-18:]
 
 
 def _current_namespace() -> str:
@@ -282,6 +343,24 @@ def _job_failed(namespace: str, job_name: str) -> tuple[bool, str]:
     return False, ""
 
 
+def _job_exists(namespace: str, job_name: str) -> bool:
+    try:
+        _oc(["get", "job", job_name, "-o", "name"], namespace=namespace, retries=3, timeout_s=30)
+        return True
+    except RuntimeError as err:
+        msg = str(err).lower()
+        if "notfound" in msg or "not found" in msg:
+            return False
+        raise
+
+
+def _has_all_shards(job_dir: Path, benchmark: str, shard_count: int) -> bool:
+    if not job_dir.exists():
+        return False
+    shard_files = list(job_dir.glob(f"{benchmark}-shard-*.db"))
+    return len(shard_files) >= shard_count
+
+
 def _patch_job_parallelism(namespace: str, job_name: str, parallelism: int) -> None:
     payload = json.dumps({"spec": {"parallelism": int(parallelism)}})
     _oc(
@@ -410,12 +489,36 @@ def _pod_index(pod: dict) -> int | None:
         return None
 
 
-def _exec_hold(namespace: str, pod_name: str, cmd: str) -> subprocess.CompletedProcess[str]:
-    return _run(
-        ["oc", "-n", namespace, "exec", "-c", "hold", pod_name, "--", "bash", "-lc", cmd],
-        capture=True,
-        check=False,
-    )
+def _exec_hold(
+    namespace: str,
+    pod_name: str,
+    cmd: str,
+    *,
+    timeout_s: int = 30,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        return _run(
+            ["oc", "-n", namespace, "exec", "-c", "hold", pod_name, "--", "bash", "-lc", cmd],
+            capture=True,
+            check=False,
+            timeout_s=timeout_s,
+        )
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(
+            args=["oc", "exec", pod_name],
+            returncode=124,
+            stdout="",
+            stderr="exec timeout",
+        )
+
+
+def _mark_copied(namespace: str, pod_name: str) -> bool:
+    for _ in range(5):
+        proc = _exec_hold(namespace, pod_name, "touch /results/_COPIED", timeout_s=20)
+        if proc.returncode == 0:
+            return True
+        time.sleep(1)
+    return False
 
 
 def _copy_from_pod(namespace: str, pod_name: str, src: str, dst: Path) -> None:
@@ -428,6 +531,18 @@ def _copy_from_pod(namespace: str, pod_name: str, src: str, dst: Path) -> None:
     )
 
 
+def _copy_with_retries(namespace: str, pod_name: str, src: str, dst: Path) -> Exception | None:
+    last_err: Exception | None = None
+    for _ in range(5):
+        try:
+            _copy_from_pod(namespace, pod_name, src, dst)
+            return None
+        except Exception as e:  # pragma: no cover
+            last_err = e
+            time.sleep(2)
+    return last_err
+
+
 def _logs(namespace: str, pod_name: str, container: str) -> str:
     proc = _run(
         ["oc", "-n", namespace, "logs", pod_name, "-c", container],
@@ -436,6 +551,14 @@ def _logs(namespace: str, pod_name: str, container: str) -> str:
         timeout_s=60,
     )
     return (proc.stdout or "") + (proc.stderr or "")
+
+
+def _save_mcode_log(job_dir: Path, namespace: str, pod_name: str, idx: int) -> None:
+    (job_dir / f"shard-{idx}.mcode.log").write_text(
+        _logs(namespace, pod_name, "mcode"),
+        encoding="utf-8",
+        errors="replace",
+    )
 
 
 def _fetch_results(
@@ -450,6 +573,7 @@ def _fetch_results(
     job_dir.mkdir(parents=True, exist_ok=True)
 
     todo = set(range(cfg.shard_count))
+    completed_unavailable_warned: set[int] = set()
     last_status = time.time()
     last_progress = time.time()
     current_parallelism = int(cfg.parallelism)
@@ -482,6 +606,7 @@ def _fetch_results(
                 cfg.namespace,
                 pod_name,
                 ready_cmd,
+                timeout_s=20,
             )
             if check.returncode != 0:
                 # If the mcode container died before it could write _READY (e.g., OOMKilled),
@@ -495,17 +620,13 @@ def _fetch_results(
                     hold_running = _container_running(pod, "hold")
 
                     if save_all_logs or (isinstance(exit_code, int) and exit_code != 0):
-                        (job_dir / f"shard-{idx}.mcode.log").write_text(
-                            _logs(cfg.namespace, pod_name, "mcode"),
-                            encoding="utf-8",
-                            errors="replace",
-                        )
+                        _save_mcode_log(job_dir, cfg.namespace, pod_name, idx)
 
                     # If we already have the DB locally, just allow the pod to terminate
                     # so the Job can make progress.
                     if isinstance(exit_code, int) and exit_code == 0 and db_dst.exists():
-                        if hold_running:
-                            _exec_hold(cfg.namespace, pod_name, "touch /results/_COPIED")
+                        if hold_running and not _mark_copied(cfg.namespace, pod_name):
+                            continue
                         todo.remove(idx)
                         last_progress = time.time()
                         print(
@@ -516,32 +637,43 @@ def _fetch_results(
 
                     if isinstance(exit_code, int) and exit_code == 0:
                         if not hold_running:
-                            raise RuntimeError(
-                                f"Shard {idx} completed but DB not present locally "
-                                "and pod is not accessible."
+                            last_err = _copy_with_retries(
+                                cfg.namespace,
+                                pod_name,
+                                f"/results/{db_name}",
+                                db_dst,
                             )
-
-                        last_err: Exception | None = None
-                        for attempt in range(1, 6):
-                            try:
-                                _copy_from_pod(
-                                    cfg.namespace,
-                                    pod_name,
-                                    f"/results/{db_name}",
-                                    db_dst,
+                            if last_err is None and db_dst.exists():
+                                todo.remove(idx)
+                                last_progress = time.time()
+                                print(
+                                    f"  - shard {idx}: ok (copied {db_name})",
+                                    file=sys.stderr,
                                 )
-                                last_err = None
-                                break
-                            except Exception as e:  # pragma: no cover
-                                last_err = e
-                                time.sleep(2)
+                                continue
+                            if idx not in completed_unavailable_warned:
+                                print(
+                                    f"  - shard {idx}: completed but pod not ready for copy yet; "
+                                    "waiting",
+                                    file=sys.stderr,
+                                )
+                                completed_unavailable_warned.add(idx)
+                            continue
+
+                        last_err = _copy_with_retries(
+                            cfg.namespace,
+                            pod_name,
+                            f"/results/{db_name}",
+                            db_dst,
+                        )
                         if last_err is not None:
                             raise RuntimeError(
                                 f"Failed to copy DB for shard {idx} from {pod_name} "
                                 f"after retries: {last_err}"
                             ) from last_err
 
-                        _exec_hold(cfg.namespace, pod_name, "touch /results/_COPIED")
+                        if not _mark_copied(cfg.namespace, pod_name):
+                            continue
                         todo.remove(idx)
                         last_progress = time.time()
                         print(f"  - shard {idx}: ok (copied {db_name})", file=sys.stderr)
@@ -558,7 +690,7 @@ def _fetch_results(
                             )
                         except Exception:
                             pass
-                        _exec_hold(cfg.namespace, pod_name, "touch /results/_COPIED")
+                        _mark_copied(cfg.namespace, pod_name)
                     print(
                         f"  - shard {idx}: {reason} (exit={exit_code}); waiting for retry",
                         file=sys.stderr,
@@ -577,7 +709,8 @@ def _fetch_results(
 
             if exit_code == 0:
                 if db_dst.exists():
-                    _exec_hold(cfg.namespace, pod_name, "touch /results/_COPIED")
+                    if not _mark_copied(cfg.namespace, pod_name):
+                        continue
                     todo.remove(idx)
                     last_progress = time.time()
                     print(f"  - shard {idx}: ok (already copied {db_name})", file=sys.stderr)
@@ -585,15 +718,7 @@ def _fetch_results(
 
                 # Must copy successfully before allowing the hold container to exit, otherwise the
                 # Job will mark this index complete and we may lose the only copy of the DB.
-                last_err: Exception | None = None
-                for attempt in range(1, 6):
-                    try:
-                        _copy_from_pod(cfg.namespace, pod_name, db_src, db_dst)
-                        last_err = None
-                        break
-                    except Exception as e:  # pragma: no cover
-                        last_err = e
-                        time.sleep(2)
+                last_err = _copy_with_retries(cfg.namespace, pod_name, db_src, db_dst)
                 if last_err is not None:
                     raise RuntimeError(
                         f"Failed to copy DB for shard {idx} from {pod_name} "
@@ -601,13 +726,10 @@ def _fetch_results(
                     ) from last_err
 
                 if save_all_logs:
-                    (job_dir / f"shard-{idx}.mcode.log").write_text(
-                        _logs(cfg.namespace, pod_name, "mcode"),
-                        encoding="utf-8",
-                        errors="replace",
-                    )
+                    _save_mcode_log(job_dir, cfg.namespace, pod_name, idx)
 
-                _exec_hold(cfg.namespace, pod_name, "touch /results/_COPIED")
+                if not _mark_copied(cfg.namespace, pod_name):
+                    continue
                 todo.remove(idx)
                 last_progress = time.time()
                 print(f"  - shard {idx}: ok (copied {db_name})", file=sys.stderr)
@@ -615,17 +737,13 @@ def _fetch_results(
 
             # Failure: copy logs for debugging, then allow the pod to terminate so the Job
             # can retry.
-            (job_dir / f"shard-{idx}.mcode.log").write_text(
-                _logs(cfg.namespace, pod_name, "mcode"),
-                encoding="utf-8",
-                errors="replace",
-            )
+            _save_mcode_log(job_dir, cfg.namespace, pod_name, idx)
             # Try to copy whatever DB exists (it may be partial).
             try:
                 _copy_from_pod(cfg.namespace, pod_name, db_src, db_dst)
             except Exception:
                 pass
-            _exec_hold(cfg.namespace, pod_name, "touch /results/_COPIED")
+            _mark_copied(cfg.namespace, pod_name)
             print(f"  - shard {idx}: failed (exit={exit_code}); waiting for retry", file=sys.stderr)
 
         if time.time() - last_status > 30:
@@ -848,7 +966,20 @@ def main() -> int:
     p.add_argument(
         "--out-dir",
         default="results/oc-sweep",
-        help="Local output directory",
+        help="Local output directory (run is stored under <out-dir>/<run-id>)",
+    )
+    p.add_argument(
+        "--run-id",
+        default="",
+        help="Stable run id for resume/reattach (default: current timestamp)",
+    )
+    p.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Resume latest (or --run-id) run: reattach to existing jobs "
+            "and skip completed configs"
+        ),
     )
     p.add_argument(
         "--build",
@@ -896,6 +1027,40 @@ def main() -> int:
     namespace = args.namespace.strip() or _current_namespace()
     from_dir = Path.cwd()
 
+    out_root = Path(args.out_dir)
+    if args.resume:
+        selected_run_id = args.run_id.strip()
+        if selected_run_id:
+            run_id = _normalize_run_id(selected_run_id)
+        else:
+            latest = _latest_run_id(out_root)
+            if latest is None:
+                raise SystemExit("No previous run found under --out-dir; cannot --resume.")
+            run_id = latest
+    else:
+        selected_run_id = args.run_id.strip()
+        run_id = (
+            _normalize_run_id(selected_run_id)
+            if selected_run_id
+            else _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        )
+
+    out_dir = out_root / run_id
+    if out_dir.exists() and any(out_dir.iterdir()) and not args.resume:
+        raise SystemExit(
+            f"Run directory already exists and is non-empty: {out_dir}\n"
+            "Use --resume to continue that run."
+        )
+    if args.resume and not out_dir.exists():
+        raise SystemExit(f"Run directory does not exist for --resume: {out_dir}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"==> Writing results to: {out_dir}", file=sys.stderr)
+    if args.resume:
+        print(
+            "==> Resume mode: reattaching existing jobs and skipping completed configs",
+            file=sys.stderr,
+        )
+
     if args.build:
         _build_image(from_dir)
 
@@ -909,22 +1074,18 @@ def main() -> int:
     timeout_list = _parse_int_list(args.timeout)
     benchmarks = [b.strip() for b in args.benchmarks.split(",") if b.strip()]
     extra_env = _parse_kv_list(args.env)
-
-    out_dir = Path(args.out_dir) / _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    print(f"==> Writing results to: {out_dir}", file=sys.stderr)
+    run_token = _job_token(run_id)
 
     for benchmark, samples, debug_iters, timeout_s in product(
         benchmarks, samples_list, debug_list, timeout_list
     ):
-        ts = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
         job_name = SweepConfig.make_job_name(
             benchmark=benchmark,
             samples=int(samples),
             debug_iters=int(debug_iters),
             timeout_s=int(timeout_s),
             limit=args.limit,
-            ts=ts,
+            ts=run_token,
         )
         cfg = SweepConfig(
             namespace=namespace,
@@ -952,13 +1113,29 @@ def main() -> int:
             hold_memory_limit=str(args.hold_memory_limit),
         )
 
-        print(
-            f"\n==> Launching {cfg.job_name} (benchmark={benchmark} samples={samples} "
-            f"debug={debug_iters} timeout={timeout_s}s limit={args.limit})",
-            file=sys.stderr,
-        )
-        _apply(namespace, _render_configmap(cfg))
-        _apply(namespace, _render_job(cfg))
+        job_dir = out_dir / cfg.job_name
+        if _has_all_shards(job_dir, cfg.benchmark, cfg.shard_count):
+            print(
+                f"\n==> Skipping {cfg.job_name}: already have {cfg.shard_count} shard DBs",
+                file=sys.stderr,
+            )
+            continue
+
+        if _job_exists(namespace, cfg.job_name):
+            print(
+                f"\n==> Reattaching {cfg.job_name} (benchmark={benchmark} samples={samples} "
+                f"debug={debug_iters} timeout={timeout_s}s limit={args.limit})",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"\n==> Launching {cfg.job_name} (benchmark={benchmark} samples={samples} "
+                f"debug={debug_iters} timeout={timeout_s}s limit={args.limit})",
+                file=sys.stderr,
+            )
+            _apply(namespace, _render_configmap(cfg))
+            _apply(namespace, _render_job(cfg))
+
         _fetch_results(
             cfg,
             out_dir=out_dir,

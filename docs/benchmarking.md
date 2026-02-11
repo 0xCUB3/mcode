@@ -59,6 +59,32 @@ Example sweep:
   --env MCODE_MAX_NEW_TOKENS=1024
 ```
 
+Recommended for long runs: set a stable `--run-id` so you can reconnect and resume.
+
+```bash
+.venv/bin/python deploy/k8s/oc_bench_sweep.py \
+  --benchmarks mbpp \
+  --model granite4:latest \
+  --samples 1,2,3 --debug-iters 0,1,2 --timeout 60,90 \
+  --limit 500 --shard-count 20 --parallelism 4 \
+  --run-id 20260211-mbpp-grid \
+  --out-dir results/oc-confirm
+```
+
+If your laptop disconnects, rerun with `--resume` (same `--run-id`).
+
+```bash
+.venv/bin/python deploy/k8s/oc_bench_sweep.py \
+  --benchmarks mbpp \
+  --samples 1,2,3 --debug-iters 0,1,2 --timeout 60,90 \
+  --limit 500 --shard-count 20 --parallelism 4 \
+  --run-id 20260211-mbpp-grid \
+  --out-dir results/oc-confirm \
+  --resume
+```
+
+`--resume` reattaches to existing jobs and skips configs that already have all shard DBs.
+
 Then build the report from that output directory:
 
 ```bash
