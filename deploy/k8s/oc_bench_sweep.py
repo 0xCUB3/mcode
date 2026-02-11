@@ -128,6 +128,11 @@ def _is_transient_oc_error(text: str) -> bool:
     return any(needle in haystack for needle in needles)
 
 
+def _is_notfound_error(text: str) -> bool:
+    haystack = text.lower()
+    return ("not found" in haystack) or ("notfound" in haystack)
+
+
 def _normalize_run_id(value: str) -> str:
     cleaned = "".join(ch if ch.isalnum() else "-" for ch in value.strip().lower())
     cleaned = "-".join(part for part in cleaned.split("-") if part)
@@ -354,11 +359,37 @@ def _job_exists(namespace: str, job_name: str) -> bool:
         raise
 
 
+def _shard_db_path(job_dir: Path, benchmark: str, idx: int) -> Path:
+    return job_dir / f"{benchmark}-shard-{idx}.db"
+
+
+def _shard_ok_path(job_dir: Path, benchmark: str, idx: int) -> Path:
+    return job_dir / f"{benchmark}-shard-{idx}.ok"
+
+
+def _mark_shard_ok(job_dir: Path, benchmark: str, idx: int) -> None:
+    _shard_ok_path(job_dir, benchmark, idx).write_text("ok\n", encoding="utf-8")
+
+
+def _clear_shard_ok(job_dir: Path, benchmark: str, idx: int) -> None:
+    _shard_ok_path(job_dir, benchmark, idx).unlink(missing_ok=True)
+
+
 def _has_all_shards(job_dir: Path, benchmark: str, shard_count: int) -> bool:
     if not job_dir.exists():
         return False
-    shard_files = list(job_dir.glob(f"{benchmark}-shard-*.db"))
-    return len(shard_files) >= shard_count
+    db_paths = [_shard_db_path(job_dir, benchmark, idx) for idx in range(shard_count)]
+    if not all(path.exists() for path in db_paths):
+        return False
+
+    # New runs write per-shard ".ok" markers only after successful copy from a
+    # successful shard execution. If any markers exist, require all of them.
+    ok_paths = [_shard_ok_path(job_dir, benchmark, idx) for idx in range(shard_count)]
+    ok_count = sum(1 for path in ok_paths if path.exists())
+    if ok_count == 0:
+        # Backward-compatible fallback for older runs without markers.
+        return True
+    return ok_count == shard_count
 
 
 def _patch_job_parallelism(namespace: str, job_name: str, parallelism: int) -> None:
@@ -616,7 +647,7 @@ def _fetch_results(
                     reason = str(terminated.get("reason") or "").strip() or "Terminated"
                     exit_code = terminated.get("exitCode")
                     db_name = f"{cfg.benchmark}-shard-{idx}.db"
-                    db_dst = job_dir / db_name
+                    db_dst = _shard_db_path(job_dir, cfg.benchmark, idx)
                     hold_running = _container_running(pod, "hold")
 
                     if save_all_logs or (isinstance(exit_code, int) and exit_code != 0):
@@ -627,6 +658,7 @@ def _fetch_results(
                     if isinstance(exit_code, int) and exit_code == 0 and db_dst.exists():
                         if hold_running and not _mark_copied(cfg.namespace, pod_name):
                             continue
+                        _mark_shard_ok(job_dir, cfg.benchmark, idx)
                         todo.remove(idx)
                         last_progress = time.time()
                         print(
@@ -644,6 +676,7 @@ def _fetch_results(
                                 db_dst,
                             )
                             if last_err is None and db_dst.exists():
+                                _mark_shard_ok(job_dir, cfg.benchmark, idx)
                                 todo.remove(idx)
                                 last_progress = time.time()
                                 print(
@@ -667,6 +700,16 @@ def _fetch_results(
                             db_dst,
                         )
                         if last_err is not None:
+                            if _is_notfound_error(str(last_err)):
+                                if idx not in completed_unavailable_warned:
+                                    print(
+                                        f"  - shard {idx}: pod disappeared while copying; "
+                                        "waiting for replacement pod",
+                                        file=sys.stderr,
+                                    )
+                                    completed_unavailable_warned.add(idx)
+                                continue
+                            _clear_shard_ok(job_dir, cfg.benchmark, idx)
                             raise RuntimeError(
                                 f"Failed to copy DB for shard {idx} from {pod_name} "
                                 f"after retries: {last_err}"
@@ -674,6 +717,7 @@ def _fetch_results(
 
                         if not _mark_copied(cfg.namespace, pod_name):
                             continue
+                        _mark_shard_ok(job_dir, cfg.benchmark, idx)
                         todo.remove(idx)
                         last_progress = time.time()
                         print(f"  - shard {idx}: ok (copied {db_name})", file=sys.stderr)
@@ -691,6 +735,7 @@ def _fetch_results(
                         except Exception:
                             pass
                         _mark_copied(cfg.namespace, pod_name)
+                    _clear_shard_ok(job_dir, cfg.benchmark, idx)
                     print(
                         f"  - shard {idx}: {reason} (exit={exit_code}); waiting for retry",
                         file=sys.stderr,
@@ -705,12 +750,13 @@ def _fetch_results(
 
             db_name = f"{cfg.benchmark}-shard-{idx}.db"
             db_src = f"/results/{db_name}"
-            db_dst = job_dir / db_name
+            db_dst = _shard_db_path(job_dir, cfg.benchmark, idx)
 
             if exit_code == 0:
                 if db_dst.exists():
                     if not _mark_copied(cfg.namespace, pod_name):
                         continue
+                    _mark_shard_ok(job_dir, cfg.benchmark, idx)
                     todo.remove(idx)
                     last_progress = time.time()
                     print(f"  - shard {idx}: ok (already copied {db_name})", file=sys.stderr)
@@ -720,6 +766,16 @@ def _fetch_results(
                 # Job will mark this index complete and we may lose the only copy of the DB.
                 last_err = _copy_with_retries(cfg.namespace, pod_name, db_src, db_dst)
                 if last_err is not None:
+                    if _is_notfound_error(str(last_err)):
+                        if idx not in completed_unavailable_warned:
+                            print(
+                                f"  - shard {idx}: pod disappeared while copying; "
+                                "waiting for replacement pod",
+                                file=sys.stderr,
+                            )
+                            completed_unavailable_warned.add(idx)
+                        continue
+                    _clear_shard_ok(job_dir, cfg.benchmark, idx)
                     raise RuntimeError(
                         f"Failed to copy DB for shard {idx} from {pod_name} "
                         f"after retries: {last_err}"
@@ -730,6 +786,7 @@ def _fetch_results(
 
                 if not _mark_copied(cfg.namespace, pod_name):
                     continue
+                _mark_shard_ok(job_dir, cfg.benchmark, idx)
                 todo.remove(idx)
                 last_progress = time.time()
                 print(f"  - shard {idx}: ok (copied {db_name})", file=sys.stderr)
@@ -744,6 +801,7 @@ def _fetch_results(
             except Exception:
                 pass
             _mark_copied(cfg.namespace, pod_name)
+            _clear_shard_ok(job_dir, cfg.benchmark, idx)
             print(f"  - shard {idx}: failed (exit={exit_code}); waiting for retry", file=sys.stderr)
 
         if time.time() - last_status > 30:
@@ -934,8 +992,8 @@ def main() -> int:
     )
     p.add_argument(
         "--mcode-memory-limit",
-        default="8Gi",
-        help="Memory limit for mcode container (default: 8Gi)",
+        default="12Gi",
+        help="Memory limit for mcode container (default: 12Gi)",
     )
     p.add_argument(
         "--hold-cpu-request",
@@ -1114,19 +1172,19 @@ def main() -> int:
         )
 
         job_dir = out_dir / cfg.job_name
-        if _has_all_shards(job_dir, cfg.benchmark, cfg.shard_count):
-            print(
-                f"\n==> Skipping {cfg.job_name}: already have {cfg.shard_count} shard DBs",
-                file=sys.stderr,
-            )
-            continue
-
-        if _job_exists(namespace, cfg.job_name):
+        job_exists = _job_exists(namespace, cfg.job_name)
+        if job_exists:
             print(
                 f"\n==> Reattaching {cfg.job_name} (benchmark={benchmark} samples={samples} "
                 f"debug={debug_iters} timeout={timeout_s}s limit={args.limit})",
                 file=sys.stderr,
             )
+        elif _has_all_shards(job_dir, cfg.benchmark, cfg.shard_count):
+            print(
+                f"\n==> Skipping {cfg.job_name}: already have {cfg.shard_count} shard DBs",
+                file=sys.stderr,
+            )
+            continue
         else:
             print(
                 f"\n==> Launching {cfg.job_name} (benchmark={benchmark} samples={samples} "
