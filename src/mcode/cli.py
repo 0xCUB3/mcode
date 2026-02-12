@@ -1050,6 +1050,18 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
         return parts.join(" ");
       }}
 
+      function summaryTitle(setName, speedTitle) {{
+        const context = [];
+        if (fixed.benchmark !== null && fixed.benchmark !== undefined) {{
+          context.push(String(fixed.benchmark));
+        }}
+        if (fixed.model !== null && fixed.model !== undefined) {{
+          context.push(String(fixed.model));
+        }}
+        const contextText = context.length ? ` (${{context.join(" | ")}})` : "";
+        return `Summary${{contextText}} — ${{setName}}, speed=${{speedTitle}}`;
+      }}
+
         function renderSummary(rs, setName, speedField, viewMode) {{
           const rows = rs
             .filter(r => r.pass_rate !== null && r.pass_rate !== undefined)
@@ -1063,7 +1075,7 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
 
         if (rows.length === 0) {{
           Plotly.react("summary", [], {{
-            title: `Summary (${{setName}})`,
+            title: summaryTitle(setName, speedTitle),
             template: "plotly_white",
           }}, {{ displaylogo: false, responsive: true }});
           return;
@@ -1084,11 +1096,6 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
           if (fromRow !== undefined && fromRow !== null) return Number(fromRow);
           return totals[i] > 0 ? timedOut[i] / totals[i] : 0;
         }});
-        const timedOutTotal = timedOut.reduce((acc, v) => acc + v, 0);
-        const tasksTotal = totals.reduce((acc, v) => acc + v, 0);
-        const timeoutRateOverall = tasksTotal > 0 ? timedOutTotal / tasksTotal : 0;
-        const timeoutSummary =
-          `${{timedOutTotal}}/${{tasksTotal}} (${{(timeoutRateOverall * 100).toFixed(1)}}%)`;
         const summaryCustom = details.map((d, i) => [d, totals[i], timedOut[i], timeoutRates[i]]);
 
           const height = Math.max(260, Math.min(1400, 140 + rows.length * 28));
@@ -1133,7 +1140,7 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
             passTrace,
             speedTrace,
           ], {{
-            title: `Summary (${{setName}}, n=${{rows.length}}, timed_out=${{timeoutSummary}})`,
+            title: summaryTitle(setName, speedTitle),
             showlegend: false,
             barmode: "overlay",
             template: "plotly_white",
