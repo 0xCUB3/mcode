@@ -64,6 +64,36 @@ This writes `suite.summary.svg` and `suite.summary.png` into the suite directory
 
 PNG rendering requires one of: `rsvg-convert` (recommended), `inkscape`, or ImageMagick (`magick`/`convert`).
 
+## MBPP/HumanEval sweeps with `oc_bench_sweep.py` (recommended defaults)
+
+Use this for parameter sweeps with resume support and shard-level local result copying.
+
+```bash
+.venv/bin/python deploy/k8s/oc_bench_sweep.py \
+  --benchmarks mbpp \
+  --model granite4:latest \
+  --samples 1,2,3 --debug-iters 0,1,2 --timeout 60,90 \
+  --limit 500 --shard-count 20 --parallelism 3 \
+  --mcode-memory-request 1Gi --mcode-memory-limit 12Gi \
+  --run-id 20260211-mbpp-grid \
+  --out-dir results/oc-confirm
+```
+
+Resume after disconnect:
+
+```bash
+.venv/bin/python deploy/k8s/oc_bench_sweep.py \
+  --benchmarks mbpp \
+  --samples 1,2,3 --debug-iters 0,1,2 --timeout 60,90 \
+  --limit 500 --shard-count 20 --parallelism 3 \
+  --mcode-memory-request 1Gi --mcode-memory-limit 12Gi \
+  --run-id 20260211-mbpp-grid \
+  --out-dir results/oc-confirm \
+  --resume
+```
+
+Note: avoid blindly setting very high memory requests; larger requests reduce schedulable parallelism and can slow total wall-clock completion.
+
 ## HumanEval / MBPP: sharded Job (`run-bench.sh`)
 
 Use this when you want one benchmark with specific knobs, or you want to integrate into your own pipeline.

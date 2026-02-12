@@ -52,10 +52,12 @@ Example sweep:
   --model granite4:latest \
   --samples 1,2,3 \
   --debug-iters 0,1,2 \
-  --timeout 60,120 \
+  --timeout 60,90 \
   --limit 100 \
   --shard-count 20 \
-  --parallelism 2 \
+  --parallelism 3 \
+  --mcode-memory-request 1Gi \
+  --mcode-memory-limit 12Gi \
   --env MCODE_MAX_NEW_TOKENS=1024
 ```
 
@@ -66,7 +68,8 @@ Recommended for long runs: set a stable `--run-id` so you can reconnect and resu
   --benchmarks mbpp \
   --model granite4:latest \
   --samples 1,2,3 --debug-iters 0,1,2 --timeout 60,90 \
-  --limit 500 --shard-count 20 --parallelism 4 \
+  --limit 500 --shard-count 20 --parallelism 3 \
+  --mcode-memory-request 1Gi --mcode-memory-limit 12Gi \
   --run-id 20260211-mbpp-grid \
   --out-dir results/oc-confirm
 ```
@@ -77,13 +80,30 @@ If your laptop disconnects, rerun with `--resume` (same `--run-id`).
 .venv/bin/python deploy/k8s/oc_bench_sweep.py \
   --benchmarks mbpp \
   --samples 1,2,3 --debug-iters 0,1,2 --timeout 60,90 \
-  --limit 500 --shard-count 20 --parallelism 4 \
+  --limit 500 --shard-count 20 --parallelism 3 \
+  --mcode-memory-request 1Gi --mcode-memory-limit 12Gi \
   --run-id 20260211-mbpp-grid \
   --out-dir results/oc-confirm \
   --resume
 ```
 
 `--resume` reattaches to existing jobs and skips configs that already have all shard DBs.
+
+### Memory + parallelism defaults (important)
+
+Use this as the default profile unless your namespace has unusual quotas:
+
+- `--parallelism 3`
+- `--mcode-memory-request 1Gi`
+- `--mcode-memory-limit 12Gi`
+
+Why not set max RAM all the time?
+
+- Kubernetes schedules off **requests**. Larger requests reduce how many shards can run concurrently.
+- High per-pod memory often lowers total throughput even if each pod is “safer”.
+- Large limits on many concurrent pods can still trigger node pressure/OOM events when spikes align.
+
+In practice, right-sizing memory + moderate parallelism is usually faster and more stable than “max everything”.
 
 Then build the report from that output directory:
 
