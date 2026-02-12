@@ -655,7 +655,7 @@
         return parts.join(" ");
       }
 
-      function summaryTitle(setName, speedTitle) {
+      function summaryTitle(setName) {
         const context = [];
         if (fixed.benchmark !== null && fixed.benchmark !== undefined) {
           context.push(String(fixed.benchmark));
@@ -664,7 +664,7 @@
           context.push(String(fixed.model));
         }
         const contextText = context.length ? ` (${context.join(" | ")})` : "";
-        return `Summary${contextText} — ${setName}, speed=${speedTitle}`;
+        return `Summary${contextText} — ${setName}`;
       }
 
         function renderSummary(rs, setName, speedField, viewMode) {
@@ -680,7 +680,7 @@
 
         if (rows.length === 0) {
           Plotly.react("summary", [], {
-            title: summaryTitle(setName, speedTitle),
+            title: summaryTitle(setName),
             template: "plotly_white",
           }, { displaylogo: false, responsive: true });
           return;
@@ -745,7 +745,7 @@
             passTrace,
             speedTrace,
           ], {
-            title: summaryTitle(setName, speedTitle),
+            title: summaryTitle(setName),
             showlegend: false,
             barmode: "overlay",
             template: "plotly_white",

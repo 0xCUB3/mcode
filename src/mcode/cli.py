@@ -1050,7 +1050,7 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
         return parts.join(" ");
       }}
 
-      function summaryTitle(setName, speedTitle) {{
+      function summaryTitle(setName) {{
         const context = [];
         if (fixed.benchmark !== null && fixed.benchmark !== undefined) {{
           context.push(String(fixed.benchmark));
@@ -1059,7 +1059,7 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
           context.push(String(fixed.model));
         }}
         const contextText = context.length ? ` (${{context.join(" | ")}})` : "";
-        return `Summary${{contextText}} — ${{setName}}, speed=${{speedTitle}}`;
+        return `Summary${{contextText}} — ${{setName}}`;
       }}
 
         function renderSummary(rs, setName, speedField, viewMode) {{
@@ -1075,7 +1075,7 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
 
         if (rows.length === 0) {{
           Plotly.react("summary", [], {{
-            title: summaryTitle(setName, speedTitle),
+            title: summaryTitle(setName),
             template: "plotly_white",
           }}, {{ displaylogo: false, responsive: true }});
           return;
@@ -1140,7 +1140,7 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
             passTrace,
             speedTrace,
           ], {{
-            title: summaryTitle(setName, speedTitle),
+            title: summaryTitle(setName),
             showlegend: false,
             barmode: "overlay",
             template: "plotly_white",
