@@ -54,3 +54,5 @@ Full grouped output is in `results-summary.txt`.
 - Timeout volume is low overall (`17/8976`, 0.19%), so misses are mostly non-timeout failures.
 - Increasing `samples` raises pass rate in this run (`s=1` mean 46.0% → `s=3` mean 65.1%) and improves the best available speed/accuracy frontier.
 - `timeout=90` does not show a consistent gain over `timeout=60`; keep `60` as default unless a benchmark-specific run proves otherwise.
+
+In this run, `samples` is a stronger lever than `debug` for the accuracy/speed tradeoff: moving from `s=1` to `s=3` improves mean pass rate by about `+19.1` points (46.0% → 65.1%), while moving from `d=0` to `d=2` improves about `+9.4` points (49.4% → 58.8%) and adds much more latency. A likely reason is search geometry: extra samples explore independent solution paths, while debug retries are local edits on a failed draft using failure text, which can get stuck in low-quality neighborhoods and pays serial retry cost per task.
