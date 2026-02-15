@@ -34,8 +34,8 @@ mcode --help
 HumanEval / MBPP:
 
 ```bash
-mcode bench humaneval --model granite3.3:8b --samples 5
-mcode bench mbpp --model granite3.3:8b --samples 5
+mcode bench humaneval --model granite3.3:8b --loop-budget 5
+mcode bench mbpp --model granite3.3:8b --loop-budget 5
 ```
 
 Quick smoke test (first N tasks only):
@@ -46,9 +46,8 @@ mcode bench humaneval --model granite3.3:8b --limit 10
 
 ### What the key flags mean
 
-- `--samples`: attempts per task (note: stops early on the first passing attempt).
-- `--debug-iters`: number of “fix” attempts after a failure per sample.
-- `--timeout`: seconds per execution attempt (per sample/debug iteration).
+- `--loop-budget`: mellea retry budget per task (stops early on the first passing attempt; uses `RepairTemplateStrategy` for error feedback when > 1).
+- `--timeout`: seconds per execution attempt.
 - `--limit`: run the first N tasks.
 - `--shard-count/--shard-index`: split tasks across multiple runs for parallelism.
 - `--sandbox`:
@@ -63,7 +62,7 @@ Sharding is the simplest “plug-and-play” speedup: run the same command N tim
 `--shard-index` values.
 
 ```bash
-mcode bench humaneval --model granite3.3:8b --samples 100 --shard-count 10 --shard-index 0 --db /results/shard-0.db
+mcode bench humaneval --model granite3.3:8b --loop-budget 5 --shard-count 10 --shard-index 0 --db /results/shard-0.db
 ```
 
 On Kubernetes, run HumanEval/MBPP inside Jobs with `--sandbox process` (Docker-in-Docker is usually not available).
@@ -117,11 +116,11 @@ If image building OOMs, try `--max-workers 1` and increase Docker Desktop memory
 
 ```bash
 mcode results --benchmark humaneval
-mcode results --benchmark humaneval --model granite3.3:8b --compare-samples
+mcode results --benchmark humaneval --model granite3.3:8b
 mcode results --benchmark humaneval --time
 
 # Aggregate shard DBs copied from k8s
-mcode results --db-dir ./results --benchmark humaneval --compare-samples --time
+mcode results --db-dir ./results --benchmark humaneval --time
 
 # Lightweight HTML report (pass rate vs time-to-solve)
 mcode report --db-dir ./results --benchmark humaneval --out ./results/report.html
