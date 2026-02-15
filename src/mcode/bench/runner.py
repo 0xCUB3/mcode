@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import time
 from dataclasses import asdict, dataclass, field
@@ -28,9 +29,10 @@ def _default_cache_dir() -> Path:
 class BenchConfig:
     model_id: str
     backend_name: str = "ollama"
-    samples: int = 1
+    loop_budget: int = 3
+    temperature: float | None = None
+    seed: int | None = None
     retrieval: bool = False
-    max_debug_iterations: int = 0
     timeout_s: int = 60
     sandbox: str = "docker"
     task_shard_count: int | None = None
@@ -49,7 +51,13 @@ class BenchmarkRunner:
     def __init__(self, *, config: BenchConfig, results_db: ResultsDB):
         self.config = config
         self.results_db = results_db
-        self.llm = LLMSession(model_id=config.model_id, backend_name=config.backend_name)
+        self.llm = LLMSession(
+            model_id=config.model_id,
+            backend_name=config.backend_name,
+            loop_budget=config.loop_budget,
+            temperature=config.temperature,
+            seed=config.seed,
+        )
         self.sandbox = _make_sandbox(config)
 
     def run_benchmark(self, benchmark: str, *, limit: int | None = None) -> RunSummary:
@@ -83,68 +91,48 @@ class BenchmarkRunner:
         return RunSummary(run_id=run_id, total=total, passed=passed)
 
     def run_task(self, task: Task) -> dict:
-        start = time.time()
+        from mellea.stdlib.requirements.requirement import Requirement, simple_validate
 
-        def evaluate(code: str) -> tuple[bool, dict]:
+        start = time.time()
+        last_run_detail: dict = {}
+
+        def _sandbox_test(raw_json: str) -> bool | tuple[bool, str]:
+            nonlocal last_run_detail
+            code = _extract_code_from_json(raw_json)
             combined = _combine_for_eval(task, code)
             run = self.sandbox.run_python(combined, timeout_s=self.config.timeout_s)
-            ok = run.success
-            detail = {
+            last_run_detail = {
                 "exit_code": run.exit_code,
                 "timed_out": run.timed_out,
                 "stdout": run.stdout,
                 "stderr": run.stderr,
                 "error": run.error,
             }
-            return ok, detail
+            if run.success:
+                return True
+            return (False, (run.stderr or "")[:4000] or "Test failed")
 
-        last_error_detail: dict | None = None
-        samples_generated = 0
-        debug_iterations_used = 0
-        final_code = ""
-
-        for _ in range(self.config.samples):
-            samples_generated += 1
-            code = self.llm.generate_code(task=task)
-            final_code = code
-
-            ok, detail = evaluate(code)
-            last_error_detail = detail
-            if ok:
-                break
-
-            for _ in range(self.config.max_debug_iterations):
-                debug_iterations_used += 1
-                code = self.llm.debug_code(task=task, code=code, error=detail.get("stderr") or "")
-                final_code = code
-                ok, detail = evaluate(code)
-                last_error_detail = detail
-                if ok:
-                    break
-            if ok:
-                break
-
-        elapsed_ms = int((time.time() - start) * 1000)
-        passed = bool(
-            last_error_detail
-            and (last_error_detail.get("exit_code") == 0)
-            and not last_error_detail.get("timed_out")
+        req = Requirement(
+            validation_fn=simple_validate(_sandbox_test),
+            check_only=True,
         )
+        result = self.llm.generate_code(task=task, requirements=[req])
+        elapsed_ms = int((time.time() - start) * 1000)
 
+        code = _extract_code_from_json(result.value or "")
         sha = (
-            hashlib.sha256(final_code.encode("utf-8", errors="ignore")).hexdigest()
-            if final_code
+            hashlib.sha256(code.encode("utf-8", errors="ignore")).hexdigest()
+            if code
             else None
         )
 
         return {
             "task_id": task.task_id,
-            "passed": passed,
-            "samples_generated": samples_generated,
-            "debug_iterations_used": debug_iterations_used,
+            "passed": result.success,
+            "attempts_used": len(result.sample_generations),
             "time_ms": elapsed_ms,
             "code_sha256": sha,
-            **(last_error_detail or {}),
+            **last_run_detail,
         }
 
     def _run_swebench_lite(self, *, limit: int | None) -> RunSummary:
@@ -190,30 +178,17 @@ class BenchmarkRunner:
         return RunSummary(run_id=run_id, total=total, passed=passed)
 
     def _run_swebench_task(self, task, *, swe_sandbox, run_id: int) -> dict:
-        import json as _json
-        import time as _time
+        from mellea.stdlib.requirements.requirement import Requirement, simple_validate
 
-        start = _time.time()
-        samples_generated = 0
-        debug_iterations_used = 0
-
-        last_detail: dict | None = None
-        final_patch = ""
+        start = time.time()
+        last_detail: dict = {}
 
         def _truncate(s: str, max_chars: int = 8000) -> str:
-            if len(s) <= max_chars:
-                return s
-            return s[-max_chars:]
+            return s if len(s) <= max_chars else s[-max_chars:]
 
-        for _ in range(self.config.samples):
-            samples_generated += 1
-            patch = self.llm.generate_patch(
-                repo=task.repo,
-                problem_statement=task.problem_statement,
-                hints_text=task.hints_text,
-            )
-            final_patch = patch
-
+        def _patch_test(raw_json: str) -> bool | tuple[bool, str]:
+            nonlocal last_detail
+            patch = _extract_patch_from_json(raw_json)
             run = swe_sandbox.evaluate_patch(
                 instance=task.raw_instance,
                 model_id=self.config.model_id,
@@ -226,65 +201,54 @@ class BenchmarkRunner:
                 "exit_code": None,
                 "timed_out": run.timed_out,
                 "stdout": _truncate(run.test_output),
-                "stderr": _json.dumps(inst_report, sort_keys=True),
+                "stderr": json.dumps(inst_report, sort_keys=True),
                 "error": None if run.resolved else "Not resolved",
             }
             if run.resolved and not run.timed_out:
-                break
+                return True
+            return (False, _truncate(run.test_output, max_chars=4000) or "Not resolved")
 
-            for _ in range(self.config.max_debug_iterations):
-                debug_iterations_used += 1
-                patch = self.llm.debug_patch(
-                    repo=task.repo,
-                    problem_statement=task.problem_statement,
-                    hints_text=task.hints_text,
-                    previous_patch=patch,
-                    failure_output=_truncate(run.test_output, max_chars=16000),
-                )
-                final_patch = patch
-                run = swe_sandbox.evaluate_patch(
-                    instance=task.raw_instance,
-                    model_id=self.config.model_id,
-                    patch=patch,
-                    run_id=f"mcode-{run_id}",
-                    timeout_s=self.config.timeout_s,
-                )
-                inst_report = run.report.get(task.instance_id, {})
-                last_detail = {
-                    "exit_code": None,
-                    "timed_out": run.timed_out,
-                    "stdout": _truncate(run.test_output),
-                    "stderr": _json.dumps(inst_report, sort_keys=True),
-                    "error": None if run.resolved else "Not resolved",
-                }
-                if run.resolved and not run.timed_out:
-                    break
-            if run.resolved and not run.timed_out:
-                break
-
-        elapsed_ms = int((_time.time() - start) * 1000)
-        passed = bool(
-            last_detail
-            and last_detail.get("error") is None
-            and not bool(last_detail.get("timed_out", False))
+        req = Requirement(
+            validation_fn=simple_validate(_patch_test),
+            check_only=True,
         )
-        import hashlib as _hashlib
+        result = self.llm.generate_patch(
+            repo=task.repo,
+            problem_statement=task.problem_statement,
+            hints_text=task.hints_text,
+            requirements=[req],
+        )
+        elapsed_ms = int((time.time() - start) * 1000)
 
+        patch = _extract_patch_from_json(result.value or "")
         sha = (
-            _hashlib.sha256(final_patch.encode("utf-8", errors="ignore")).hexdigest()
-            if final_patch
+            hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest()
+            if patch
             else None
         )
 
         return {
             "task_id": task.instance_id,
-            "passed": passed,
-            "samples_generated": samples_generated,
-            "debug_iterations_used": debug_iterations_used,
+            "passed": result.success,
+            "attempts_used": len(result.sample_generations),
             "time_ms": elapsed_ms,
             "code_sha256": sha,
-            **(last_detail or {}),
+            **last_detail,
         }
+
+
+def _extract_code_from_json(raw: str) -> str:
+    try:
+        return json.loads(raw).get("code", raw)
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        return raw
+
+
+def _extract_patch_from_json(raw: str) -> str:
+    try:
+        return json.loads(raw).get("patch", raw)
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        return raw
 
 
 def _combine_for_eval(task: Task, code: str) -> str:
