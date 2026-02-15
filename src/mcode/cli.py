@@ -14,8 +14,10 @@ from rich.table import Table
 from mcode.bench.results import (
     ResultsDB,
     RunSummary,
-    export_csv as export_csv_results,
     merge_shard_dbs,
+)
+from mcode.bench.results import (
+    export_csv as export_csv_results,
 )
 from mcode.bench.runner import BenchConfig, BenchmarkRunner
 
