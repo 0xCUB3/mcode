@@ -14,6 +14,7 @@ Short notes for benchmark runs and parameter sweeps. Each entry should include:
 - `2026-02-09-oc-confirm-granite4`: MBPP repeated confirm runs + HumanEval spot-check on OpenShift.
 - `2026-02-11-mbpp-grid-r2-granite4`: MBPP 18-config grid rerun (`samples=1,2,3`, `debug=0,1,2`, `timeout=60,90`, `limit=500`) with timeout tracking.
 - `2026-02-15-mellea-first-verify-granite4`: MBPP verification of `mellea-first` refactor (`loop_budget=1,3,6`, `timeout=60`, `limit=500`) vs grid-r2 baseline.
+- `2026-02-15-sofai-compare-granite4`: SOFAI (8B S1 + 32B S2) vs repair-only comparison on MBPP (`budget=3,5`, `timeout=90,120`, `limit=500`).
 
 ## Entry template
 
