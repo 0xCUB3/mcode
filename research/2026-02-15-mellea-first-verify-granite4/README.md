@@ -4,7 +4,7 @@ Goal: verify that the mellea-first refactor (`mellea-first` branch) produces equ
 
 Baseline: `2026-02-11-mbpp-grid-r2-granite4` (old code, 18-config grid, same cluster + model).
 
-HTML snapshot (live after merge to main): [`mbpp-verify.html`](https://raw.githack.com/0xCUB3/mcode/main/research/2026-02-15-mellea-first-verify-granite4/mbpp-verify.html) ([source](mbpp-verify.html))
+HTML snapshot: [`mbpp-verify.html`](https://raw.githack.com/0xCUB3/mcode/86febdaf/research/2026-02-15-mellea-first-verify-granite4/mbpp-verify.html) ([source](mbpp-verify.html))
 
 Data source:
 
