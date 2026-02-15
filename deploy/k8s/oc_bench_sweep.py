@@ -728,8 +728,8 @@ def _fetch_results(
                                 f"/results/{db_name}",
                                 db_dst,
                             )
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            print(f"  - shard {idx}: partial copy failed: {e}", file=sys.stderr)
                         _mark_copied(cfg.namespace, pod_name)
                     _clear_shard_ok(job_dir, cfg.benchmark, idx)
                     print(
@@ -1068,14 +1068,6 @@ def main() -> int:
         help="Do not delete Jobs/ConfigMaps after copying results",
     )
     args = p.parse_args()
-    if not hasattr(args, "build"):
-        args.build = True
-    if args.build is None:
-        args.build = True
-    if not hasattr(args, "auto_reduce_parallelism"):
-        args.auto_reduce_parallelism = True
-    if args.auto_reduce_parallelism is None:
-        args.auto_reduce_parallelism = True
 
     namespace = args.namespace.strip() or _current_namespace()
     from_dir = Path.cwd()

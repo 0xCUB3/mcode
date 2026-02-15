@@ -98,7 +98,7 @@ class BenchmarkRunner:
 
         def _sandbox_test(raw_json: str) -> bool | tuple[bool, str]:
             nonlocal last_run_detail
-            code = _extract_code_from_json(raw_json)
+            code = _extract_from_json(raw_json, "code")
             combined = _combine_for_eval(task, code)
             run = self.sandbox.run_python(combined, timeout_s=self.config.timeout_s)
             last_run_detail = {
@@ -119,7 +119,7 @@ class BenchmarkRunner:
         result = self.llm.generate_code(task=task, requirements=[req])
         elapsed_ms = int((time.time() - start) * 1000)
 
-        code = _extract_code_from_json(result.value or "")
+        code = _extract_from_json(result.value or "", "code")
         sha = (
             hashlib.sha256(code.encode("utf-8", errors="ignore")).hexdigest()
             if code
@@ -188,7 +188,7 @@ class BenchmarkRunner:
 
         def _patch_test(raw_json: str) -> bool | tuple[bool, str]:
             nonlocal last_detail
-            patch = _extract_patch_from_json(raw_json)
+            patch = _extract_from_json(raw_json, "patch")
             run = swe_sandbox.evaluate_patch(
                 instance=task.raw_instance,
                 model_id=self.config.model_id,
@@ -220,7 +220,7 @@ class BenchmarkRunner:
         )
         elapsed_ms = int((time.time() - start) * 1000)
 
-        patch = _extract_patch_from_json(result.value or "")
+        patch = _extract_from_json(result.value or "", "patch")
         sha = (
             hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest()
             if patch
@@ -237,18 +237,10 @@ class BenchmarkRunner:
         }
 
 
-def _extract_code_from_json(raw: str) -> str:
+def _extract_from_json(raw: str, key: str) -> str:
     try:
-        code = json.loads(raw).get("code", raw)
-        return code if code is not None else ""
-    except (json.JSONDecodeError, AttributeError, TypeError):
-        return raw
-
-
-def _extract_patch_from_json(raw: str) -> str:
-    try:
-        patch = json.loads(raw).get("patch", raw)
-        return patch if patch is not None else ""
+        val = json.loads(raw).get(key, raw)
+        return val if val is not None else ""
     except (json.JSONDecodeError, AttributeError, TypeError):
         return raw
 
@@ -311,7 +303,6 @@ def _augment_run_config(config: dict) -> dict:
 
 
 def _runtime_metadata() -> dict[str, str]:
-    import os
     import platform
     import subprocess
     import sys
