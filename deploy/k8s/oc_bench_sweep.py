@@ -22,8 +22,7 @@ class SweepConfig:
     model: str
     backend: str
     ollama_host: str
-    samples: int
-    debug_iters: int
+    loop_budget: int
     timeout_s: int
     shard_count: int
     parallelism: int
@@ -42,15 +41,14 @@ class SweepConfig:
     def make_job_name(
         *,
         benchmark: str,
-        samples: int,
-        debug_iters: int,
+        loop_budget: int,
         timeout_s: int,
         limit: int | None,
         ts: str,
     ) -> str:
         limit_part = f"-l{limit}" if limit is not None else ""
-        # Example: mcode-mbpp-s3-d1-t120-l200-20260208-071530
-        return f"mcode-{benchmark}-s{samples}-d{debug_iters}-t{timeout_s}{limit_part}-{ts}"
+        # Example: mcode-mbpp-b3-t120-l200-20260208-071530
+        return f"mcode-{benchmark}-b{loop_budget}-t{timeout_s}{limit_part}-{ts}"
 
 
 def _run(
@@ -186,8 +184,7 @@ def _render_configmap(cfg: SweepConfig) -> str:
         "MODEL": cfg.model,
         "BACKEND": cfg.backend,
         "OLLAMA_HOST": cfg.ollama_host,
-        "SAMPLES": str(cfg.samples),
-        "DEBUG_ITERS": str(cfg.debug_iters),
+        "LOOP_BUDGET": str(cfg.loop_budget),
         "TIMEOUT_S": str(cfg.timeout_s),
         "SHARD_COUNT": str(cfg.shard_count),
         **cfg.extra_env,
@@ -221,8 +218,7 @@ status=0
 mcode bench "${BENCHMARK}" \
   --model "${MODEL}" \
   --backend "${BACKEND}" \
-  --samples "${SAMPLES}" \
-  --debug-iters "${DEBUG_ITERS}" \
+  --loop-budget "${LOOP_BUDGET}" \
   --timeout "${TIMEOUT_S}" \
   --sandbox process \
   --shard-count "${SHARD_COUNT}" \
@@ -732,8 +728,8 @@ def _fetch_results(
                                 f"/results/{db_name}",
                                 db_dst,
                             )
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            print(f"  - shard {idx}: partial copy failed: {e}", file=sys.stderr)
                         _mark_copied(cfg.namespace, pod_name)
                     _clear_shard_ok(job_dir, cfg.benchmark, idx)
                     print(
@@ -952,8 +948,7 @@ def main() -> int:
     p.add_argument("--model", default="granite4:latest", help="Mellea model id")
     p.add_argument("--backend", default="ollama", help="Mellea backend name")
     p.add_argument("--ollama-host", default="http://ollama:11434", help="Ollama host URL")
-    p.add_argument("--samples", default="1,2,3", help="Comma-separated samples list")
-    p.add_argument("--debug-iters", default="0,1", help="Comma-separated debug-iters list")
+    p.add_argument("--loop-budget", default="1,3,5", help="Comma-separated loop-budget list")
     p.add_argument("--timeout", default="60,120", help="Comma-separated timeout seconds list")
     p.add_argument("--shard-count", type=int, default=20)
     p.add_argument("--parallelism", type=int, default=2)
@@ -1073,14 +1068,6 @@ def main() -> int:
         help="Do not delete Jobs/ConfigMaps after copying results",
     )
     args = p.parse_args()
-    if not hasattr(args, "build"):
-        args.build = True
-    if args.build is None:
-        args.build = True
-    if not hasattr(args, "auto_reduce_parallelism"):
-        args.auto_reduce_parallelism = True
-    if args.auto_reduce_parallelism is None:
-        args.auto_reduce_parallelism = True
 
     namespace = args.namespace.strip() or _current_namespace()
     from_dir = Path.cwd()
@@ -1127,20 +1114,18 @@ def main() -> int:
         # Use the internal OpenShift registry image for the current namespace.
         image = f"image-registry.openshift-image-registry.svc:5000/{namespace}/mcode:latest"
 
-    samples_list = _parse_int_list(args.samples)
-    debug_list = _parse_int_list(args.debug_iters)
+    budget_list = _parse_int_list(args.loop_budget)
     timeout_list = _parse_int_list(args.timeout)
     benchmarks = [b.strip() for b in args.benchmarks.split(",") if b.strip()]
     extra_env = _parse_kv_list(args.env)
     run_token = _job_token(run_id)
 
-    for benchmark, samples, debug_iters, timeout_s in product(
-        benchmarks, samples_list, debug_list, timeout_list
+    for benchmark, loop_budget, timeout_s in product(
+        benchmarks, budget_list, timeout_list
     ):
         job_name = SweepConfig.make_job_name(
             benchmark=benchmark,
-            samples=int(samples),
-            debug_iters=int(debug_iters),
+            loop_budget=int(loop_budget),
             timeout_s=int(timeout_s),
             limit=args.limit,
             ts=run_token,
@@ -1154,8 +1139,7 @@ def main() -> int:
             model=args.model,
             backend=args.backend,
             ollama_host=args.ollama_host,
-            samples=int(samples),
-            debug_iters=int(debug_iters),
+            loop_budget=int(loop_budget),
             timeout_s=int(timeout_s),
             shard_count=int(args.shard_count),
             parallelism=int(args.parallelism),
@@ -1175,8 +1159,8 @@ def main() -> int:
         job_exists = _job_exists(namespace, cfg.job_name)
         if job_exists:
             print(
-                f"\n==> Reattaching {cfg.job_name} (benchmark={benchmark} samples={samples} "
-                f"debug={debug_iters} timeout={timeout_s}s limit={args.limit})",
+                f"\n==> Reattaching {cfg.job_name} (benchmark={benchmark} budget={loop_budget} "
+                f"timeout={timeout_s}s limit={args.limit})",
                 file=sys.stderr,
             )
         elif _has_all_shards(job_dir, cfg.benchmark, cfg.shard_count):
@@ -1187,8 +1171,8 @@ def main() -> int:
             continue
         else:
             print(
-                f"\n==> Launching {cfg.job_name} (benchmark={benchmark} samples={samples} "
-                f"debug={debug_iters} timeout={timeout_s}s limit={args.limit})",
+                f"\n==> Launching {cfg.job_name} (benchmark={benchmark} budget={loop_budget} "
+                f"timeout={timeout_s}s limit={args.limit})",
                 file=sys.stderr,
             )
             _apply(namespace, _render_configmap(cfg))
@@ -1210,7 +1194,7 @@ def main() -> int:
     print(f"Results: {out_dir}", file=sys.stderr)
     print(
         "\nNext:\n"
-        f"  .venv/bin/mcode results --db-dir {out_dir} --compare-samples --time\n"
+        f"  .venv/bin/mcode results --db-dir {out_dir} --time\n"
         f"  .venv/bin/mcode report --db-dir {out_dir} --out {out_dir}/report.html\n",
         file=sys.stderr,
     )

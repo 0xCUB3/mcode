@@ -72,7 +72,7 @@ Use this for parameter sweeps with resume support and shard-level local result c
 .venv/bin/python deploy/k8s/oc_bench_sweep.py \
   --benchmarks mbpp \
   --model granite4:latest \
-  --samples 1,2,3 --debug-iters 0,1,2 --timeout 60,90 \
+  --loop-budget 1,3,5 --timeout 60,90 \
   --limit 500 --shard-count 20 --parallelism 3 \
   --mcode-memory-request 1Gi --mcode-memory-limit 12Gi \
   --run-id 20260211-mbpp-grid \
@@ -84,7 +84,7 @@ Resume after disconnect:
 ```bash
 .venv/bin/python deploy/k8s/oc_bench_sweep.py \
   --benchmarks mbpp \
-  --samples 1,2,3 --debug-iters 0,1,2 --timeout 60,90 \
+  --loop-budget 1,3,5 --timeout 60,90 \
   --limit 500 --shard-count 20 --parallelism 3 \
   --mcode-memory-request 1Gi --mcode-memory-limit 12Gi \
   --run-id 20260211-mbpp-grid \
@@ -104,8 +104,7 @@ Edit `deploy/k8s/bench.env`.
 
 Main knobs:
 - `BENCHMARK`: `humaneval` or `mbpp`
-- `SAMPLES`: attempts per task (stops early on the first pass)
-- `DEBUG_ITERS`: “fix and retry” iterations after a failure
+- `LOOP_BUDGET`: mellea retry budget per task (stops early on the first pass)
 - `TIMEOUT_S`: seconds per code execution attempt
 - `SHARD_COUNT`: number of shards (the indexed Job completions)
 

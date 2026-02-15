@@ -7,7 +7,7 @@ This is the canonical benchmarking doc for mCode.
 Use all shard DBs in a directory:
 
 ```bash
-mcode results --db-dir ./results --benchmark mbpp --compare-samples --time
+mcode results --db-dir ./results --benchmark mbpp --time
 ```
 
 ## 2) Generate interactive HTML report
@@ -50,8 +50,7 @@ Example sweep:
 .venv/bin/python deploy/k8s/oc_bench_sweep.py \
   --benchmarks mbpp \
   --model granite4:latest \
-  --samples 1,2,3 \
-  --debug-iters 0,1,2 \
+  --loop-budget 1,3,5 \
   --timeout 60,90 \
   --limit 100 \
   --shard-count 20 \
@@ -67,7 +66,7 @@ Recommended for long runs: set a stable `--run-id` so you can reconnect and resu
 .venv/bin/python deploy/k8s/oc_bench_sweep.py \
   --benchmarks mbpp \
   --model granite4:latest \
-  --samples 1,2,3 --debug-iters 0,1,2 --timeout 60,90 \
+  --loop-budget 1,3,5 --timeout 60,90 \
   --limit 500 --shard-count 20 --parallelism 3 \
   --mcode-memory-request 1Gi --mcode-memory-limit 12Gi \
   --run-id 20260211-mbpp-grid \
@@ -79,7 +78,7 @@ If your laptop disconnects, rerun with `--resume` (same `--run-id`).
 ```bash
 .venv/bin/python deploy/k8s/oc_bench_sweep.py \
   --benchmarks mbpp \
-  --samples 1,2,3 --debug-iters 0,1,2 --timeout 60,90 \
+  --loop-budget 1,3,5 --timeout 60,90 \
   --limit 500 --shard-count 20 --parallelism 3 \
   --mcode-memory-request 1Gi --mcode-memory-limit 12Gi \
   --run-id 20260211-mbpp-grid \

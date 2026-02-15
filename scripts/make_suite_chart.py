@@ -14,8 +14,7 @@ class RunRow:
     benchmark: str
     backend: str
     model: str
-    samples: int
-    debug: int
+    loop_budget: int
     timeout_s: int
     total: int
     passed: int
@@ -40,8 +39,7 @@ def _load_runs_csv(path: Path) -> list[RunRow]:
                     benchmark=str(row["benchmark"]),
                     backend=str(row["backend_name"]),
                     model=str(row["model_id"]),
-                    samples=int(row["samples"]),
-                    debug=int(row["max_debug_iterations"]),
+                    loop_budget=int(row["loop_budget"]),
                     timeout_s=int(row["timeout_s"]),
                     total=int(row["total"]),
                     passed=int(row["passed"]),
@@ -171,15 +169,15 @@ def write_suite_chart(*, suite_dir: Path) -> Path:
         if rr.benchmark == "swebench-lite":
             mode = rr.config.get("swebench_mode") or rr.config.get("mode") or "unknown"
             return f"{mode}  (timeout={rr.timeout_s}s)"
-        return f"s={rr.samples}  d={rr.debug}  t={rr.timeout_s}s"
+        return f"budget={rr.loop_budget}  t={rr.timeout_s}s"
 
     humaneval = [r for r in rows if r.benchmark == "humaneval"]
     mbpp = [r for r in rows if r.benchmark == "mbpp"]
     swe = [r for r in rows if r.benchmark == "swebench-lite"]
 
     # Sort for readability
-    humaneval.sort(key=lambda r: (r.samples, r.debug, r.timeout_s))
-    mbpp.sort(key=lambda r: (r.samples, r.debug, r.timeout_s))
+    humaneval.sort(key=lambda r: (r.loop_budget, r.timeout_s))
+    mbpp.sort(key=lambda r: (r.loop_budget, r.timeout_s))
     swe.sort(key=lambda r: (str(r.config.get("swebench_mode") or ""), r.timeout_s))
 
     # Global header text
@@ -215,7 +213,7 @@ def write_suite_chart(*, suite_dir: Path) -> Path:
     # Legend (keep short + readable in screenshots)
     svg.append(
         f'<text x="{x0}" y="66" font-size="12" fill="#374151">'
-        f"{_esc('Legend: s=samples per task, d=max debug iterations, t=timeout seconds')}"
+        f"{_esc('Legend: budget=loop budget (mellea retries), t=timeout seconds')}"
         f"</text>"
     )
     svg.append(
@@ -225,8 +223,8 @@ def write_suite_chart(*, suite_dir: Path) -> Path:
     )
 
     sections: list[tuple[str, list[RunRow], str]] = [
-        ("HumanEval", humaneval, "Config (samples/debug/timeout)"),
-        ("MBPP", mbpp, "Config (samples/debug/timeout)"),
+        ("HumanEval", humaneval, "Config (budget/timeout)"),
+        ("MBPP", mbpp, "Config (budget/timeout)"),
         ("SWE-bench Lite (subset)", swe, "Mode"),
     ]
 

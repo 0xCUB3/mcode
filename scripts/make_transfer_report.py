@@ -14,12 +14,11 @@ from mcode.bench.results import ResultsDB
 
 @dataclass(frozen=True)
 class ConfigKey:
-    samples: int
-    max_debug_iterations: int
+    loop_budget: int
     timeout_s: int
 
     def label(self) -> str:
-        return f"s={self.samples} d={self.max_debug_iterations} t={self.timeout_s}s"
+        return f"budget={self.loop_budget} t={self.timeout_s}s"
 
 
 @dataclass
@@ -84,9 +83,8 @@ def _load_metrics(
                     benchmark=benchmark,
                     model_id=model_id,
                     backend_name=backend_name,
-                    group_by=("backend_name", "max_debug_iterations", "timeout_s", "samples"),
+                    group_by=("backend_name", "timeout_s", "loop_budget"),
                     retrieval=None,
-                    samples=None,
                     include_percentiles=True,
                 )
                 for row in rows:
@@ -96,8 +94,7 @@ def _load_metrics(
                     if not math.isfinite(float(sec_per_solve)):
                         continue
                     cfg = ConfigKey(
-                        samples=int(row["samples"]),
-                        max_debug_iterations=int(row["max_debug_iterations"]),
+                        loop_budget=int(row["loop_budget"]),
                         timeout_s=int(row["timeout_s"]),
                     )
                     metric = BenchMetric(
@@ -201,8 +198,7 @@ def _write_csv(
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
         "rank",
-        "samples",
-        "max_debug_iterations",
+        "loop_budget",
         "timeout_s",
         "config",
         "max_regret",
@@ -231,8 +227,7 @@ def _write_csv(
         for i, score in enumerate(scores, start=1):
             row = {
                 "rank": i,
-                "samples": score.config.samples,
-                "max_debug_iterations": score.config.max_debug_iterations,
+                "loop_budget": score.config.loop_budget,
                 "timeout_s": score.config.timeout_s,
                 "config": score.config.label(),
                 "max_regret": f"{score.max_regret:.6f}",
