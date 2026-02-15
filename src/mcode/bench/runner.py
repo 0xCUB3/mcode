@@ -239,14 +239,16 @@ class BenchmarkRunner:
 
 def _extract_code_from_json(raw: str) -> str:
     try:
-        return json.loads(raw).get("code", raw)
+        code = json.loads(raw).get("code", raw)
+        return code if code is not None else ""
     except (json.JSONDecodeError, AttributeError, TypeError):
         return raw
 
 
 def _extract_patch_from_json(raw: str) -> str:
     try:
-        return json.loads(raw).get("patch", raw)
+        patch = json.loads(raw).get("patch", raw)
+        return patch if patch is not None else ""
     except (json.JSONDecodeError, AttributeError, TypeError):
         return raw
 
