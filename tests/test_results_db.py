@@ -14,9 +14,8 @@ def test_results_db_roundtrip(tmp_path: Path) -> None:
         {
             "backend_name": "ollama",
             "model_id": "test-model",
-            "samples": 3,
+            "loop_budget": 3,
             "retrieval": False,
-            "max_debug_iterations": 0,
             "timeout_s": 60,
             "cache_dir": str(tmp_path / "cache"),
         },
@@ -26,8 +25,7 @@ def test_results_db_roundtrip(tmp_path: Path) -> None:
         {
             "task_id": "HumanEval/0",
             "passed": True,
-            "samples_generated": 1,
-            "debug_iterations_used": 0,
+            "attempts_used": 1,
             "time_ms": 10,
             "exit_code": 0,
             "timed_out": False,
@@ -42,9 +40,8 @@ def test_results_db_roundtrip(tmp_path: Path) -> None:
         {
             "backend_name": "ollama",
             "model_id": "test-model",
-            "samples": 3,
+            "loop_budget": 3,
             "retrieval": False,
-            "max_debug_iterations": 0,
             "timeout_s": 60,
             "cache_dir": str(tmp_path / "cache"),
         },
@@ -54,8 +51,7 @@ def test_results_db_roundtrip(tmp_path: Path) -> None:
         {
             "task_id": "HumanEval/1",
             "passed": False,
-            "samples_generated": 1,
-            "debug_iterations_used": 0,
+            "attempts_used": 1,
             "time_ms": 10,
             "exit_code": 1,
             "timed_out": False,
@@ -70,26 +66,24 @@ def test_results_db_roundtrip(tmp_path: Path) -> None:
         benchmark="humaneval",
         model_id="test-model",
         backend_name="ollama",
-        max_debug_iterations=0,
         timeout_s=60,
         group_by=(),
     )
     assert len(per_run) == 2
     assert {r["run_id"] for r in per_run} == {run_id, run_id_2}
-    assert all(r["samples"] == 3 for r in per_run)
+    assert all(r["loop_budget"] == 3 for r in per_run)
     cfg = json.loads(per_run[0]["config_json"])
-    assert cfg["samples"] == 3
+    assert cfg["loop_budget"] == 3
 
     grouped = rdb.pass_rates_grouped(
         benchmark="humaneval",
         model_id="test-model",
         backend_name="ollama",
-        max_debug_iterations=0,
         timeout_s=60,
-        group_by=("samples",),
+        group_by=("loop_budget",),
     )
     assert len(grouped) == 1
-    assert grouped[0]["samples"] == 3
+    assert grouped[0]["loop_budget"] == 3
     assert grouped[0]["total"] == 2
     assert grouped[0]["passed"] == 1
 
@@ -102,9 +96,8 @@ def test_run_metrics_grouped_includes_time_stats(tmp_path: Path) -> None:
             {
                 "backend_name": "ollama",
                 "model_id": "test-model",
-                "samples": 1,
+                "loop_budget": 1,
                 "retrieval": False,
-                "max_debug_iterations": 0,
                 "timeout_s": 60,
                 "cache_dir": str(tmp_path / "cache"),
             },
@@ -114,8 +107,7 @@ def test_run_metrics_grouped_includes_time_stats(tmp_path: Path) -> None:
             {
                 "task_id": "HumanEval/0",
                 "passed": True,
-                "samples_generated": 1,
-                "debug_iterations_used": 0,
+                "attempts_used": 1,
                 "time_ms": 1000,
                 "exit_code": 0,
                 "timed_out": False,
@@ -130,8 +122,7 @@ def test_run_metrics_grouped_includes_time_stats(tmp_path: Path) -> None:
             {
                 "task_id": "HumanEval/1",
                 "passed": False,
-                "samples_generated": 1,
-                "debug_iterations_used": 0,
+                "attempts_used": 1,
                 "time_ms": 3000,
                 "exit_code": 1,
                 "timed_out": False,
@@ -146,7 +137,6 @@ def test_run_metrics_grouped_includes_time_stats(tmp_path: Path) -> None:
             benchmark="humaneval",
             model_id="test-model",
             backend_name="ollama",
-            max_debug_iterations=0,
             timeout_s=60,
             group_by=(),
         )
@@ -172,9 +162,8 @@ def test_run_metrics_grouped_aggregates_runs(tmp_path: Path) -> None:
             {
                 "backend_name": "ollama",
                 "model_id": "test-model",
-                "samples": 1,
+                "loop_budget": 1,
                 "retrieval": False,
-                "max_debug_iterations": 0,
                 "timeout_s": 60,
                 "cache_dir": str(tmp_path / "cache"),
             },
@@ -184,8 +173,7 @@ def test_run_metrics_grouped_aggregates_runs(tmp_path: Path) -> None:
             {
                 "task_id": "HumanEval/0",
                 "passed": True,
-                "samples_generated": 1,
-                "debug_iterations_used": 0,
+                "attempts_used": 1,
                 "time_ms": 1000,
                 "exit_code": 0,
                 "timed_out": False,
@@ -201,9 +189,8 @@ def test_run_metrics_grouped_aggregates_runs(tmp_path: Path) -> None:
             {
                 "backend_name": "ollama",
                 "model_id": "test-model",
-                "samples": 1,
+                "loop_budget": 1,
                 "retrieval": False,
-                "max_debug_iterations": 0,
                 "timeout_s": 60,
                 "cache_dir": str(tmp_path / "cache"),
             },
@@ -213,8 +200,7 @@ def test_run_metrics_grouped_aggregates_runs(tmp_path: Path) -> None:
             {
                 "task_id": "HumanEval/1",
                 "passed": False,
-                "samples_generated": 1,
-                "debug_iterations_used": 0,
+                "attempts_used": 1,
                 "time_ms": 3000,
                 "exit_code": 1,
                 "timed_out": False,
@@ -229,9 +215,8 @@ def test_run_metrics_grouped_aggregates_runs(tmp_path: Path) -> None:
             benchmark="humaneval",
             model_id="test-model",
             backend_name="ollama",
-            max_debug_iterations=0,
             timeout_s=60,
-            group_by=("samples",),
+            group_by=("loop_budget",),
         )
         assert len(rows) == 1
         r = rows[0]
@@ -253,9 +238,8 @@ def test_run_metrics_grouped_counts_timeouts(tmp_path: Path) -> None:
             {
                 "backend_name": "ollama",
                 "model_id": "test-model",
-                "samples": 1,
+                "loop_budget": 1,
                 "retrieval": False,
-                "max_debug_iterations": 0,
                 "timeout_s": 60,
                 "cache_dir": str(tmp_path / "cache"),
             },
@@ -265,8 +249,7 @@ def test_run_metrics_grouped_counts_timeouts(tmp_path: Path) -> None:
             {
                 "task_id": "HumanEval/0",
                 "passed": False,
-                "samples_generated": 1,
-                "debug_iterations_used": 0,
+                "attempts_used": 1,
                 "time_ms": 500,
                 "exit_code": 1,
                 "timed_out": True,
@@ -281,8 +264,7 @@ def test_run_metrics_grouped_counts_timeouts(tmp_path: Path) -> None:
             {
                 "task_id": "HumanEval/1",
                 "passed": True,
-                "samples_generated": 1,
-                "debug_iterations_used": 0,
+                "attempts_used": 1,
                 "time_ms": 400,
                 "exit_code": 0,
                 "timed_out": False,
@@ -297,9 +279,8 @@ def test_run_metrics_grouped_counts_timeouts(tmp_path: Path) -> None:
             benchmark="humaneval",
             model_id="test-model",
             backend_name="ollama",
-            max_debug_iterations=0,
             timeout_s=60,
-            group_by=("samples",),
+            group_by=("loop_budget",),
         )
 
         assert len(rows) == 1
@@ -321,9 +302,8 @@ def test_merge_from_combines_dbs(tmp_path: Path) -> None:
             {
                 "backend_name": "ollama",
                 "model_id": "test-model",
-                "samples": 1,
+                "loop_budget": 1,
                 "retrieval": False,
-                "max_debug_iterations": 0,
                 "timeout_s": 60,
                 "cache_dir": str(tmp_path / "cache"),
             },
@@ -333,8 +313,7 @@ def test_merge_from_combines_dbs(tmp_path: Path) -> None:
             {
                 "task_id": "HumanEval/0",
                 "passed": True,
-                "samples_generated": 1,
-                "debug_iterations_used": 0,
+                "attempts_used": 1,
                 "time_ms": 1000,
                 "exit_code": 0,
                 "timed_out": False,
@@ -351,9 +330,8 @@ def test_merge_from_combines_dbs(tmp_path: Path) -> None:
             {
                 "backend_name": "ollama",
                 "model_id": "test-model",
-                "samples": 1,
+                "loop_budget": 1,
                 "retrieval": False,
-                "max_debug_iterations": 0,
                 "timeout_s": 60,
                 "cache_dir": str(tmp_path / "cache"),
             },
@@ -363,8 +341,7 @@ def test_merge_from_combines_dbs(tmp_path: Path) -> None:
             {
                 "task_id": "HumanEval/1",
                 "passed": False,
-                "samples_generated": 1,
-                "debug_iterations_used": 0,
+                "attempts_used": 1,
                 "time_ms": 3000,
                 "exit_code": 1,
                 "timed_out": False,
@@ -381,9 +358,8 @@ def test_merge_from_combines_dbs(tmp_path: Path) -> None:
             benchmark="humaneval",
             model_id="test-model",
             backend_name="ollama",
-            max_debug_iterations=0,
             timeout_s=60,
-            group_by=("samples",),
+            group_by=("loop_budget",),
         )
         assert len(rows) == 1
         assert rows[0]["runs"] == 2

@@ -51,8 +51,7 @@ class ResultsDB:
               benchmark TEXT NOT NULL,
               backend_name TEXT NOT NULL,
               model_id TEXT NOT NULL,
-              samples INTEGER NOT NULL,
-              max_debug_iterations INTEGER NOT NULL,
+              loop_budget INTEGER NOT NULL,
               timeout_s INTEGER NOT NULL,
               retrieval INTEGER NOT NULL,
               config_json TEXT NOT NULL
@@ -66,8 +65,7 @@ class ResultsDB:
               run_id INTEGER NOT NULL,
               task_id TEXT NOT NULL,
               passed INTEGER NOT NULL,
-              samples_generated INTEGER NOT NULL,
-              debug_iterations_used INTEGER NOT NULL,
+              attempts_used INTEGER NOT NULL,
               time_ms INTEGER NOT NULL,
               exit_code INTEGER,
               timed_out INTEGER NOT NULL,
@@ -104,23 +102,21 @@ class ResultsDB:
               benchmark,
               backend_name,
               model_id,
-              samples,
-              max_debug_iterations,
+              loop_budget,
               timeout_s,
               retrieval,
               config_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 now,
                 benchmark,
                 config.get("backend_name", "ollama"),
                 config["model_id"],
-                config["samples"],
-                config["max_debug_iterations"],
+                config.get("loop_budget", 3),
                 config["timeout_s"],
-                1 if config["retrieval"] else 0,
+                1 if config.get("retrieval", False) else 0,
                 json.dumps(config, sort_keys=True, default=str),
             ),
         )
@@ -131,16 +127,15 @@ class ResultsDB:
         self.conn.execute(
             """
             INSERT OR REPLACE INTO task_results
-            (run_id, task_id, passed, samples_generated, debug_iterations_used, time_ms, exit_code,
+            (run_id, task_id, passed, attempts_used, time_ms, exit_code,
              timed_out, stdout, stderr, error, code_sha256)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
                 result["task_id"],
                 1 if result["passed"] else 0,
-                result["samples_generated"],
-                result["debug_iterations_used"],
+                result.get("attempts_used", 1),
                 result["time_ms"],
                 result.get("exit_code"),
                 1 if result.get("timed_out", False) else 0,
@@ -158,16 +153,14 @@ class ResultsDB:
         benchmark: str | None,
         model_id: str | None,
         backend_name: str | None = None,
-        max_debug_iterations: int | None = None,
         timeout_s: int | None = None,
         group_by: Sequence[str],
         retrieval: bool | None = None,
-        samples: int | None = None,
+        loop_budget: int | None = None,
     ) -> list[dict]:
         group_map = {
-            "samples": "r.samples",
+            "loop_budget": "r.loop_budget",
             "backend_name": "r.backend_name",
-            "max_debug_iterations": "r.max_debug_iterations",
             "timeout_s": "r.timeout_s",
         }
         if any(g not in group_map for g in group_by):
@@ -184,18 +177,15 @@ class ResultsDB:
         if backend_name:
             where.append("r.backend_name = ?")
             params.append(backend_name)
-        if max_debug_iterations is not None:
-            where.append("r.max_debug_iterations = ?")
-            params.append(int(max_debug_iterations))
         if timeout_s is not None:
             where.append("r.timeout_s = ?")
             params.append(int(timeout_s))
         if retrieval is not None:
             where.append("r.retrieval = ?")
             params.append(1 if retrieval else 0)
-        if samples is not None:
-            where.append("r.samples = ?")
-            params.append(int(samples))
+        if loop_budget is not None:
+            where.append("r.loop_budget = ?")
+            params.append(int(loop_budget))
 
         if not group_by:
             sql = f"""
@@ -207,8 +197,7 @@ class ResultsDB:
                 r.model_id AS model_id,
                 r.retrieval AS retrieval,
                 r.config_json AS config_json,
-                r.samples AS samples,
-                r.max_debug_iterations AS max_debug_iterations,
+                r.loop_budget AS loop_budget,
                 r.timeout_s AS timeout_s,
                 COUNT(*) AS total,
                 SUM(tr.passed) AS passed
@@ -231,8 +220,7 @@ class ResultsDB:
                         "backend_name": str(row["backend_name"]),
                         "model_id": str(row["model_id"]),
                         "retrieval": bool(int(row["retrieval"])),
-                        "samples": int(row["samples"]),
-                        "max_debug_iterations": int(row["max_debug_iterations"]),
+                        "loop_budget": int(row["loop_budget"]),
                         "timeout_s": int(row["timeout_s"]),
                         "config_json": str(row["config_json"]),
                         "total": total,
@@ -247,10 +235,9 @@ class ResultsDB:
             "r.benchmark",
             "r.backend_name",
             "r.model_id",
-            "r.max_debug_iterations",
             "r.timeout_s",
             "r.retrieval",
-            "r.samples",
+            "r.loop_budget",
         ]
         group_cols = list(dict.fromkeys([*base_group_cols, *group_exprs]))
         sql = f"""
@@ -259,8 +246,7 @@ class ResultsDB:
             r.backend_name AS backend_name,
             r.model_id AS model_id,
             r.retrieval AS retrieval,
-            r.samples AS samples,
-            r.max_debug_iterations AS max_debug_iterations,
+            r.loop_budget AS loop_budget,
             r.timeout_s AS timeout_s,
             COUNT(*) AS total,
             SUM(tr.passed) AS passed
@@ -272,9 +258,8 @@ class ResultsDB:
             r.benchmark,
             r.model_id,
             r.backend_name,
-            r.max_debug_iterations,
             r.timeout_s,
-            r.samples
+            r.loop_budget
         """
         rows = self.conn.execute(sql, params).fetchall()
         out: list[dict] = []
@@ -287,8 +272,7 @@ class ResultsDB:
                     "backend_name": str(row["backend_name"]),
                     "model_id": str(row["model_id"]),
                     "retrieval": bool(int(row["retrieval"])),
-                    "samples": int(row["samples"]),
-                    "max_debug_iterations": int(row["max_debug_iterations"]),
+                    "loop_budget": int(row["loop_budget"]),
                     "timeout_s": int(row["timeout_s"]),
                     "total": total,
                     "passed": passed,
@@ -303,17 +287,15 @@ class ResultsDB:
         benchmark: str | None,
         model_id: str | None,
         backend_name: str | None = None,
-        max_debug_iterations: int | None = None,
         timeout_s: int | None = None,
         group_by: Sequence[str],
         retrieval: bool | None = None,
-        samples: int | None = None,
+        loop_budget: int | None = None,
         include_percentiles: bool = True,
     ) -> list[dict]:
         group_map = {
-            "samples": "r.samples",
+            "loop_budget": "r.loop_budget",
             "backend_name": "r.backend_name",
-            "max_debug_iterations": "r.max_debug_iterations",
             "timeout_s": "r.timeout_s",
         }
         if any(g not in group_map for g in group_by):
@@ -330,18 +312,15 @@ class ResultsDB:
         if backend_name:
             where.append("r.backend_name = ?")
             params.append(backend_name)
-        if max_debug_iterations is not None:
-            where.append("r.max_debug_iterations = ?")
-            params.append(int(max_debug_iterations))
         if timeout_s is not None:
             where.append("r.timeout_s = ?")
             params.append(int(timeout_s))
         if retrieval is not None:
             where.append("r.retrieval = ?")
             params.append(1 if retrieval else 0)
-        if samples is not None:
-            where.append("r.samples = ?")
-            params.append(int(samples))
+        if loop_budget is not None:
+            where.append("r.loop_budget = ?")
+            params.append(int(loop_budget))
 
         if not group_by:
             sql = f"""
@@ -352,8 +331,7 @@ class ResultsDB:
                 r.backend_name AS backend_name,
                 r.model_id AS model_id,
                 r.retrieval AS retrieval,
-                r.samples AS samples,
-                r.max_debug_iterations AS max_debug_iterations,
+                r.loop_budget AS loop_budget,
                 r.timeout_s AS timeout_s,
                 COUNT(*) AS total,
                 SUM(tr.passed) AS passed,
@@ -405,8 +383,7 @@ class ResultsDB:
                         "backend_name": str(row["backend_name"]),
                         "model_id": str(row["model_id"]),
                         "retrieval": bool(int(row["retrieval"])),
-                        "samples": int(row["samples"]),
-                        "max_debug_iterations": int(row["max_debug_iterations"]),
+                        "loop_budget": int(row["loop_budget"]),
                         "timeout_s": int(row["timeout_s"]),
                         "total": total,
                         "passed": passed,
@@ -432,10 +409,9 @@ class ResultsDB:
             "r.benchmark",
             "r.backend_name",
             "r.model_id",
-            "r.max_debug_iterations",
             "r.timeout_s",
             "r.retrieval",
-            "r.samples",
+            "r.loop_budget",
         ]
         group_cols = list(dict.fromkeys([*base_group_cols, *group_exprs]))
         sql = f"""
@@ -444,8 +420,7 @@ class ResultsDB:
             r.backend_name AS backend_name,
             r.model_id AS model_id,
             r.retrieval AS retrieval,
-            r.samples AS samples,
-            r.max_debug_iterations AS max_debug_iterations,
+            r.loop_budget AS loop_budget,
             r.timeout_s AS timeout_s,
             COUNT(DISTINCT r.id) AS runs,
             COUNT(*) AS total,
@@ -460,9 +435,8 @@ class ResultsDB:
             r.benchmark,
             r.model_id,
             r.backend_name,
-            r.max_debug_iterations,
             r.timeout_s,
-            r.samples
+            r.loop_budget
         """
         rows = self.conn.execute(sql, params).fetchall()
 
@@ -473,10 +447,9 @@ class ResultsDB:
                 r.benchmark AS benchmark,
                 r.backend_name AS backend_name,
                 r.model_id AS model_id,
-                r.max_debug_iterations AS max_debug_iterations,
                 r.timeout_s AS timeout_s,
                 r.retrieval AS retrieval,
-                r.samples AS samples,
+                r.loop_budget AS loop_budget,
                 tr.time_ms AS time_ms
               FROM runs r
               JOIN task_results tr ON tr.run_id = r.id
@@ -489,10 +462,9 @@ class ResultsDB:
                     str(dr["benchmark"]),
                     str(dr["backend_name"]),
                     str(dr["model_id"]),
-                    int(dr["max_debug_iterations"]),
                     int(dr["timeout_s"]),
                     bool(int(dr["retrieval"])),
-                    int(dr["samples"]),
+                    int(dr["loop_budget"]),
                 )
                 times_by_key.setdefault(key, []).append(int(dr["time_ms"]))
             for key, times in times_by_key.items():
@@ -513,10 +485,9 @@ class ResultsDB:
                 str(row["benchmark"]),
                 str(row["backend_name"]),
                 str(row["model_id"]),
-                int(row["max_debug_iterations"]),
                 int(row["timeout_s"]),
                 bool(int(row["retrieval"])),
-                int(row["samples"]),
+                int(row["loop_budget"]),
             )
             p = time_stats.get(key) if include_percentiles else None
             p50_ms = p.get("p50_ms") if p else None
@@ -528,8 +499,7 @@ class ResultsDB:
                     "backend_name": str(row["backend_name"]),
                     "model_id": str(row["model_id"]),
                     "retrieval": bool(int(row["retrieval"])),
-                    "samples": int(row["samples"]),
-                    "max_debug_iterations": int(row["max_debug_iterations"]),
+                    "loop_budget": int(row["loop_budget"]),
                     "timeout_s": int(row["timeout_s"]),
                     "runs": int(row["runs"] or 0),
                     "total": total,
@@ -579,8 +549,7 @@ class ResultsDB:
                   benchmark,
                   backend_name,
                   model_id,
-                  samples,
-                  max_debug_iterations,
+                  loop_budget,
                   timeout_s,
                   retrieval,
                   config_json
@@ -597,21 +566,19 @@ class ResultsDB:
                       benchmark,
                       backend_name,
                       model_id,
-                      samples,
-                      max_debug_iterations,
+                      loop_budget,
                       timeout_s,
                       retrieval,
                       config_json
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         str(run["timestamp"]),
                         str(run["benchmark"]),
                         str(run["backend_name"]),
                         str(run["model_id"]),
-                        int(run["samples"]),
-                        int(run["max_debug_iterations"]),
+                        int(run["loop_budget"]),
                         int(run["timeout_s"]),
                         int(run["retrieval"]),
                         str(run["config_json"]),
@@ -625,8 +592,7 @@ class ResultsDB:
                     SELECT
                       task_id,
                       passed,
-                      samples_generated,
-                      debug_iterations_used,
+                      attempts_used,
                       time_ms,
                       exit_code,
                       timed_out,
@@ -644,17 +610,16 @@ class ResultsDB:
                 self.conn.executemany(
                     """
                     INSERT OR REPLACE INTO task_results
-                    (run_id, task_id, passed, samples_generated, debug_iterations_used, time_ms,
+                    (run_id, task_id, passed, attempts_used, time_ms,
                      exit_code, timed_out, stdout, stderr, error, code_sha256)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     [
                         (
                             new_run_id,
                             str(tr["task_id"]),
                             int(tr["passed"]),
-                            int(tr["samples_generated"]),
-                            int(tr["debug_iterations_used"]),
+                            int(tr["attempts_used"]),
                             int(tr["time_ms"]),
                             tr["exit_code"],
                             int(tr["timed_out"]),
@@ -776,7 +741,7 @@ def merge_shard_dbs(*, out_path: Path, shard_paths: list[Path], force: bool = Fa
             rows = conn.execute(
                 """
                 SELECT
-                  task_id, passed, samples_generated, debug_iterations_used, time_ms,
+                  task_id, passed, attempts_used, time_ms,
                   exit_code, timed_out, stdout, stderr, error, code_sha256
                 FROM task_results
                 """
@@ -791,8 +756,7 @@ def merge_shard_dbs(*, out_path: Path, shard_paths: list[Path], force: bool = Fa
                     {
                         "task_id": task_id,
                         "passed": bool(r["passed"]),
-                        "samples_generated": int(r["samples_generated"]),
-                        "debug_iterations_used": int(r["debug_iterations_used"]),
+                        "attempts_used": int(r["attempts_used"]),
                         "time_ms": int(r["time_ms"]),
                         "exit_code": r["exit_code"],
                         "timed_out": bool(r["timed_out"]),
@@ -854,8 +818,7 @@ def export_csv(
         "benchmark",
         "backend_name",
         "model_id",
-        "samples",
-        "max_debug_iterations",
+        "loop_budget",
         "timeout_s",
         "retrieval",
         "total",
@@ -871,14 +834,12 @@ def export_csv(
         "benchmark",
         "backend_name",
         "model_id",
-        "samples",
-        "max_debug_iterations",
+        "loop_budget",
         "timeout_s",
         "retrieval",
         "task_id",
         "passed",
-        "samples_generated",
-        "debug_iterations_used",
+        "attempts_used",
         "time_ms",
         "exit_code",
         "timed_out",
@@ -930,8 +891,7 @@ def export_csv(
                             "benchmark": str(r["benchmark"]),
                             "backend_name": str(r["backend_name"]),
                             "model_id": str(r["model_id"]),
-                            "samples": int(r["samples"]),
-                            "max_debug_iterations": int(r["max_debug_iterations"]),
+                            "loop_budget": int(r["loop_budget"]),
                             "timeout_s": int(r["timeout_s"]),
                             "retrieval": int(r["retrieval"]),
                             "total": total,
@@ -947,8 +907,7 @@ def export_csv(
                         SELECT
                           tr.task_id,
                           tr.passed,
-                          tr.samples_generated,
-                          tr.debug_iterations_used,
+                          tr.attempts_used,
                           tr.time_ms,
                           tr.exit_code,
                           tr.timed_out,
@@ -971,14 +930,12 @@ def export_csv(
                             "benchmark": str(r["benchmark"]),
                             "backend_name": str(r["backend_name"]),
                             "model_id": str(r["model_id"]),
-                            "samples": int(r["samples"]),
-                            "max_debug_iterations": int(r["max_debug_iterations"]),
+                            "loop_budget": int(r["loop_budget"]),
                             "timeout_s": int(r["timeout_s"]),
                             "retrieval": int(r["retrieval"]),
                             "task_id": str(tr["task_id"]),
                             "passed": int(tr["passed"]),
-                            "samples_generated": int(tr["samples_generated"]),
-                            "debug_iterations_used": int(tr["debug_iterations_used"]),
+                            "attempts_used": int(tr["attempts_used"]),
                             "time_ms": int(tr["time_ms"]),
                             "exit_code": tr["exit_code"],
                             "timed_out": int(tr["timed_out"]),
