@@ -1560,7 +1560,7 @@ def bench_humaneval(
     ] = "ollama",
     s2_mode: Annotated[
         str,
-        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start, continue_chat, or best_attempt"),
+        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
     ] = "best_attempt",
 ) -> None:
     _bench_common(
@@ -1639,7 +1639,7 @@ def bench_mbpp(
     ] = "ollama",
     s2_mode: Annotated[
         str,
-        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start, continue_chat, or best_attempt"),
+        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
     ] = "best_attempt",
 ) -> None:
     _bench_common(
@@ -1742,7 +1742,7 @@ def bench_swebench_lite(
     ] = "ollama",
     s2_mode: Annotated[
         str,
-        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start, continue_chat, or best_attempt"),
+        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
     ] = "best_attempt",
 ) -> None:
     strategy_name = strategy.strip().lower()

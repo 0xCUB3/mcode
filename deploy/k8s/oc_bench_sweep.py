@@ -226,7 +226,9 @@ if [ -n "${LIMIT:-}" ]; then
 fi
 strategy_args="--strategy ${STRATEGY}"
 if [ -n "${S2_MODEL:-}" ]; then
-  strategy_args="${strategy_args} --s2-model ${S2_MODEL} --s2-backend ${S2_BACKEND} --s2-mode ${S2_MODE}"
+  strategy_args="${strategy_args} --s2-model ${S2_MODEL}"
+  strategy_args="${strategy_args} --s2-backend ${S2_BACKEND}"
+  strategy_args="${strategy_args} --s2-mode ${S2_MODE}"
 fi
 
 status=0
@@ -1044,7 +1046,7 @@ def main() -> int:
     p.add_argument(
         "--s2-mode",
         default="best_attempt",
-        help="SOFAI S2 solver mode: fresh_start, continue_chat, best_attempt (default: best_attempt)",
+        help="SOFAI S2 solver mode: fresh_start|continue_chat|best_attempt",
     )
     p.add_argument(
         "--limit",
