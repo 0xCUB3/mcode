@@ -23,7 +23,6 @@ htmlcov/
 # Local/ephemeral
 tmp_cache/
 experiments/results/
-results/
 *.log
 logs/
 
