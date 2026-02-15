@@ -46,6 +46,10 @@ spec:
               if [ -n "${LIMIT:-}" ]; then
                 limit_args="--limit ${LIMIT}"
               fi
+              strategy_args="--strategy ${STRATEGY:-repair}"
+              if [ -n "${S2_MODEL:-}" ]; then
+                strategy_args="${strategy_args} --s2-model ${S2_MODEL} --s2-backend ${S2_BACKEND:-ollama} --s2-mode ${S2_MODE:-best_attempt}"
+              fi
               mcode bench "${BENCHMARK}" \
                 --model "${MODEL}" \
                 --backend "${BACKEND}" \
@@ -55,6 +59,7 @@ spec:
                 --shard-count "${SHARD_COUNT}" \
                 --shard-index "${JOB_COMPLETION_INDEX}" \
                 --db "/results/${BENCHMARK}-shard-${JOB_COMPLETION_INDEX}.db" \
+                ${strategy_args} \
                 ${limit_args}
               # Signal to the fetcher that results are ready to copy out of the pod.
               touch /results/_READY
