@@ -160,12 +160,11 @@ def results(
     benchmark: Annotated[str | None, typer.Option("--benchmark")] = None,
     model: Annotated[str | None, typer.Option("--model")] = None,
     backend: Annotated[str | None, typer.Option("--backend")] = None,
-    samples: Annotated[int | None, typer.Option("--samples", min=1)] = None,
-    debug_iters: Annotated[int | None, typer.Option("--debug-iters", min=0)] = None,
+    loop_budget: Annotated[int | None, typer.Option("--loop-budget", min=1)] = None,
     timeout_s: Annotated[int | None, typer.Option("--timeout", min=1)] = None,
-    compare_samples: Annotated[
+    compare_configs: Annotated[
         bool,
-        typer.Option("--compare-samples", help="Group results by sample count"),
+        typer.Option("--compare-configs", help="Group results by config"),
     ] = False,
     time_metrics: Annotated[
         bool,
@@ -178,21 +177,20 @@ def results(
 ) -> None:
     """Query pass rates from the results DB."""
     retrieval_bool = _parse_bool(retrieval)
-    group_by_config = ("backend_name", "max_debug_iterations", "timeout_s", "samples")
+    group_by_config = ("backend_name", "timeout_s", "loop_budget")
 
     db_paths = _expand_db_paths(db=db, db_glob=db_glob, db_dir=db_dir)
     with _open_results_view(db_paths) as rdb:
-        if compare_samples:
+        if compare_configs:
             if time_metrics:
                 rows = rdb.run_metrics_grouped(
                     benchmark=benchmark,
                     model_id=model,
                     backend_name=backend,
-                    max_debug_iterations=debug_iters,
                     timeout_s=timeout_s,
                     group_by=group_by_config,
                     retrieval=retrieval_bool,
-                    samples=samples,
+                    loop_budget=loop_budget,
                 )
                 rows = sorted(
                     rows,
@@ -203,9 +201,8 @@ def results(
                 table.add_column("benchmark")
                 table.add_column("backend")
                 table.add_column("model")
-                table.add_column("debug", justify="right")
+                table.add_column("budget", justify="right")
                 table.add_column("timeout", justify="right")
-                table.add_column("samples", justify="right")
                 table.add_column("retrieval", justify="center")
                 table.add_column("runs", justify="right")
                 table.add_column("total", justify="right")
@@ -222,9 +219,8 @@ def results(
                         row["benchmark"],
                         row["backend_name"],
                         row["model_id"],
-                        str(row["max_debug_iterations"]),
+                        str(row.get("loop_budget", "")),
                         str(row["timeout_s"]),
-                        str(row["samples"]),
                         "on" if row["retrieval"] else "off",
                         str(row.get("runs", "")),
                         str(row["total"]),
@@ -246,19 +242,17 @@ def results(
                 benchmark=benchmark,
                 model_id=model,
                 backend_name=backend,
-                max_debug_iterations=debug_iters,
                 timeout_s=timeout_s,
                 group_by=group_by_config,
                 retrieval=retrieval_bool,
-                samples=samples,
+                loop_budget=loop_budget,
             )
             table = Table(title="Pass rates by config")
             table.add_column("benchmark")
             table.add_column("backend")
             table.add_column("model")
-            table.add_column("debug", justify="right")
+            table.add_column("budget", justify="right")
             table.add_column("timeout", justify="right")
-            table.add_column("samples", justify="right")
             table.add_column("retrieval", justify="center")
             table.add_column("total", justify="right")
             table.add_column("passed", justify="right")
@@ -268,9 +262,8 @@ def results(
                     row["benchmark"],
                     row["backend_name"],
                     row["model_id"],
-                    str(row["max_debug_iterations"]),
+                    str(row.get("loop_budget", "")),
                     str(row["timeout_s"]),
-                    str(row["samples"]),
                     "on" if row["retrieval"] else "off",
                     str(row["total"]),
                     str(row["passed"]),
@@ -284,11 +277,10 @@ def results(
                 benchmark=benchmark,
                 model_id=model,
                 backend_name=backend,
-                max_debug_iterations=debug_iters,
                 timeout_s=timeout_s,
                 group_by=(),
                 retrieval=retrieval_bool,
-                samples=samples,
+                loop_budget=loop_budget,
             )
             rows = sorted(rows, key=lambda r: (r["solves_per_hour"], r["pass_rate"]), reverse=True)
             table = Table(title="Pass rates + time (per run)")
@@ -297,8 +289,7 @@ def results(
             table.add_column("benchmark")
             table.add_column("backend")
             table.add_column("model")
-            table.add_column("samples", justify="right")
-            table.add_column("debug", justify="right")
+            table.add_column("budget", justify="right")
             table.add_column("timeout", justify="right")
             table.add_column("retrieval", justify="center")
             table.add_column("total", justify="right")
@@ -317,8 +308,7 @@ def results(
                     row["benchmark"],
                     row["backend_name"],
                     row["model_id"],
-                    str(row["samples"]),
-                    str(row["max_debug_iterations"]),
+                    str(row.get("loop_budget", "")),
                     str(row["timeout_s"]),
                     "on" if row["retrieval"] else "off",
                     str(row["total"]),
@@ -338,11 +328,10 @@ def results(
             benchmark=benchmark,
             model_id=model,
             backend_name=backend,
-            max_debug_iterations=debug_iters,
             timeout_s=timeout_s,
             group_by=(),
             retrieval=retrieval_bool,
-            samples=samples,
+            loop_budget=loop_budget,
         )
         table = Table(title="Pass rates (per run)")
         table.add_column("run_id", justify="right")
@@ -350,8 +339,7 @@ def results(
         table.add_column("benchmark")
         table.add_column("backend")
         table.add_column("model")
-        table.add_column("samples", justify="right")
-        table.add_column("debug", justify="right")
+        table.add_column("budget", justify="right")
         table.add_column("timeout", justify="right")
         table.add_column("retrieval", justify="center")
         table.add_column("total", justify="right")
@@ -364,8 +352,7 @@ def results(
                 row["benchmark"],
                 row["backend_name"],
                 row["model_id"],
-                str(row["samples"]),
-                str(row["max_debug_iterations"]),
+                str(row.get("loop_budget", "")),
                 str(row["timeout_s"]),
                 "on" if row["retrieval"] else "off",
                 str(row["total"]),
@@ -379,8 +366,7 @@ def _config_label(r: dict) -> str:
     parts = [
         str(r.get("benchmark", "")),
         f"{r.get('backend_name', '')}:{r.get('model_id', '')}",
-        f"samples={r.get('samples', '')}",
-        f"debug={r.get('max_debug_iterations', '')}",
+        f"budget={r.get('loop_budget', '')}",
         f"timeout={r.get('timeout_s', '')}",
         "retrieval=on" if r.get("retrieval") else "retrieval=off",
     ]
@@ -631,13 +617,11 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
 
       document.getElementById("title").textContent = finalTitle;
       const fixedTokens = [];
-      const fixedSamples = constantValue(points, "samples");
-      const fixedDebug = constantValue(points, "max_debug_iterations");
+      const fixedBudget = constantValue(points, "loop_budget");
       const fixedTimeout = constantValue(points, "timeout_s");
-      if (fixedSamples !== null && fixedSamples !== undefined) {{
-        fixedTokens.push(`s=${{fixedSamples}}`);
+      if (fixedBudget !== null && fixedBudget !== undefined) {{
+        fixedTokens.push(`budget=${{fixedBudget}}`);
       }}
-      if (fixedDebug !== null && fixedDebug !== undefined) fixedTokens.push(`d=${{fixedDebug}}`);
       if (fixedTimeout !== null && fixedTimeout !== undefined) {{
         fixedTokens.push(`t=${{fixedTimeout}}s`);
       }}
@@ -652,8 +636,7 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
         ["benchmark", "Benchmark"],
         ["backend_name", "Backend"],
         ["model_id", "Model"],
-        ["samples", "Samples"],
-        ["max_debug_iterations", "Debug"],
+        ["loop_budget", "Budget"],
         ["timeout_s", "Timeout"],
         ["retrieval", "Retrieval"],
       ];
@@ -670,8 +653,7 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
       }}
 
       function shortToken(field, v) {{
-        if (field === "samples") return `s=${{v}}`;
-        if (field === "max_debug_iterations") return `d=${{v}}`;
+        if (field === "loop_budget") return `budget=${{v}}`;
         if (field === "timeout_s") return `t=${{v}}s`;
         if (field === "retrieval") return `r=${{fmtBool(!!v)}}`;
         if (field === "benchmark") return String(v);
@@ -716,8 +698,7 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
 
       const PALETTE = ["#2563eb", "#dc2626", "#16a34a", "#7c3aed", "#ea580c", "#0891b2", "#6b7280"];
       const COLOR_PRIORITY = [
-        "samples",
-        "max_debug_iterations",
+        "loop_budget",
         "timeout_s",
         "retrieval",
         "benchmark",
@@ -1313,8 +1294,7 @@ def report(
     benchmark: Annotated[str | None, typer.Option("--benchmark")] = None,
     model: Annotated[str | None, typer.Option("--model")] = None,
     backend: Annotated[str | None, typer.Option("--backend")] = None,
-    samples: Annotated[int | None, typer.Option("--samples", min=1)] = None,
-    debug_iters: Annotated[int | None, typer.Option("--debug-iters", min=0)] = None,
+    loop_budget: Annotated[int | None, typer.Option("--loop-budget", min=1)] = None,
     timeout_s: Annotated[int | None, typer.Option("--timeout", min=1)] = None,
     retrieval: Annotated[
         str | None,
@@ -1326,7 +1306,7 @@ def report(
 ) -> None:
     """Generate a lightweight HTML report (Plotly) for pass rate vs time-to-solve."""
     retrieval_bool = _parse_bool(retrieval)
-    group_by_config = ("backend_name", "max_debug_iterations", "timeout_s", "samples")
+    group_by_config = ("backend_name", "timeout_s", "loop_budget")
     group_by = () if per_run else group_by_config
 
     db_paths = _expand_db_paths(db=db, db_glob=db_glob, db_dir=db_dir)
@@ -1335,11 +1315,10 @@ def report(
             benchmark=benchmark,
             model_id=model,
             backend_name=backend,
-            max_debug_iterations=debug_iters,
             timeout_s=timeout_s,
             group_by=group_by,
             retrieval=retrieval_bool,
-            samples=samples,
+            loop_budget=loop_budget,
             include_percentiles=True,
         )
 
@@ -1423,8 +1402,7 @@ def _print_run_summary(
     benchmark: str,
     backend: str,
     model: str,
-    samples: int,
-    debug_iters: int,
+    loop_budget: int,
     timeout_s: int,
     retrieval: bool,
 ) -> None:
@@ -1433,8 +1411,7 @@ def _print_run_summary(
     table.add_column("benchmark")
     table.add_column("backend")
     table.add_column("model")
-    table.add_column("samples", justify="right")
-    table.add_column("debug", justify="right")
+    table.add_column("budget", justify="right")
     table.add_column("timeout", justify="right")
     table.add_column("retrieval", justify="center")
     table.add_column("total", justify="right")
@@ -1445,8 +1422,7 @@ def _print_run_summary(
         benchmark,
         backend,
         model,
-        str(samples),
-        str(debug_iters),
+        str(loop_budget),
         str(timeout_s),
         "on" if retrieval else "off",
         str(summary.total),
@@ -1460,8 +1436,9 @@ def _bench_common(
     benchmark: str,
     backend: str,
     model: str,
-    samples: int,
-    debug_iters: int,
+    loop_budget: int,
+    temperature: float | None,
+    seed: int | None,
     timeout_s: int,
     retrieval: bool,
     sandbox: str,
@@ -1491,9 +1468,10 @@ def _bench_common(
     config = BenchConfig(
         backend_name=backend,
         model_id=model,
-        samples=samples,
+        loop_budget=loop_budget,
+        temperature=temperature,
+        seed=seed,
         retrieval=retrieval,
-        max_debug_iterations=debug_iters,
         timeout_s=timeout_s,
         sandbox=sandbox_name,
         task_shard_count=shard_count,
@@ -1506,8 +1484,7 @@ def _bench_common(
         benchmark=benchmark,
         backend=backend,
         model=model,
-        samples=samples,
-        debug_iters=debug_iters,
+        loop_budget=loop_budget,
         timeout_s=timeout_s,
         retrieval=retrieval,
     )
@@ -1517,14 +1494,18 @@ def _bench_common(
 def bench_humaneval(
     model: Annotated[str, typer.Option("--model", help="Mellea model id")],
     backend: Annotated[str, typer.Option("--backend", help="Mellea backend name")] = "ollama",
-    samples: Annotated[
+    loop_budget: Annotated[
         int,
-        typer.Option("--samples", min=1, help="Attempts per task; stop early on pass"),
-    ] = 1,
-    debug_iters: Annotated[
-        int,
-        typer.Option("--debug-iters", min=0, help="Fix attempts after a failed run"),
-    ] = 0,
+        typer.Option("--loop-budget", min=1, help="Max attempts per task (with error feedback)"),
+    ] = 3,
+    temperature: Annotated[
+        float | None,
+        typer.Option("--temperature", help="Sampling temperature"),
+    ] = None,
+    seed: Annotated[
+        int | None,
+        typer.Option("--seed", help="Random seed for reproducibility"),
+    ] = None,
     timeout_s: Annotated[
         int,
         typer.Option("--timeout", min=1, help="Seconds per sandbox execution attempt"),
@@ -1555,8 +1536,9 @@ def bench_humaneval(
         benchmark="humaneval",
         backend=backend,
         model=model,
-        samples=samples,
-        debug_iters=debug_iters,
+        loop_budget=loop_budget,
+        temperature=temperature,
+        seed=seed,
         timeout_s=timeout_s,
         retrieval=retrieval,
         sandbox=sandbox,
@@ -1571,14 +1553,18 @@ def bench_humaneval(
 def bench_mbpp(
     model: Annotated[str, typer.Option("--model", help="Mellea model id")],
     backend: Annotated[str, typer.Option("--backend", help="Mellea backend name")] = "ollama",
-    samples: Annotated[
+    loop_budget: Annotated[
         int,
-        typer.Option("--samples", min=1, help="Attempts per task; stop early on pass"),
-    ] = 1,
-    debug_iters: Annotated[
-        int,
-        typer.Option("--debug-iters", min=0, help="Fix attempts after a failed run"),
-    ] = 0,
+        typer.Option("--loop-budget", min=1, help="Max attempts per task (with error feedback)"),
+    ] = 3,
+    temperature: Annotated[
+        float | None,
+        typer.Option("--temperature", help="Sampling temperature"),
+    ] = None,
+    seed: Annotated[
+        int | None,
+        typer.Option("--seed", help="Random seed for reproducibility"),
+    ] = None,
     timeout_s: Annotated[
         int,
         typer.Option("--timeout", min=1, help="Seconds per sandbox execution attempt"),
@@ -1609,8 +1595,9 @@ def bench_mbpp(
         benchmark="mbpp",
         backend=backend,
         model=model,
-        samples=samples,
-        debug_iters=debug_iters,
+        loop_budget=loop_budget,
+        temperature=temperature,
+        seed=seed,
         timeout_s=timeout_s,
         retrieval=retrieval,
         sandbox=sandbox,
@@ -1625,14 +1612,18 @@ def bench_mbpp(
 def bench_swebench_lite(
     model: Annotated[str, typer.Option("--model", help="Mellea model id")],
     backend: Annotated[str, typer.Option("--backend", help="Mellea backend name")] = "ollama",
-    samples: Annotated[
+    loop_budget: Annotated[
         int,
-        typer.Option("--samples", min=1, help="Attempts per task; stop early on pass"),
-    ] = 1,
-    debug_iters: Annotated[
-        int,
-        typer.Option("--debug-iters", min=0, help="Fix attempts after a failed run"),
-    ] = 0,
+        typer.Option("--loop-budget", min=1, help="Max attempts per task (with error feedback)"),
+    ] = 3,
+    temperature: Annotated[
+        float | None,
+        typer.Option("--temperature", help="Sampling temperature"),
+    ] = None,
+    seed: Annotated[
+        int | None,
+        typer.Option("--seed", help="Random seed for reproducibility"),
+    ] = None,
     timeout_s: Annotated[
         int,
         typer.Option("--timeout", min=1, help="Seconds per SWE-bench eval attempt"),
@@ -1694,9 +1685,10 @@ def bench_swebench_lite(
     config = BenchConfig(
         backend_name=backend,
         model_id=model,
-        samples=samples,
+        loop_budget=loop_budget,
+        temperature=temperature,
+        seed=seed,
         retrieval=False,
-        max_debug_iterations=debug_iters,
         timeout_s=timeout_s,
         swebench_split=split,
         swebench_namespace=_optional_str(namespace),
@@ -1715,8 +1707,7 @@ def bench_swebench_lite(
         benchmark="swebench-lite",
         backend=backend,
         model=model,
-        samples=samples,
-        debug_iters=debug_iters,
+        loop_budget=loop_budget,
         timeout_s=timeout_s,
         retrieval=False,
     )
