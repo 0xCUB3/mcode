@@ -1,17 +1,12 @@
 from __future__ import annotations
 
-import json
 import os
-from collections.abc import Callable
 from contextlib import contextmanager
-from dataclasses import dataclass
-from typing import Any, TypeVar
+from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field
 
 from mcode.bench.tasks import Task
-
-_T = TypeVar("_T")
 
 
 class CodeOutput(BaseModel):
@@ -26,26 +21,30 @@ class PatchOutput(BaseModel):
 class LLMSession:
     model_id: str
     backend_name: str = "ollama"
-    _m: object | None = None
+    loop_budget: int = 3
+    temperature: float | None = None
+    seed: int | None = None
+    _m: object | None = field(default=None, repr=False)
 
-    def _default_model_options(self) -> dict | None:
+    def _model_options(self, *, system_prompt: str) -> dict:
+        from mellea.backends import ModelOption
+
+        opts: dict = {ModelOption.SYSTEM_PROMPT: system_prompt}
+        if self.temperature is not None:
+            opts[ModelOption.TEMPERATURE] = self.temperature
+        if self.seed is not None:
+            opts[ModelOption.SEED] = self.seed
         raw = os.environ.get("MCODE_MAX_NEW_TOKENS")
-        if not raw:
-            return None
-        try:
-            max_new_tokens = int(raw)
-        except ValueError:
-            raise ValueError(f"MCODE_MAX_NEW_TOKENS must be an int (got {raw!r})")
-        if max_new_tokens < 1:
-            raise ValueError("MCODE_MAX_NEW_TOKENS must be >= 1")
+        if raw:
+            opts[ModelOption.MAX_NEW_TOKENS] = int(raw)
+        return opts
 
-        try:
-            from mellea.backends.types import ModelOption
-        except Exception:
-            # If mellea isn't installed, we don't want to fail until check_available/open.
+    def _strategy(self):
+        if self.loop_budget <= 1:
             return None
+        from mellea.stdlib.sampling import RepairTemplateStrategy
 
-        return {ModelOption.MAX_NEW_TOKENS: max_new_tokens}
+        return RepairTemplateStrategy(loop_budget=self.loop_budget)
 
     def check_available(self) -> None:
         try:
@@ -60,7 +59,6 @@ class LLMSession:
             with mellea.start_session(
                 backend_name=self.backend_name,
                 model_id=self.model_id,
-                model_options=self._default_model_options(),
             ):
                 return
         except Exception as e:  # pragma: no cover
@@ -87,7 +85,6 @@ class LLMSession:
         with mellea.start_session(
             backend_name=self.backend_name,
             model_id=self.model_id,
-            model_options=self._default_model_options(),
         ) as m:
             self._m = m
             try:
@@ -95,153 +92,52 @@ class LLMSession:
             finally:
                 self._m = None
 
-    def generate_code(self, *, task: Task) -> str:
-        if task.benchmark == "humaneval":
-            prompt = (
-                "You are an expert Python programmer.\n"
-                "Complete the function defined in the prompt.\n"
-                "Keep the function name and signature exactly the same.\n"
-                "Return only Python code. Do not use markdown.\n\n"
-                f"{task.prompt}\n"
-            )
-        else:
-            prompt = (
-                "You are an expert Python programmer.\n"
-                "Return only Python code. Do not use markdown.\n\n"
-                f"{task.prompt}\n"
-            )
-        return self._instruct_code(prompt)
-
-    def debug_code(self, *, task: Task, code: str, error: str) -> str:
-        prompt = (
-            "You are an expert Python programmer.\n"
-            "Fix the given Python code so that it passes the tests.\n"
-            "Return only Python code. Do not use markdown.\n\n"
-            f"Task:\n{task.prompt}\n\n"
-            f"Current code:\n{code}\n\n"
-            f"Test failure / stderr:\n{error}\n"
+    def generate_code(self, *, task: Task, requirements: list | None = None):
+        system_prompt = _code_system_prompt(task)
+        return self._m.instruct(
+            task.prompt,
+            format=CodeOutput,
+            strategy=self._strategy(),
+            requirements=requirements or [],
+            return_sampling_results=True,
+            model_options=self._model_options(system_prompt=system_prompt),
         )
-        return self._instruct_code(prompt)
 
-    def generate_patch(self, *, repo: str, problem_statement: str, hints_text: str = "") -> str:
-        hints_block = f"\n\nHints:\n{hints_text.strip()}\n" if hints_text.strip() else ""
-        prompt = (
-            "You are an expert software engineer.\n"
-            "Given a GitHub issue and a repository name, produce a single unified diff patch.\n"
-            "The patch must fix the issue.\n"
-            "Return ONLY the patch text. Do not use markdown. Do not add explanations.\n"
-            "The patch must apply cleanly with `git apply` from the repository root.\n\n"
-            f"Repository: {repo}\n\n"
-            f"Issue:\n{problem_statement.strip()}\n"
-            f"{hints_block}"
-        )
-        return self._instruct_patch(prompt)
-
-    def debug_patch(
+    def generate_patch(
         self,
         *,
         repo: str,
         problem_statement: str,
-        previous_patch: str,
-        failure_output: str,
         hints_text: str = "",
-    ) -> str:
-        hints_block = f"\n\nHints:\n{hints_text.strip()}\n" if hints_text.strip() else ""
-        prompt = (
+        requirements: list | None = None,
+    ):
+        system_prompt = (
             "You are an expert software engineer.\n"
-            "Fix the patch so that the repository tests pass.\n"
-            "Return ONLY a unified diff patch (git apply compatible), no markdown.\n"
-            "The patch should be complete and apply cleanly to the original repository state.\n\n"
-            f"Repository: {repo}\n\n"
-            f"Issue:\n{problem_statement.strip()}\n"
-            f"{hints_block}\n"
-            f"Previous patch:\n{previous_patch}\n\n"
-            f"Test output / failure:\n{failure_output}\n"
+            "Given a GitHub issue and a repository name, produce a single unified diff patch.\n"
+            "The patch must fix the issue.\n"
+            "The patch must apply cleanly with `git apply` from the repository root."
         )
-        return self._instruct_patch(prompt)
-
-    def _instruct_code(self, prompt: str) -> str:
-        return self._instruct(prompt, format_model=CodeOutput, extractor=_extract_code)
-
-    def _instruct_patch(self, prompt: str) -> str:
-        return self._instruct(prompt, format_model=PatchOutput, extractor=_extract_patch)
-
-    def _instruct(
-        self,
-        prompt: str,
-        *,
-        format_model: type[_T],
-        extractor: Callable[[Any], str],
-    ) -> str:
-        try:
-            import mellea
-        except Exception as e:  # pragma: no cover
-            raise RuntimeError(
-                "mellea is required for LLM interaction; "
-                "install dependencies with `uv pip install -e .`"
-            ) from e
-
-        m = self._m
-        if m is not None:
-            thunk = m.instruct(
-                prompt,
-                format=format_model,
-                model_options=self._default_model_options(),
-            )
-            out = getattr(thunk, "value", thunk)
-            return extractor(out)
-
-        with mellea.start_session(
-            backend_name=self.backend_name,
-            model_id=self.model_id,
-            model_options=self._default_model_options(),
-        ) as m2:
-            thunk = m2.instruct(
-                prompt,
-                format=format_model,
-                model_options=self._default_model_options(),
-            )
-            out = getattr(thunk, "value", thunk)
-            return extractor(out)
+        hints_block = f"\n\nHints:\n{hints_text.strip()}" if hints_text.strip() else ""
+        description = (
+            f"Repository: {repo}\n\n"
+            f"Issue:\n{problem_statement.strip()}"
+            f"{hints_block}"
+        )
+        return self._m.instruct(
+            description,
+            format=PatchOutput,
+            strategy=self._strategy(),
+            requirements=requirements or [],
+            return_sampling_results=True,
+            model_options=self._model_options(system_prompt=system_prompt),
+        )
 
 
-def _extract_code(out: object) -> str:
-    if isinstance(out, CodeOutput):
-        return out.code
-    if isinstance(out, dict) and "code" in out:
-        return str(out["code"])
-    if isinstance(out, str):
-        s = out.strip()
-        if s.startswith("```"):
-            s = s.strip("`")
-            s = "\n".join(s.splitlines()[1:]).strip()
-        if s.startswith("{") and '"code"' in s:
-            try:
-                parsed = json.loads(s)
-                if isinstance(parsed, dict) and "code" in parsed:
-                    return str(parsed["code"])
-            except Exception:
-                pass
-        return s
-    return str(out)
-
-
-def _extract_patch(out: object) -> str:
-    if isinstance(out, PatchOutput):
-        return out.patch
-    if isinstance(out, dict) and "patch" in out:
-        return str(out["patch"])
-    if isinstance(out, str):
-        s = out.strip()
-        if s.startswith("```"):
-            s = s.strip("`")
-            s = "\n".join(s.splitlines()[1:]).strip()
-        if s.startswith("{") and '"patch"' in s:
-            try:
-                parsed = json.loads(s)
-                if isinstance(parsed, dict) and "patch" in parsed:
-                    return str(parsed["patch"])
-            except Exception:
-                pass
-        return s
-    return str(out)
+def _code_system_prompt(task: Task) -> str:
+    if task.benchmark == "humaneval":
+        return (
+            "You are an expert Python programmer.\n"
+            "Complete the function defined in the prompt.\n"
+            "Keep the function name and signature exactly the same."
+        )
+    return "You are an expert Python programmer."
