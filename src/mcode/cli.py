@@ -177,7 +177,7 @@ def results(
 ) -> None:
     """Query pass rates from the results DB."""
     retrieval_bool = _parse_bool(retrieval)
-    group_by_config = ("backend_name", "timeout_s", "loop_budget", "strategy")
+    group_by_config = ("backend_name", "timeout_s", "loop_budget")
 
     db_paths = _expand_db_paths(db=db, db_glob=db_glob, db_dir=db_dir)
     with _open_results_view(db_paths) as rdb:
@@ -1308,7 +1308,7 @@ def report(
 ) -> None:
     """Generate a lightweight HTML report (Plotly) for pass rate vs time-to-solve."""
     retrieval_bool = _parse_bool(retrieval)
-    group_by_config = ("backend_name", "timeout_s", "loop_budget", "strategy")
+    group_by_config = ("backend_name", "timeout_s", "loop_budget")
     group_by = () if per_run else group_by_config
 
     db_paths = _expand_db_paths(db=db, db_glob=db_glob, db_dir=db_dir)

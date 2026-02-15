@@ -48,7 +48,9 @@ spec:
               fi
               strategy_args="--strategy ${STRATEGY:-repair}"
               if [ -n "${S2_MODEL:-}" ]; then
-                strategy_args="${strategy_args} --s2-model ${S2_MODEL} --s2-backend ${S2_BACKEND:-ollama} --s2-mode ${S2_MODE:-best_attempt}"
+                strategy_args="${strategy_args} --s2-model ${S2_MODEL}"
+                strategy_args="${strategy_args} --s2-backend ${S2_BACKEND:-ollama}"
+                strategy_args="${strategy_args} --s2-mode ${S2_MODE:-best_attempt}"
               fi
               mcode bench "${BENCHMARK}" \
                 --model "${MODEL}" \
