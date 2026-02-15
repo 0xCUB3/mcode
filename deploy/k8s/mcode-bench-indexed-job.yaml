@@ -49,8 +49,7 @@ spec:
               mcode bench "${BENCHMARK}" \
                 --model "${MODEL}" \
                 --backend "${BACKEND}" \
-                --samples "${SAMPLES}" \
-                --debug-iters "${DEBUG_ITERS}" \
+                --loop-budget "${LOOP_BUDGET}" \
                 --timeout "${TIMEOUT_S}" \
                 --sandbox process \
                 --shard-count "${SHARD_COUNT}" \

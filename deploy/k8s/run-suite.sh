@@ -168,13 +168,12 @@ fi
 
 run_job() {
   local bench="$1"
-  local samples="$2"
-  local debug="$3"
-  local timeout="$4"
-  local shards="$5"
-  local limit="$6"
+  local budget="$2"
+  local timeout="$3"
+  local shards="$4"
+  local limit="$5"
 
-  local job_name="mcode-${bench}-s${samples}-d${debug}-t${timeout}-${run_tag}"
+  local job_name="mcode-${bench}-b${budget}-t${timeout}-${run_tag}"
   job_name="$(echo "${job_name}" | tr '[:upper:]' '[:lower:]' | tr '_' '-' | tr -c 'a-z0-9.-' '-')"
   # Trim to 63 chars and ensure it starts/ends with [a-z0-9] (k8s name + label value safe).
   job_name="${job_name:0:63}"
@@ -187,7 +186,7 @@ run_job() {
   local raw_dir="${suite_dir}/raw/${job_name}"
   mkdir -p "${raw_dir}"
 
-  echo "=== ${bench} samples=${samples} debug=${debug} timeout=${timeout} shards=${shards} limit=${limit:-none} ==="
+  echo "=== ${bench} budget=${budget} timeout=${timeout} shards=${shards} limit=${limit:-none} ==="
 
   JOB_NAME="${job_name}" \
   OUT_DIR="${raw_dir}" \
@@ -198,15 +197,14 @@ run_job() {
   OVERRIDE_BACKEND="ollama" \
   OVERRIDE_MODEL="${model}" \
   OVERRIDE_OLLAMA_HOST="${ollama_host}" \
-  OVERRIDE_SAMPLES="${samples}" \
-  OVERRIDE_DEBUG_ITERS="${debug}" \
+  OVERRIDE_LOOP_BUDGET="${budget}" \
   OVERRIDE_TIMEOUT_S="${timeout}" \
   OVERRIDE_SHARD_COUNT="${shards}" \
   OVERRIDE_LIMIT="${limit}" \
   ./deploy/k8s/run-bench.sh
 
   # Merge shard DBs into one DB per run.
-  local merged_db="${suite_dir}/${bench}-s${samples}-d${debug}-t${timeout}.db"
+  local merged_db="${suite_dir}/${bench}-b${budget}-t${timeout}.db"
   python_shards=()
   while IFS= read -r p; do
     [[ -n "${p}" ]] || continue
@@ -219,7 +217,7 @@ run_job() {
   fi
 
   uv run mcode merge-shards --out "${merged_db}" --force "${python_shards[@]}"
-  uv run mcode results --db "${merged_db}" --benchmark "${bench}" >"${suite_dir}/${bench}-s${samples}-d${debug}-t${timeout}.results.txt"
+  uv run mcode results --db "${merged_db}" --benchmark "${bench}" >"${suite_dir}/${bench}-b${budget}-t${timeout}.results.txt"
   echo "Merged: ${merged_db}"
 }
 
@@ -229,17 +227,17 @@ if [[ "${smoke}" == "1" ]]; then
   echo "MBPP:     1 config (LIMIT=10)"
   echo "SWE-lite: gold LIMIT=2"
 else
-  echo "HumanEval: 4 configs (full)"
-  echo "MBPP:     3 configs (full)"
+  echo "HumanEval: 4 budgets (full)"
+  echo "MBPP:     3 budgets (full)"
   echo "SWE-lite: gold LIMIT=10 + model LIMIT=3"
 fi
 
 mkdir -p "${suite_dir}/raw"
 
 if [[ "${smoke}" == "1" ]]; then
-  run_job humaneval 1 0 90 "${humaneval_shards}" 10
-  run_job humaneval 5 0 90 "${humaneval_shards}" 10
-  run_job mbpp 1 0 90 "${mbpp_shards}" 10
+  run_job humaneval 1 90 "${humaneval_shards}" 10
+  run_job humaneval 5 90 "${humaneval_shards}" 10
+  run_job mbpp 1 90 "${mbpp_shards}" 10
 
   MODE=gold SPLIT=test LIMIT=2 PARALLELISM=1 \
     OUT_DIR="${suite_dir}/swebench-gold" \
@@ -247,14 +245,14 @@ if [[ "${smoke}" == "1" ]]; then
     CLEANUP=1 \
     ./deploy/k8s/run-swebench-lite.sh
 else
-  run_job humaneval 1 0 90 "${humaneval_shards}" ""
-  run_job humaneval 5 0 90 "${humaneval_shards}" ""
-  run_job humaneval 5 1 120 "${humaneval_shards}" ""
-  run_job humaneval 20 1 120 "${humaneval_shards}" ""
+  run_job humaneval 1 90 "${humaneval_shards}" ""
+  run_job humaneval 5 90 "${humaneval_shards}" ""
+  run_job humaneval 5 120 "${humaneval_shards}" ""
+  run_job humaneval 20 120 "${humaneval_shards}" ""
 
-  run_job mbpp 1 0 90 "${mbpp_shards}" ""
-  run_job mbpp 3 0 90 "${mbpp_shards}" ""
-  run_job mbpp 3 1 120 "${mbpp_shards}" ""
+  run_job mbpp 1 90 "${mbpp_shards}" ""
+  run_job mbpp 3 90 "${mbpp_shards}" ""
+  run_job mbpp 3 120 "${mbpp_shards}" ""
 
   MODE=gold SPLIT=test LIMIT=10 PARALLELISM=2 \
     OUT_DIR="${suite_dir}/swebench-gold" \

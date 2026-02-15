@@ -189,8 +189,7 @@ run_id = db.start_run(
     {
         "backend_name": backend,
         "model_id": model,
-        "samples": 1,
-        "max_debug_iterations": 0,
+        "loop_budget": 1,
         "timeout_s": timeout_s,
         "retrieval": False,
         "runner": "openshift-pods",
@@ -272,8 +271,7 @@ for instance_id in expected_ids:
         {
             "task_id": instance_id,
             "passed": 1 if resolved else 0,
-            "samples_generated": 1 if data else 0,
-            "debug_iterations_used": 0,
+            "attempts_used": 1 if data else 0,
             "time_ms": int(data.get("time_ms") or 0) if data else 0,
             "exit_code": None,
             "timed_out": 1 if timed_out else 0,
