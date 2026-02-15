@@ -40,11 +40,9 @@ class LLMSession:
         return opts
 
     def _strategy(self):
-        if self.loop_budget <= 1:
-            return None
         from mellea.stdlib.sampling import RepairTemplateStrategy
 
-        return RepairTemplateStrategy(loop_budget=self.loop_budget)
+        return RepairTemplateStrategy(loop_budget=max(1, self.loop_budget))
 
     def check_available(self) -> None:
         try:
