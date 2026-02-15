@@ -50,11 +50,32 @@ mcode bench humaneval --model granite3.3:8b --limit 10
 - `--timeout`: seconds per execution attempt.
 - `--limit`: run the first N tasks.
 - `--shard-count/--shard-index`: split tasks across multiple runs for parallelism.
+- `--strategy`: sampling strategy (`repair` or `sofai`; default: `repair`).
+- `--s2-model`: model ID for the SOFAI S2 (slow/large) solver. Required when `--strategy=sofai`.
+- `--s2-backend`: backend for the S2 solver (default: `ollama`).
+- `--s2-mode`: what context the S2 solver sees: `fresh_start`, `continue_chat`, or `best_attempt` (default).
 - `--sandbox`:
   - `docker` (default): runs code in a Docker container (network disabled).
   - `process`: runs code directly as a local subprocess (useful inside locked-down containers / k8s Jobs).
     This is not safe isolation; prefer `docker` when you can.
 - `--retrieval`: reserved flag; currently non-functional.
+
+### SOFAI strategy
+
+SOFAI is a two-tier strategy from mellea 0.3.1. A fast S1 model retries with repair feedback (like `--strategy repair`). If S1 fails, a larger S2 model gets one shot at solving the task.
+
+```bash
+mcode bench mbpp \
+  --model granite4:latest \
+  --strategy sofai \
+  --s2-model granite4:32b \
+  --loop-budget 5
+```
+
+S2 solver modes:
+- `best_attempt` (default): S2 sees the original task + S1's best attempt + failure feedback.
+- `continue_chat`: S2 sees the full S1 conversation history.
+- `fresh_start`: S2 sees only the original task (clean slate).
 
 ### Parallel / Kubernetes runs
 

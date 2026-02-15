@@ -107,6 +107,10 @@ Main knobs:
 - `LOOP_BUDGET`: mellea retry budget per task (stops early on the first pass)
 - `TIMEOUT_S`: seconds per code execution attempt
 - `SHARD_COUNT`: number of shards (the indexed Job completions)
+- `STRATEGY`: `repair` (default) or `sofai`
+- `S2_MODEL`: model ID for the SOFAI S2 solver (required when `STRATEGY=sofai`)
+- `S2_BACKEND`: backend for S2 (default: `ollama`)
+- `S2_MODE`: `fresh_start`, `continue_chat`, or `best_attempt` (default)
 
 Backend selection:
 - vLLM (OpenAI-compatible): `BACKEND=openai` + `OPENAI_BASE_URL=http://vllm:8000/v1`
