@@ -103,9 +103,16 @@ class LLMSession:
                 "install dependencies with `uv pip install -e .`"
             ) from e
 
+        ctx = None
+        if self.strategy_name == "sofai":
+            from mellea.stdlib.context import ChatContext
+
+            ctx = ChatContext()
+
         with mellea.start_session(
             backend_name=self.backend_name,
             model_id=self.model_id,
+            ctx=ctx,
         ) as m:
             self._m = m
             try:
@@ -113,6 +120,7 @@ class LLMSession:
                     with mellea.start_session(
                         backend_name=self.s2_backend_name,
                         model_id=self.s2_model_id,
+                        ctx=ChatContext(),
                     ) as s2:
                         self._s2_session = s2
                         try:
