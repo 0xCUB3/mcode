@@ -32,6 +32,10 @@ class BenchConfig:
     loop_budget: int = 3
     temperature: float | None = None
     seed: int | None = None
+    strategy: str = "repair"
+    s2_model_id: str | None = None
+    s2_backend_name: str = "ollama"
+    s2_solver_mode: str = "best_attempt"
     retrieval: bool = False
     timeout_s: int = 60
     sandbox: str = "docker"
@@ -57,6 +61,10 @@ class BenchmarkRunner:
             loop_budget=config.loop_budget,
             temperature=config.temperature,
             seed=config.seed,
+            strategy_name=config.strategy,
+            s2_model_id=config.s2_model_id,
+            s2_backend_name=config.s2_backend_name,
+            s2_solver_mode=config.s2_solver_mode,
         )
         self.sandbox = _make_sandbox(config)
 
