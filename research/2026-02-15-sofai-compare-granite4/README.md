@@ -4,6 +4,8 @@ Goal: compare SOFAI two-tier strategy (8B S1 + 32B S2 escalation) against repair
 
 Baseline: `2026-02-15-mellea-first-verify-granite4` (repair-only, same cluster + S1 model).
 
+HTML snapshot: [`mbpp-sweep.html`](https://raw.githack.com/0xCUB3/mcode/strategy-support/research/2026-02-15-sofai-compare-granite4/mbpp-sweep.html) ([source](mbpp-sweep.html))
+
 Data source:
 
 - `results/2026-02-15-sofai-compare-granite4/sofai-compare/`
