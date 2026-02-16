@@ -24,6 +24,10 @@ class SweepConfig:
     ollama_host: str
     loop_budget: int
     timeout_s: int
+    strategy: str
+    s2_model: str
+    s2_backend: str
+    s2_mode: str
     shard_count: int
     parallelism: int
     limit: int | None
@@ -43,12 +47,14 @@ class SweepConfig:
         benchmark: str,
         loop_budget: int,
         timeout_s: int,
+        strategy: str = "repair",
         limit: int | None,
         ts: str,
     ) -> str:
         limit_part = f"-l{limit}" if limit is not None else ""
-        # Example: mcode-mbpp-b3-t120-l200-20260208-071530
-        return f"mcode-{benchmark}-b{loop_budget}-t{timeout_s}{limit_part}-{ts}"
+        strategy_part = f"-{strategy}" if strategy != "repair" else ""
+        # Example: mcode-mbpp-b3-t120-sofai-l200-20260208-071530
+        return f"mcode-{benchmark}-b{loop_budget}-t{timeout_s}{strategy_part}{limit_part}-{ts}"
 
 
 def _run(
@@ -186,11 +192,16 @@ def _render_configmap(cfg: SweepConfig) -> str:
         "OLLAMA_HOST": cfg.ollama_host,
         "LOOP_BUDGET": str(cfg.loop_budget),
         "TIMEOUT_S": str(cfg.timeout_s),
+        "STRATEGY": cfg.strategy,
         "SHARD_COUNT": str(cfg.shard_count),
         **cfg.extra_env,
     }
     if cfg.limit is not None:
         data["LIMIT"] = str(cfg.limit)
+    if cfg.s2_model:
+        data["S2_MODEL"] = cfg.s2_model
+        data["S2_BACKEND"] = cfg.s2_backend
+        data["S2_MODE"] = cfg.s2_mode
 
     lines = [
         "apiVersion: v1",
@@ -213,6 +224,12 @@ limit_args=""
 if [ -n "${LIMIT:-}" ]; then
   limit_args="--limit ${LIMIT}"
 fi
+strategy_args="--strategy ${STRATEGY}"
+if [ -n "${S2_MODEL:-}" ]; then
+  strategy_args="${strategy_args} --s2-model ${S2_MODEL}"
+  strategy_args="${strategy_args} --s2-backend ${S2_BACKEND}"
+  strategy_args="${strategy_args} --s2-mode ${S2_MODE}"
+fi
 
 status=0
 mcode bench "${BENCHMARK}" \
@@ -224,6 +241,7 @@ mcode bench "${BENCHMARK}" \
   --shard-count "${SHARD_COUNT}" \
   --shard-index "${JOB_COMPLETION_INDEX}" \
   --db "__DB_PATH__" \
+  ${strategy_args} \
   ${limit_args} || status=$?
 
 echo "${status}" > /results/_EXIT_CODE
@@ -1011,6 +1029,26 @@ def main() -> int:
         help="Memory limit for hold container (default: 256Mi)",
     )
     p.add_argument(
+        "--strategy",
+        default="repair",
+        help="Sampling strategy: repair or sofai (default: repair)",
+    )
+    p.add_argument(
+        "--s2-model",
+        default="",
+        help="Model ID for SOFAI S2 solver (required when --strategy=sofai)",
+    )
+    p.add_argument(
+        "--s2-backend",
+        default="ollama",
+        help="Backend for SOFAI S2 solver (default: ollama)",
+    )
+    p.add_argument(
+        "--s2-mode",
+        default="best_attempt",
+        help="SOFAI S2 solver mode: fresh_start|continue_chat|best_attempt",
+    )
+    p.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -1127,6 +1165,7 @@ def main() -> int:
             benchmark=benchmark,
             loop_budget=int(loop_budget),
             timeout_s=int(timeout_s),
+            strategy=args.strategy,
             limit=args.limit,
             ts=run_token,
         )
@@ -1141,6 +1180,10 @@ def main() -> int:
             ollama_host=args.ollama_host,
             loop_budget=int(loop_budget),
             timeout_s=int(timeout_s),
+            strategy=args.strategy,
+            s2_model=args.s2_model,
+            s2_backend=args.s2_backend,
+            s2_mode=args.s2_mode,
             shard_count=int(args.shard_count),
             parallelism=int(args.parallelism),
             limit=args.limit,

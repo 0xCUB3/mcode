@@ -24,7 +24,12 @@ class LLMSession:
     loop_budget: int = 3
     temperature: float | None = None
     seed: int | None = None
+    strategy_name: str = "repair"
+    s2_model_id: str | None = None
+    s2_backend_name: str = "ollama"
+    s2_solver_mode: str = "best_attempt"
     _m: object | None = field(default=None, repr=False)
+    _s2_session: object | None = field(default=None, repr=False)
 
     def _model_options(self, *, system_prompt: str) -> dict:
         from mellea.backends import ModelOption
@@ -42,7 +47,25 @@ class LLMSession:
     def _strategy(self):
         from mellea.stdlib.sampling import RepairTemplateStrategy
 
-        return RepairTemplateStrategy(loop_budget=max(1, self.loop_budget))
+        budget = max(1, self.loop_budget)
+
+        if self.strategy_name == "sofai":
+            from mellea.stdlib.sampling import SOFAISamplingStrategy
+
+            if self._s2_session is None:
+                raise RuntimeError(
+                    "SOFAI strategy requires an active S2 session. "
+                    "Make sure s2_model_id is set and open() has been called."
+                )
+            return SOFAISamplingStrategy(
+                s1_solver_backend=self._m.backend,
+                s2_solver_backend=self._s2_session.backend,
+                s2_solver_mode=self.s2_solver_mode,
+                loop_budget=budget,
+                feedback_strategy="first_error",
+            )
+
+        return RepairTemplateStrategy(loop_budget=budget)
 
     def check_available(self) -> None:
         try:
@@ -80,13 +103,32 @@ class LLMSession:
                 "install dependencies with `uv pip install -e .`"
             ) from e
 
+        ctx = None
+        if self.strategy_name == "sofai":
+            from mellea.stdlib.context import ChatContext
+
+            ctx = ChatContext()
+
         with mellea.start_session(
             backend_name=self.backend_name,
             model_id=self.model_id,
+            ctx=ctx,
         ) as m:
             self._m = m
             try:
-                yield self
+                if self.strategy_name == "sofai" and self.s2_model_id:
+                    with mellea.start_session(
+                        backend_name=self.s2_backend_name,
+                        model_id=self.s2_model_id,
+                        ctx=ChatContext(),
+                    ) as s2:
+                        self._s2_session = s2
+                        try:
+                            yield self
+                        finally:
+                            self._s2_session = None
+                else:
+                    yield self
             finally:
                 self._m = None
 

@@ -370,6 +370,8 @@ def _config_label(r: dict) -> str:
         f"timeout={r.get('timeout_s', '')}",
         "retrieval=on" if r.get("retrieval") else "retrieval=off",
     ]
+    if r.get("strategy") and r["strategy"] != "repair":
+        parts.append(f"strategy={r['strategy']}")
     if "runs" in r:
         parts.append(f"runs={r.get('runs')}")
     return " | ".join(p for p in parts if p and p != " | ")
@@ -1446,10 +1448,19 @@ def _bench_common(
     shard_index: int | None,
     db: Path,
     limit: int | None,
+    strategy: str = "repair",
+    s2_model: str | None = None,
+    s2_backend: str = "ollama",
+    s2_mode: str = "best_attempt",
 ) -> None:
     sandbox_name = sandbox.strip().lower()
     if sandbox_name not in {"docker", "process"}:
         raise typer.BadParameter("Unknown --sandbox. Use docker or process.")
+    strategy_name = strategy.strip().lower()
+    if strategy_name not in {"repair", "sofai"}:
+        raise typer.BadParameter("Unknown --strategy. Use repair or sofai.")
+    if strategy_name == "sofai" and not s2_model:
+        raise typer.BadParameter("--s2-model is required when --strategy=sofai.")
 
     shard_count, shard_index = _validate_shards(shard_count=shard_count, shard_index=shard_index)
     if sandbox_name == "process":
@@ -1471,6 +1482,10 @@ def _bench_common(
         loop_budget=loop_budget,
         temperature=temperature,
         seed=seed,
+        strategy=strategy_name,
+        s2_model_id=s2_model,
+        s2_backend_name=s2_backend,
+        s2_solver_mode=s2_mode,
         retrieval=retrieval,
         timeout_s=timeout_s,
         sandbox=sandbox_name,
@@ -1531,6 +1546,22 @@ def bench_humaneval(
     ] = None,
     db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
     limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
+    strategy: Annotated[
+        str,
+        typer.Option("--strategy", help="Sampling strategy: repair or sofai"),
+    ] = "repair",
+    s2_model: Annotated[
+        str | None,
+        typer.Option("--s2-model", help="Model ID for SOFAI S2 solver (larger model)"),
+    ] = None,
+    s2_backend: Annotated[
+        str,
+        typer.Option("--s2-backend", help="Backend for SOFAI S2 solver"),
+    ] = "ollama",
+    s2_mode: Annotated[
+        str,
+        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
+    ] = "best_attempt",
 ) -> None:
     _bench_common(
         benchmark="humaneval",
@@ -1546,6 +1577,10 @@ def bench_humaneval(
         shard_index=shard_index,
         db=db,
         limit=limit,
+        strategy=strategy,
+        s2_model=s2_model,
+        s2_backend=s2_backend,
+        s2_mode=s2_mode,
     )
 
 
@@ -1590,6 +1625,22 @@ def bench_mbpp(
     ] = None,
     db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
     limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
+    strategy: Annotated[
+        str,
+        typer.Option("--strategy", help="Sampling strategy: repair or sofai"),
+    ] = "repair",
+    s2_model: Annotated[
+        str | None,
+        typer.Option("--s2-model", help="Model ID for SOFAI S2 solver (larger model)"),
+    ] = None,
+    s2_backend: Annotated[
+        str,
+        typer.Option("--s2-backend", help="Backend for SOFAI S2 solver"),
+    ] = "ollama",
+    s2_mode: Annotated[
+        str,
+        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
+    ] = "best_attempt",
 ) -> None:
     _bench_common(
         benchmark="mbpp",
@@ -1605,6 +1656,10 @@ def bench_mbpp(
         shard_index=shard_index,
         db=db,
         limit=limit,
+        strategy=strategy,
+        s2_model=s2_model,
+        s2_backend=s2_backend,
+        s2_mode=s2_mode,
     )
 
 
@@ -1673,7 +1728,29 @@ def bench_swebench_lite(
     ] = None,
     db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
     limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
+    strategy: Annotated[
+        str,
+        typer.Option("--strategy", help="Sampling strategy: repair or sofai"),
+    ] = "repair",
+    s2_model: Annotated[
+        str | None,
+        typer.Option("--s2-model", help="Model ID for SOFAI S2 solver (larger model)"),
+    ] = None,
+    s2_backend: Annotated[
+        str,
+        typer.Option("--s2-backend", help="Backend for SOFAI S2 solver"),
+    ] = "ollama",
+    s2_mode: Annotated[
+        str,
+        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
+    ] = "best_attempt",
 ) -> None:
+    strategy_name = strategy.strip().lower()
+    if strategy_name not in {"repair", "sofai"}:
+        raise typer.BadParameter("Unknown --strategy. Use repair or sofai.")
+    if strategy_name == "sofai" and not s2_model:
+        raise typer.BadParameter("--s2-model is required when --strategy=sofai.")
+
     shard_count, shard_index = _validate_shards(shard_count=shard_count, shard_index=shard_index)
     if shard_count and shard_count > 1 and db == DEFAULT_DB_PATH:
         typer.echo(
@@ -1688,6 +1765,10 @@ def bench_swebench_lite(
         loop_budget=loop_budget,
         temperature=temperature,
         seed=seed,
+        strategy=strategy_name,
+        s2_model_id=s2_model,
+        s2_backend_name=s2_backend,
+        s2_solver_mode=s2_mode,
         retrieval=False,
         timeout_s=timeout_s,
         swebench_split=split,

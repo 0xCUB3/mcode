@@ -23,6 +23,10 @@ Env vars (optional):
   MODEL=...                Default: granite4
   OLLAMA_HOST=...          Default: http://ollama:11434
   PARALLELISM=...          Default: 2 (shards in flight for HumanEval/MBPP)
+  STRATEGY=...             Default: repair (repair or sofai)
+  S2_MODEL=...             SOFAI S2 solver model (required when STRATEGY=sofai)
+  S2_BACKEND=...           Default: ollama
+  S2_MODE=...              Default: best_attempt (fresh_start, continue_chat, best_attempt)
 
   # Sharding defaults (can be overridden per run in the script below)
   HUMANEVAL_SHARDS=...     Default: 10
@@ -59,6 +63,10 @@ model="${MODEL:-granite4}"
 ollama_host="${OLLAMA_HOST:-http://ollama:11434}"
 parallelism="${PARALLELISM:-2}"
 auto_pull="${AUTO_PULL:-1}"
+strategy="${STRATEGY:-repair}"
+s2_model="${S2_MODEL:-}"
+s2_backend="${S2_BACKEND:-ollama}"
+s2_mode="${S2_MODE:-best_attempt}"
 
 humaneval_shards="${HUMANEVAL_SHARDS:-10}"
 mbpp_shards="${MBPP_SHARDS:-20}"
@@ -71,6 +79,10 @@ echo "Backend:     ollama"
 echo "Model:       ${model}"
 echo "Ollama host: ${ollama_host}"
 echo "Parallelism: ${parallelism}"
+echo "Strategy:    ${strategy}"
+if [[ -n "${s2_model}" ]]; then
+  echo "S2 model:    ${s2_model} (backend=${s2_backend}, mode=${s2_mode})"
+fi
 echo "SMOKE:       ${smoke}"
 echo "AUTO_PULL:   ${auto_pull}"
 
@@ -199,6 +211,10 @@ run_job() {
   OVERRIDE_OLLAMA_HOST="${ollama_host}" \
   OVERRIDE_LOOP_BUDGET="${budget}" \
   OVERRIDE_TIMEOUT_S="${timeout}" \
+  OVERRIDE_STRATEGY="${strategy}" \
+  OVERRIDE_S2_MODEL="${s2_model}" \
+  OVERRIDE_S2_BACKEND="${s2_backend}" \
+  OVERRIDE_S2_MODE="${s2_mode}" \
   OVERRIDE_SHARD_COUNT="${shards}" \
   OVERRIDE_LIMIT="${limit}" \
   ./deploy/k8s/run-bench.sh

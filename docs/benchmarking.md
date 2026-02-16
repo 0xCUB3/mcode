@@ -60,6 +60,22 @@ Example sweep:
   --env MCODE_MAX_NEW_TOKENS=1024
 ```
 
+SOFAI sweep (two-tier strategy with a larger S2 model):
+
+```bash
+.venv/bin/python deploy/k8s/oc_bench_sweep.py \
+  --benchmarks mbpp \
+  --model granite4:latest \
+  --strategy sofai \
+  --s2-model granite4:32b \
+  --loop-budget 3,5 \
+  --timeout 90,120 \
+  --shard-count 20 \
+  --parallelism 3 \
+  --mcode-memory-request 1Gi \
+  --mcode-memory-limit 12Gi
+```
+
 Recommended for long runs: set a stable `--run-id` so you can reconnect and resume.
 
 ```bash
