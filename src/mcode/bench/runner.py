@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import time
+import traceback
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -124,7 +125,25 @@ class BenchmarkRunner:
             validation_fn=simple_validate(_sandbox_test),
             check_only=True,
         )
-        result = self.llm.generate_code(task=task, requirements=[req])
+        try:
+            result = self.llm.generate_code(task=task, requirements=[req])
+        except Exception as e:
+            elapsed_ms = int((time.time() - start) * 1000)
+            tb = traceback.format_exc()
+            # Prevent a single dependency/backend failure from killing the whole benchmark shard.
+            return {
+                "task_id": task.task_id,
+                "passed": False,
+                "attempts_used": 0,
+                "time_ms": elapsed_ms,
+                "exit_code": None,
+                "timed_out": False,
+                "stdout": None,
+                "stderr": (tb[-8000:] if tb else None),
+                "error": f"{type(e).__name__}: {e}",
+                "code_sha256": None,
+                **last_run_detail,
+            }
         elapsed_ms = int((time.time() - start) * 1000)
 
         code = _extract_from_json(result.value or "", "code")
@@ -220,12 +239,29 @@ class BenchmarkRunner:
             validation_fn=simple_validate(_patch_test),
             check_only=True,
         )
-        result = self.llm.generate_patch(
-            repo=task.repo,
-            problem_statement=task.problem_statement,
-            hints_text=task.hints_text,
-            requirements=[req],
-        )
+        try:
+            result = self.llm.generate_patch(
+                repo=task.repo,
+                problem_statement=task.problem_statement,
+                hints_text=task.hints_text,
+                requirements=[req],
+            )
+        except Exception as e:
+            elapsed_ms = int((time.time() - start) * 1000)
+            tb = traceback.format_exc()
+            return {
+                "task_id": task.instance_id,
+                "passed": False,
+                "attempts_used": 0,
+                "time_ms": elapsed_ms,
+                "exit_code": None,
+                "timed_out": False,
+                "stdout": None,
+                "stderr": _truncate(tb, max_chars=8000) if tb else None,
+                "error": f"{type(e).__name__}: {e}",
+                "code_sha256": None,
+                **last_detail,
+            }
         elapsed_ms = int((time.time() - start) * 1000)
 
         patch = _extract_from_json(result.value or "", "patch")
