@@ -51,3 +51,9 @@ def test_cli_bench_bigcodebench_instruct_help() -> None:
     runner = CliRunner()
     res = runner.invoke(app, ["bench", "bigcodebench-instruct", "--help"])
     assert res.exit_code == 0
+
+
+def test_cli_bench_swebench_live_help() -> None:
+    runner = CliRunner()
+    res = runner.invoke(app, ["bench", "swebench-live", "--help"])
+    assert res.exit_code == 0

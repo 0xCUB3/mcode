@@ -2071,6 +2071,134 @@ def bench_bigcodebench_instruct(
     )
 
 
+@bench_app.command("swebench-live")
+def bench_swebench_live(
+    model: Annotated[str, typer.Option("--model", help="Mellea model id")],
+    backend: Annotated[str, typer.Option("--backend", help="Mellea backend name")] = "ollama",
+    loop_budget: Annotated[
+        int,
+        typer.Option("--loop-budget", min=1, help="Max attempts per task (with error feedback)"),
+    ] = 3,
+    temperature: Annotated[
+        float | None,
+        typer.Option("--temperature", help="Sampling temperature"),
+    ] = None,
+    seed: Annotated[
+        int | None,
+        typer.Option("--seed", help="Random seed for reproducibility"),
+    ] = None,
+    timeout_s: Annotated[
+        int,
+        typer.Option("--timeout", min=1, help="Seconds per SWE-bench eval attempt"),
+    ] = 1800,
+    split: Annotated[str, typer.Option("--split", help="Dataset split (dev/test)")] = "test",
+    arch: Annotated[
+        str,
+        typer.Option(
+            "--arch",
+            help=("Image arch: auto/x86_64/arm64 (auto prefers x86_64 for prebuilt images)."),
+        ),
+    ] = "auto",
+    namespace: Annotated[
+        str,
+        typer.Option(
+            "--namespace",
+            help=('Prebuilt image namespace (default: swebench); set to "" to build locally.'),
+        ),
+    ] = "swebench",
+    max_workers: Annotated[
+        int,
+        typer.Option("--max-workers", min=1, help="Parallelism for image building"),
+    ] = 4,
+    force_rebuild: Annotated[
+        bool,
+        typer.Option("--force-rebuild", help="Rebuild images even if they exist"),
+    ] = False,
+    mem_limit: Annotated[
+        str,
+        typer.Option("--mem-limit", help="Eval container memory limit"),
+    ] = "4g",
+    pids_limit: Annotated[
+        int,
+        typer.Option("--pids-limit", min=64, help="Eval container process limit"),
+    ] = 512,
+    shard_count: Annotated[
+        int | None,
+        typer.Option("--shard-count", min=1, help="Total shards for parallel runs"),
+    ] = None,
+    shard_index: Annotated[
+        int | None,
+        typer.Option("--shard-index", min=0, help="Shard index (0..shard-count-1)"),
+    ] = None,
+    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
+    limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
+    strategy: Annotated[
+        str,
+        typer.Option("--strategy", help="Sampling strategy: repair or sofai"),
+    ] = "repair",
+    s2_model: Annotated[
+        str | None,
+        typer.Option("--s2-model", help="Model ID for SOFAI S2 solver (larger model)"),
+    ] = None,
+    s2_backend: Annotated[
+        str,
+        typer.Option("--s2-backend", help="Backend for SOFAI S2 solver"),
+    ] = "ollama",
+    s2_mode: Annotated[
+        str,
+        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
+    ] = "best_attempt",
+) -> None:
+    """Run SWE-bench Live (Verified) benchmark."""
+    strategy_name = strategy.strip().lower()
+    if strategy_name not in {"repair", "sofai"}:
+        raise typer.BadParameter("Unknown --strategy. Use repair or sofai.")
+    if strategy_name == "sofai" and not s2_model:
+        raise typer.BadParameter("--s2-model is required when --strategy=sofai.")
+
+    shard_count, shard_index = _validate_shards(shard_count=shard_count, shard_index=shard_index)
+    if shard_count and shard_count > 1 and db == DEFAULT_DB_PATH:
+        typer.echo(
+            "Note: when running shards in parallel, use a unique --db per shard to avoid SQLite "
+            "locks.",
+            err=True,
+        )
+
+    config = BenchConfig(
+        backend_name=backend,
+        model_id=model,
+        loop_budget=loop_budget,
+        temperature=temperature,
+        seed=seed,
+        strategy=strategy_name,
+        s2_model_id=s2_model,
+        s2_backend_name=s2_backend,
+        s2_solver_mode=s2_mode,
+        retrieval=False,
+        timeout_s=timeout_s,
+        swebench_split=split,
+        swebench_namespace=_optional_str(namespace),
+        swebench_arch=None if arch == "auto" else arch,
+        swebench_max_workers=max_workers,
+        swebench_force_rebuild=force_rebuild,
+        swebench_mem_limit=mem_limit,
+        swebench_pids_limit=pids_limit,
+        task_shard_count=shard_count,
+        task_shard_index=shard_index,
+    )
+    runner = BenchmarkRunner(config=config, results_db=ResultsDB(db))
+    summary = runner.run_benchmark("swebench-live", limit=limit)
+    _print_run_summary(
+        summary=summary,
+        benchmark="swebench-live",
+        backend=backend,
+        model=model,
+        loop_budget=loop_budget,
+        timeout_s=timeout_s,
+        retrieval=False,
+    )
+
+
 @bench_app.command("swebench-lite")
 def bench_swebench_lite(
     model: Annotated[str, typer.Option("--model", help="Mellea model id")],
