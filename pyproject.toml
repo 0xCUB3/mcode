@@ -26,6 +26,9 @@ swebench = [
 evalplus = [
   "evalplus>=0.3.0",
 ]
+datasets = [
+  "datasets>=2.14.0",
+]
 
 [project.scripts]
 mcode = "mcode.cli:app"

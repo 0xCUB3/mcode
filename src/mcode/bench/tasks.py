@@ -15,7 +15,9 @@ class Task:
     metadata: dict
 
 
-def load_benchmark(benchmark: str, cache_dir: Path, limit: int | None = None) -> list[Task]:
+def load_benchmark(
+    benchmark: str, cache_dir: Path, limit: int | None = None, **kwargs
+) -> list[Task]:
     name = benchmark.lower().strip()
     if name in {"humaneval", "human-eval"}:
         from mcode.bench.humaneval import load_humaneval
@@ -33,6 +35,10 @@ def load_benchmark(benchmark: str, cache_dir: Path, limit: int | None = None) ->
         from mcode.bench.evalplus import load_mbpp_plus
 
         return list(_limit(load_mbpp_plus(cache_dir), limit))
+    if name == "livecodebench":
+        from mcode.bench.livecodebench import load_livecodebench
+
+        return list(_limit(load_livecodebench(cache_dir, cutoff=kwargs.get("cutoff")), limit))
     raise ValueError(f"Unknown benchmark: {benchmark}")
 
 
