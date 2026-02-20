@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-02-20)
 
 **Core value:** Accurate, reproducible benchmark results across multiple code generation benchmarks with contamination-aware filtering.
-**Current focus:** Phase 2 - LiveCodeBench
+**Current focus:** Phase 3 - BigCodeBench
 
 ## Current Position
 
-Phase: 2 of 5 (LiveCodeBench)
+Phase: 3 of 5 (BigCodeBench)
 Plan: 1 of 1 in current phase
-Status: Phase 2 complete
-Last activity: 2026-02-20 — Plan 02-01 complete (LiveCodeBench loader, stdin/stdout harness, CLI, tests)
+Status: Phase 3 complete
+Last activity: 2026-02-20 — Plan 03-01 complete (BigCodeBench loader, unittest harness, CLI, tests)
 
-Progress: [████░░░░░░] 40%
+Progress: [██████░░░░] 60%
 
 ## Performance Metrics
 
@@ -29,6 +29,7 @@ Progress: [████░░░░░░] 40%
 |-------|-------|-------|----------|
 | 01-evalplus | 1 | 3 min | 3 min |
 | 02-livecodebench | 1 | 3 min | 3 min |
+| 03-bigcodebench | 1 | 4 min | 4 min |
 
 **Recent Trend:**
 - Last 5 plans: 3 min (01-01), 3 min (02-01)
@@ -51,6 +52,8 @@ Recent decisions affecting current work:
 - [Phase 01-evalplus]: Mock uninstalled packages in tests via types.ModuleType injection into sys.modules + importlib.reload
 - [Phase 02-livecodebench]: Use repr() for code embedding in LCB harness to avoid triple-quote injection
 - [Phase 02-livecodebench]: load_benchmark gets **kwargs so lcb_cutoff flows through without breaking existing callers
+- [Phase 03-bigcodebench]: unittest.main(argv=['']) used in BCB harness to avoid sys.argv pytest contamination
+- [Phase 03-bigcodebench]: End-to-end harness tests use unittest.TestLoader directly (exec __main__ doesn't surface TestCase subclasses to unittest.main module discovery)
 
 ### Pending Todos
 
@@ -63,5 +66,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-20
-Stopped at: Completed 02-livecodebench-01-PLAN.md
+Stopped at: Completed 03-bigcodebench-01-PLAN.md
 Resume file: None

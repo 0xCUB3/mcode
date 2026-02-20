@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: EvalPlus** - Add humaneval+ and mbpp+ loader, runner integration, tests, pyproject extras (completed 2026-02-20)
 - [x] **Phase 2: LiveCodeBench** - Add LCB loader with stdin/stdout harness, cutoff filter CLI arg, tests (completed 2026-02-20)
-- [ ] **Phase 3: BigCodeBench** - Add BCB loader with unittest harness, Dockerfile deps, tests
+- [x] **Phase 3: BigCodeBench** - Add BCB loader with unittest harness, Dockerfile deps, tests (completed 2026-02-20)
 - [ ] **Phase 4: SWE-bench Live** - Wire swebench-live into existing SWE-bench loader and CLI
 - [ ] **Phase 5: OC Sweeps + Research** - Run EvalPlus/LCB/BCB sweeps, collect results, write research entry
 
@@ -58,7 +58,10 @@ Plans:
   2. BCB tasks execute via a unittest execution script (not function-call or stdin/stdout style)
   3. BigCodeBench common libs (numpy, pandas, etc.) are present in the sandbox Dockerfile so tasks don't fail on import
   4. Unit tests for the BigCodeBench loader pass with no network calls
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 03-01-PLAN.md — BigCodeBench loader (complete + instruct), unittest harness, Dockerfile deps, CLI commands, and unit tests
 
 ### Phase 4: SWE-bench Live
 **Goal**: SWE-bench Live is a runnable benchmark using the existing SWE-bench infrastructure
@@ -89,6 +92,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 |-------|----------------|--------|-----------|
 | 1. EvalPlus | 1/1 | Complete    | 2026-02-20 |
 | 2. LiveCodeBench | 1/1 | Complete   | 2026-02-20 |
-| 3. BigCodeBench | 0/TBD | Not started | - |
+| 3. BigCodeBench | 1/1 | Complete   | 2026-02-20 |
 | 4. SWE-bench Live | 0/TBD | Not started | - |
 | 5. OC Sweeps + Research | 0/TBD | Not started | - |
