@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: LiveCodeBench** - Add LCB loader with stdin/stdout harness, cutoff filter CLI arg, tests (completed 2026-02-20)
 - [x] **Phase 3: BigCodeBench** - Add BCB loader with unittest harness, Dockerfile deps, tests (completed 2026-02-20)
 - [x] **Phase 4: SWE-bench Live** - Wire swebench-live into existing SWE-bench loader and CLI (completed 2026-02-20)
-- [ ] **Phase 5: OC Sweeps + Research** - Run EvalPlus/LCB/BCB sweeps, collect results, write research entry
+- [x] **Phase 5: OC Sweeps + Research** - Run EvalPlus/LCB/BCB sweeps, collect results, write research entry (completed 2026-02-20)
 
 ## Phase Details
 
@@ -100,4 +100,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 2. LiveCodeBench | 1/1 | Complete   | 2026-02-20 |
 | 3. BigCodeBench | 1/1 | Complete   | 2026-02-20 |
 | 4. SWE-bench Live | 1/1 | Complete    | 2026-02-20 |
-| 5. OC Sweeps + Research | 0/1 | Not started | - |
+| 5. OC Sweeps + Research | 1/1 | Complete   | 2026-02-20 |

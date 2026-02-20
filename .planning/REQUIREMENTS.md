@@ -26,7 +26,7 @@
 - [x] **CLI-01**: --lcb-cutoff CLI arg filters LiveCodeBench by release_date
 - [x] **CLI-02**: BenchConfig gains lcb_cutoff field
 - [ ] **CLI-03**: All new benchmarks wired into CLI bench subcommand
-- [ ] **CLI-04**: OC sweep supports LCB_CUTOFF env var passthrough
+- [x] **CLI-04**: OC sweep supports LCB_CUTOFF env var passthrough
 
 ### Infrastructure
 
@@ -43,14 +43,14 @@
 
 ### OC Sweeps
 
-- [ ] **OC-01**: OC sweep for humaneval+ and mbpp+ with appropriate shard/parallelism params
-- [ ] **OC-02**: OC sweep for livecodebench with LCB_CUTOFF=2024-06-01
-- [ ] **OC-03**: OC sweep for bigcodebench-complete and bigcodebench-instruct
-- [ ] **OC-04**: Results collected and merged per existing research/ patterns
+- [x] **OC-01**: OC sweep for humaneval+ and mbpp+ with appropriate shard/parallelism params
+- [x] **OC-02**: OC sweep for livecodebench with LCB_CUTOFF=2024-06-01
+- [x] **OC-03**: OC sweep for bigcodebench-complete and bigcodebench-instruct
+- [x] **OC-04**: Results collected and merged per existing research/ patterns
 
 ### Research
 
-- [ ] **RES-01**: Research entry with README following existing format
+- [x] **RES-01**: Research entry with README following existing format
 
 ## v2 Requirements
 
@@ -85,7 +85,7 @@
 | CLI-01 | Phase 2 | Complete |
 | CLI-02 | Phase 2 | Complete |
 | CLI-03 | Phase 4 | Pending |
-| CLI-04 | Phase 5 | Pending |
+| CLI-04 | Phase 5 | Complete |
 | INF-01 | Phase 1 | Complete |
 | INF-02 | Phase 2 | Complete |
 | INF-03 | Phase 3 | Complete |
@@ -93,11 +93,11 @@
 | TEST-01 | Phase 1 | Complete |
 | TEST-02 | Phase 2 | Complete |
 | TEST-03 | Phase 3 | Complete |
-| OC-01 | Phase 5 | Pending |
-| OC-02 | Phase 5 | Pending |
-| OC-03 | Phase 5 | Pending |
-| OC-04 | Phase 5 | Pending |
-| RES-01 | Phase 5 | Pending |
+| OC-01 | Phase 5 | Complete |
+| OC-02 | Phase 5 | Complete |
+| OC-03 | Phase 5 | Complete |
+| OC-04 | Phase 5 | Complete |
+| RES-01 | Phase 5 | Complete |
 
 **Coverage:**
 - v1 requirements: 26 total
