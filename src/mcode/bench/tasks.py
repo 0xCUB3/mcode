@@ -39,6 +39,14 @@ def load_benchmark(
         from mcode.bench.livecodebench import load_livecodebench
 
         return list(_limit(load_livecodebench(cache_dir, cutoff=kwargs.get("cutoff")), limit))
+    if name == "bigcodebench-complete":
+        from mcode.bench.bigcodebench import load_bigcodebench
+
+        return list(_limit(load_bigcodebench(cache_dir, variant="complete"), limit))
+    if name == "bigcodebench-instruct":
+        from mcode.bench.bigcodebench import load_bigcodebench
+
+        return list(_limit(load_bigcodebench(cache_dir, variant="instruct"), limit))
     raise ValueError(f"Unknown benchmark: {benchmark}")
 
 

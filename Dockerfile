@@ -11,6 +11,9 @@ COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 RUN uv pip install --system .
 
+RUN pip install --no-cache-dir \
+    numpy pandas matplotlib seaborn scipy scikit-learn requests
+
 RUN mkdir -p /work /tmp/mcode-cache && \
     chgrp -R 0 /work /tmp/mcode-cache && \
     chmod -R g=u /work /tmp/mcode-cache
