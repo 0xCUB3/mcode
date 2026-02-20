@@ -39,3 +39,15 @@ def test_cli_bench_livecodebench_help() -> None:
     runner = CliRunner()
     res = runner.invoke(app, ["bench", "livecodebench", "--help"])
     assert res.exit_code == 0
+
+
+def test_cli_bench_bigcodebench_complete_help() -> None:
+    runner = CliRunner()
+    res = runner.invoke(app, ["bench", "bigcodebench-complete", "--help"])
+    assert res.exit_code == 0
+
+
+def test_cli_bench_bigcodebench_instruct_help() -> None:
+    runner = CliRunner()
+    res = runner.invoke(app, ["bench", "bigcodebench-instruct", "--help"])
+    assert res.exit_code == 0

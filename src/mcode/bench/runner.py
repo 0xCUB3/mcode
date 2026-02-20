@@ -356,7 +356,7 @@ def _combine_for_eval(task: Task, code: str) -> str:
             f"{task.test_code}\n\n"
             "if __name__ == '__main__':\n"
             "    import unittest\n"
-            "    unittest.main()\n"
+            "    unittest.main(argv=[''])\n"
         )
 
     raise ValueError(f"Unsupported benchmark for eval: {task.benchmark!r}")
