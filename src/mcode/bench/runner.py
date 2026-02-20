@@ -350,6 +350,15 @@ def _combine_for_eval(task: Task, code: str) -> str:
             "    raise SystemExit(f'{_failed}/{len(_inputs)} test cases failed')\n"
         )
 
+    if task.benchmark.startswith("bigcodebench"):
+        return (
+            f"{code}\n\n"
+            f"{task.test_code}\n\n"
+            "if __name__ == '__main__':\n"
+            "    import unittest\n"
+            "    unittest.main()\n"
+        )
+
     raise ValueError(f"Unsupported benchmark for eval: {task.benchmark!r}")
 
 
@@ -462,5 +471,12 @@ def _dataset_metadata(benchmark: str, *, cache_dir: Path) -> dict[str, str | Non
             "name": "LiveCodeBench",
             "source": "livecodebench/code_generation_lite",
             "version_tag": "release_v2",
+        }
+    if name.startswith("bigcodebench"):
+        return {
+            "name": "BigCodeBench",
+            "source": "bigcode/bigcodebench",
+            "split": "v0.1.4",
+            "variant": name.replace("bigcodebench-", ""),
         }
     return None

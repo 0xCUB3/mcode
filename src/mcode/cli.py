@@ -1911,6 +1911,166 @@ def bench_livecodebench(
     )
 
 
+@bench_app.command("bigcodebench-complete")
+def bench_bigcodebench_complete(
+    model: Annotated[str, typer.Option("--model", help="Mellea model id")],
+    backend: Annotated[str, typer.Option("--backend", help="Mellea backend name")] = "ollama",
+    loop_budget: Annotated[
+        int,
+        typer.Option("--loop-budget", min=1, help="Max attempts per task (with error feedback)"),
+    ] = 3,
+    temperature: Annotated[
+        float | None,
+        typer.Option("--temperature", help="Sampling temperature"),
+    ] = None,
+    seed: Annotated[
+        int | None,
+        typer.Option("--seed", help="Random seed for reproducibility"),
+    ] = None,
+    timeout_s: Annotated[
+        int,
+        typer.Option("--timeout", min=1, help="Seconds per sandbox execution attempt"),
+    ] = 60,
+    retrieval: Annotated[
+        bool,
+        typer.Option("--retrieval/--no-retrieval", help="Reserved (no effect yet)"),
+    ] = False,
+    sandbox: Annotated[
+        str,
+        typer.Option(
+            "--sandbox",
+            help="Execution sandbox for code evaluation (docker or process).",
+        ),
+    ] = "docker",
+    shard_count: Annotated[
+        int | None,
+        typer.Option("--shard-count", min=1, help="Total shards for parallel runs"),
+    ] = None,
+    shard_index: Annotated[
+        int | None,
+        typer.Option("--shard-index", min=0, help="Shard index (0..shard-count-1)"),
+    ] = None,
+    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
+    limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
+    strategy: Annotated[
+        str,
+        typer.Option("--strategy", help="Sampling strategy: repair or sofai"),
+    ] = "repair",
+    s2_model: Annotated[
+        str | None,
+        typer.Option("--s2-model", help="Model ID for SOFAI S2 solver (larger model)"),
+    ] = None,
+    s2_backend: Annotated[
+        str,
+        typer.Option("--s2-backend", help="Backend for SOFAI S2 solver"),
+    ] = "ollama",
+    s2_mode: Annotated[
+        str,
+        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
+    ] = "best_attempt",
+) -> None:
+    """Run BigCodeBench complete (docstring completion) benchmark."""
+    _bench_common(
+        benchmark="bigcodebench-complete",
+        backend=backend,
+        model=model,
+        loop_budget=loop_budget,
+        temperature=temperature,
+        seed=seed,
+        timeout_s=timeout_s,
+        retrieval=retrieval,
+        sandbox=sandbox,
+        shard_count=shard_count,
+        shard_index=shard_index,
+        db=db,
+        limit=limit,
+        strategy=strategy,
+        s2_model=s2_model,
+        s2_backend=s2_backend,
+        s2_mode=s2_mode,
+    )
+
+
+@bench_app.command("bigcodebench-instruct")
+def bench_bigcodebench_instruct(
+    model: Annotated[str, typer.Option("--model", help="Mellea model id")],
+    backend: Annotated[str, typer.Option("--backend", help="Mellea backend name")] = "ollama",
+    loop_budget: Annotated[
+        int,
+        typer.Option("--loop-budget", min=1, help="Max attempts per task (with error feedback)"),
+    ] = 3,
+    temperature: Annotated[
+        float | None,
+        typer.Option("--temperature", help="Sampling temperature"),
+    ] = None,
+    seed: Annotated[
+        int | None,
+        typer.Option("--seed", help="Random seed for reproducibility"),
+    ] = None,
+    timeout_s: Annotated[
+        int,
+        typer.Option("--timeout", min=1, help="Seconds per sandbox execution attempt"),
+    ] = 60,
+    retrieval: Annotated[
+        bool,
+        typer.Option("--retrieval/--no-retrieval", help="Reserved (no effect yet)"),
+    ] = False,
+    sandbox: Annotated[
+        str,
+        typer.Option(
+            "--sandbox",
+            help="Execution sandbox for code evaluation (docker or process).",
+        ),
+    ] = "docker",
+    shard_count: Annotated[
+        int | None,
+        typer.Option("--shard-count", min=1, help="Total shards for parallel runs"),
+    ] = None,
+    shard_index: Annotated[
+        int | None,
+        typer.Option("--shard-index", min=0, help="Shard index (0..shard-count-1)"),
+    ] = None,
+    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
+    limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
+    strategy: Annotated[
+        str,
+        typer.Option("--strategy", help="Sampling strategy: repair or sofai"),
+    ] = "repair",
+    s2_model: Annotated[
+        str | None,
+        typer.Option("--s2-model", help="Model ID for SOFAI S2 solver (larger model)"),
+    ] = None,
+    s2_backend: Annotated[
+        str,
+        typer.Option("--s2-backend", help="Backend for SOFAI S2 solver"),
+    ] = "ollama",
+    s2_mode: Annotated[
+        str,
+        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
+    ] = "best_attempt",
+) -> None:
+    """Run BigCodeBench instruct (natural language) benchmark."""
+    _bench_common(
+        benchmark="bigcodebench-instruct",
+        backend=backend,
+        model=model,
+        loop_budget=loop_budget,
+        temperature=temperature,
+        seed=seed,
+        timeout_s=timeout_s,
+        retrieval=retrieval,
+        sandbox=sandbox,
+        shard_count=shard_count,
+        shard_index=shard_index,
+        db=db,
+        limit=limit,
+        strategy=strategy,
+        s2_model=s2_model,
+        s2_backend=s2_backend,
+        s2_mode=s2_mode,
+    )
+
+
 @bench_app.command("swebench-lite")
 def bench_swebench_lite(
     model: Annotated[str, typer.Option("--model", help="Mellea model id")],
