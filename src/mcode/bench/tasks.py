@@ -25,6 +25,14 @@ def load_benchmark(benchmark: str, cache_dir: Path, limit: int | None = None) ->
         from mcode.bench.mbpp import load_mbpp
 
         return list(_limit(load_mbpp(cache_dir), limit))
+    if name == "humaneval+":
+        from mcode.bench.evalplus import load_humaneval_plus
+
+        return list(_limit(load_humaneval_plus(cache_dir), limit))
+    if name == "mbpp+":
+        from mcode.bench.evalplus import load_mbpp_plus
+
+        return list(_limit(load_mbpp_plus(cache_dir), limit))
     raise ValueError(f"Unknown benchmark: {benchmark}")
 
 

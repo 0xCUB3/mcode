@@ -23,6 +23,9 @@ dev = [
 swebench = [
   "swebench>=4.1.0",
 ]
+evalplus = [
+  "evalplus>=0.3.0",
+]
 
 [project.scripts]
 mcode = "mcode.cli:app"
