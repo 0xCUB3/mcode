@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: EvalPlus** - Add humaneval+ and mbpp+ loader, runner integration, tests, pyproject extras (completed 2026-02-20)
 - [x] **Phase 2: LiveCodeBench** - Add LCB loader with stdin/stdout harness, cutoff filter CLI arg, tests (completed 2026-02-20)
 - [x] **Phase 3: BigCodeBench** - Add BCB loader with unittest harness, Dockerfile deps, tests (completed 2026-02-20)
-- [ ] **Phase 4: SWE-bench Live** - Wire swebench-live into existing SWE-bench loader and CLI
+- [x] **Phase 4: SWE-bench Live** - Wire swebench-live into existing SWE-bench loader and CLI (completed 2026-02-20)
 - [ ] **Phase 5: OC Sweeps + Research** - Run EvalPlus/LCB/BCB sweeps, collect results, write research entry
 
 ## Phase Details
@@ -74,7 +74,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 04-01-PLAN.md — Wire swebench-live loader, runner dispatch, CLI command, and tests
+- [x] 04-01-PLAN.md — Wire swebench-live loader, runner dispatch, CLI command, and tests
 
 ### Phase 5: OC Sweeps + Research
 **Goal**: EvalPlus, LiveCodeBench, and BigCodeBench sweep results are collected and documented in the research folder
@@ -96,5 +96,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 1. EvalPlus | 1/1 | Complete    | 2026-02-20 |
 | 2. LiveCodeBench | 1/1 | Complete   | 2026-02-20 |
 | 3. BigCodeBench | 1/1 | Complete   | 2026-02-20 |
-| 4. SWE-bench Live | 0/1 | Not started | - |
+| 4. SWE-bench Live | 1/1 | Complete    | 2026-02-20 |
 | 5. OC Sweeps + Research | 0/TBD | Not started | - |
