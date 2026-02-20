@@ -230,6 +230,10 @@ if [ -n "${S2_MODEL:-}" ]; then
   strategy_args="${strategy_args} --s2-backend ${S2_BACKEND}"
   strategy_args="${strategy_args} --s2-mode ${S2_MODE}"
 fi
+lcb_cutoff_args=""
+if [ -n "${LCB_CUTOFF:-}" ]; then
+  lcb_cutoff_args="--lcb-cutoff ${LCB_CUTOFF}"
+fi
 
 status=0
 mcode bench "${BENCHMARK}" \
@@ -242,7 +246,8 @@ mcode bench "${BENCHMARK}" \
   --shard-index "${JOB_COMPLETION_INDEX}" \
   --db "__DB_PATH__" \
   ${strategy_args} \
-  ${limit_args} || status=$?
+  ${limit_args} \
+  ${lcb_cutoff_args} || status=$?
 
 echo "${status}" > /results/_EXIT_CODE
 touch /results/_READY
@@ -826,8 +831,7 @@ def _fetch_results(
             reason_text = ""
             if waiting_reasons:
                 top = "; ".join(
-                    f"{count}x {_short_reason(reason)}"
-                    for reason, count in waiting_reasons[:2]
+                    f"{count}x {_short_reason(reason)}" for reason, count in waiting_reasons[:2]
                 )
                 reason_text = f" waiting={top}"
             print(
@@ -871,11 +875,7 @@ def _fetch_results(
                 elif no_active_pods:
                     auto_reduce_reason = "no active pods"
 
-                if (
-                    auto_reduce_reason
-                    and auto_reduce_parallelism
-                    and current_parallelism > 1
-                ):
+                if auto_reduce_reason and auto_reduce_parallelism and current_parallelism > 1:
                     new_parallelism = max(1, current_parallelism // 2)
                     if new_parallelism < current_parallelism:
                         _patch_job_parallelism(cfg.namespace, cfg.job_name, new_parallelism)
@@ -892,8 +892,7 @@ def _fetch_results(
                 recent_text = "; ".join(_event_text(event) for event in recent_events) or "none"
                 waiting_text = (
                     "; ".join(
-                        f"{count}x {_short_reason(reason)}"
-                        for reason, count in waiting_reasons[:3]
+                        f"{count}x {_short_reason(reason)}" for reason, count in waiting_reasons[:3]
                     )
                     if waiting_reasons
                     else "none"
@@ -1068,8 +1067,7 @@ def main() -> int:
         "--resume",
         action="store_true",
         help=(
-            "Resume latest (or --run-id) run: reattach to existing jobs "
-            "and skip completed configs"
+            "Resume latest (or --run-id) run: reattach to existing jobs and skip completed configs"
         ),
     )
     p.add_argument(
@@ -1158,9 +1156,7 @@ def main() -> int:
     extra_env = _parse_kv_list(args.env)
     run_token = _job_token(run_id)
 
-    for benchmark, loop_budget, timeout_s in product(
-        benchmarks, budget_list, timeout_list
-    ):
+    for benchmark, loop_budget, timeout_s in product(benchmarks, budget_list, timeout_list):
         job_name = SweepConfig.make_job_name(
             benchmark=benchmark,
             loop_budget=int(loop_budget),

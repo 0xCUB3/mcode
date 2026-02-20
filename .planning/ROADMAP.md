@@ -84,7 +84,10 @@ Plans:
   1. OC sweeps for humaneval+, mbpp+, livecodebench (with LCB_CUTOFF), bigcodebench-complete, and bigcodebench-instruct complete and shards merge cleanly
   2. LCB_CUTOFF env var passes through the OC sweep command so contamination date is reproducible
   3. Research entry README exists following the existing format with sweep commands, parameters, and result tables
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 05-01-PLAN.md — Wire LCB_CUTOFF passthrough in OC sweep, create research entry with sweep commands
 
 ## Progress
 
@@ -97,4 +100,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 2. LiveCodeBench | 1/1 | Complete   | 2026-02-20 |
 | 3. BigCodeBench | 1/1 | Complete   | 2026-02-20 |
 | 4. SWE-bench Live | 1/1 | Complete    | 2026-02-20 |
-| 5. OC Sweeps + Research | 0/TBD | Not started | - |
+| 5. OC Sweeps + Research | 0/1 | Not started | - |
