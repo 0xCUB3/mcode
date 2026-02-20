@@ -9,7 +9,7 @@ RUN pip install --no-cache-dir uv
 WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
-RUN uv pip install --system .
+RUN uv pip install --system '.[evalplus,datasets]'
 
 RUN pip install --no-cache-dir \
     numpy pandas matplotlib seaborn scipy scikit-learn requests
