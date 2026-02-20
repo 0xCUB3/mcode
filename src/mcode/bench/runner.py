@@ -75,6 +75,9 @@ class BenchmarkRunner:
         if name in {"swebench-lite", "swebench_lite"}:
             self.llm.check_available()
             return self._run_swebench_lite(limit=limit)
+        if name in {"swebench-live", "swebench_live"}:
+            self.llm.check_available()
+            return self._run_swebench_live(limit=limit)
 
         self.sandbox.check_available()
         self.sandbox.ensure_image()
@@ -196,6 +199,50 @@ class BenchmarkRunner:
         total = 0
         with self.llm.open(), Progress() as progress:
             t = progress.add_task("[bold]Running swebench-lite[/bold]", total=len(tasks))
+            for task in tasks:
+                total += 1
+                result = self._run_swebench_task(task, swe_sandbox=swe_sandbox, run_id=run_id)
+                if result["passed"]:
+                    passed += 1
+                self.results_db.save_task_result(run_id, result)
+                progress.advance(t, 1)
+
+        return RunSummary(run_id=run_id, total=total, passed=passed)
+
+    def _run_swebench_live(self, *, limit: int | None) -> RunSummary:
+        from mcode.bench.swebench_lite import load_swebench_lite
+        from mcode.execution.swebench import SWEbenchSandbox
+
+        tasks = load_swebench_lite(
+            self.config.cache_dir,
+            split=self.config.swebench_split,
+            limit=limit,
+            dataset_name="SWE-bench/SWE-bench_Verified",
+            benchmark="swebench-live",
+        )
+        tasks = _apply_task_shard(tasks, self.config.task_shard_count, self.config.task_shard_index)
+        config = _augment_run_config(asdict(self.config))
+        config["dataset"] = {
+            "name": "SWE-bench_Verified",
+            "hf_dataset": "SWE-bench/SWE-bench_Verified",
+            "split": self.config.swebench_split,
+        }
+        run_id = self.results_db.start_run("swebench-live", config)
+
+        swe_sandbox = SWEbenchSandbox(
+            namespace=self.config.swebench_namespace,
+            arch=self.config.swebench_arch,
+            max_workers=self.config.swebench_max_workers,
+            mem_limit=self.config.swebench_mem_limit,
+            pids_limit=self.config.swebench_pids_limit,
+            force_rebuild=self.config.swebench_force_rebuild,
+        )
+        swe_sandbox.prepare_images([t.raw_instance for t in tasks])
+
+        passed = 0
+        total = 0
+        with self.llm.open(), Progress() as progress:
+            t = progress.add_task("[bold]Running swebench-live[/bold]", total=len(tasks))
             for task in tasks:
                 total += 1
                 result = self._run_swebench_task(task, swe_sandbox=swe_sandbox, run_id=run_id)

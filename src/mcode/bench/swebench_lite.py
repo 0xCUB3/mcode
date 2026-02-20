@@ -22,12 +22,18 @@ def load_swebench_lite(
     split: str = "test",
     limit: int | None = None,
     instance_ids: list[str] | None = None,
+    dataset_name: str = "SWE-bench/SWE-bench_Lite",
+    benchmark: str = "swebench-lite",
 ) -> list[SWEbenchLiteTask]:
     """
-    Load SWE-bench Lite instances via the official `swebench` package.
+    Load SWE-bench Lite (or Verified) instances via the official `swebench` package.
 
     Note: SWE-bench uses Hugging Face datasets internally and manages its own caching.
     The `cache_dir` parameter is accepted for API symmetry but is not currently used.
+
+    Args:
+        dataset_name: HuggingFace dataset path (e.g. "SWE-bench/SWE-bench_Verified").
+        benchmark: Value to set on each task's `benchmark` field.
     """
     _ = cache_dir
     try:
@@ -40,7 +46,7 @@ def load_swebench_lite(
             "  `uv tool install -e '.[swebench]'`"
         ) from e
 
-    instances: list[dict] = load_swebench_dataset("SWE-bench/SWE-bench_Lite", split, instance_ids)
+    instances: list[dict] = load_swebench_dataset(dataset_name, split, instance_ids)
     if limit is not None:
         instances = instances[:limit]
 
@@ -48,7 +54,7 @@ def load_swebench_lite(
     for inst in instances:
         tasks.append(
             SWEbenchLiteTask(
-                benchmark="swebench-lite",
+                benchmark=benchmark,
                 instance_id=str(inst["instance_id"]),
                 repo=str(inst["repo"]),
                 base_commit=str(inst["base_commit"]),

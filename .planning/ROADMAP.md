@@ -71,7 +71,10 @@ Plans:
   1. `mcode bench swebench-live` dispatches through the existing SWE-bench pipeline without new infrastructure
   2. swebench-live appears as a valid choice in the CLI bench subcommand alongside all other new benchmarks
   3. No new sandbox or runner code added — existing SWEbenchSandbox handles it
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 04-01-PLAN.md — Wire swebench-live loader, runner dispatch, CLI command, and tests
 
 ### Phase 5: OC Sweeps + Research
 **Goal**: EvalPlus, LiveCodeBench, and BigCodeBench sweep results are collected and documented in the research folder
@@ -93,5 +96,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 1. EvalPlus | 1/1 | Complete    | 2026-02-20 |
 | 2. LiveCodeBench | 1/1 | Complete   | 2026-02-20 |
 | 3. BigCodeBench | 1/1 | Complete   | 2026-02-20 |
-| 4. SWE-bench Live | 0/TBD | Not started | - |
+| 4. SWE-bench Live | 0/1 | Not started | - |
 | 5. OC Sweeps + Research | 0/TBD | Not started | - |
