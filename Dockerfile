@@ -14,9 +14,9 @@ RUN uv pip install --system '.[evalplus,datasets]'
 RUN pip install --no-cache-dir \
     numpy pandas matplotlib seaborn scipy scikit-learn requests
 
-RUN mkdir -p /work /tmp/mcode-cache && \
-    chgrp -R 0 /work /tmp/mcode-cache && \
-    chmod -R g=u /work /tmp/mcode-cache
+RUN mkdir -p /work /tmp/mcode-cache /tmp/.cache && \
+    chgrp -R 0 /work /tmp/mcode-cache /tmp/.cache && \
+    chmod -R g=u /work /tmp/mcode-cache /tmp/.cache
 
 ENV MCODE_CACHE_DIR=/tmp/mcode-cache
 
