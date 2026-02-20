@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import json
+import re
 import subprocess
 import sys
 import time
@@ -53,8 +54,9 @@ class SweepConfig:
     ) -> str:
         limit_part = f"-l{limit}" if limit is not None else ""
         strategy_part = f"-{strategy}" if strategy != "repair" else ""
+        safe_bench = re.sub(r"[^a-z0-9-]", "", benchmark.lower().replace("+", "plus"))
         # Example: mcode-mbpp-b3-t120-sofai-l200-20260208-071530
-        return f"mcode-{benchmark}-b{loop_budget}-t{timeout_s}{strategy_part}{limit_part}-{ts}"
+        return f"mcode-{safe_bench}-b{loop_budget}-t{timeout_s}{strategy_part}{limit_part}-{ts}"
 
 
 def _run(
@@ -158,7 +160,7 @@ def _latest_run_id(out_root: Path) -> str | None:
 def _job_token(run_id: str) -> str:
     # Keep job names compact and k8s-safe.
     token = _normalize_run_id(run_id)
-    return token[-18:]
+    return token[-40:]
 
 
 def _current_namespace() -> str:
