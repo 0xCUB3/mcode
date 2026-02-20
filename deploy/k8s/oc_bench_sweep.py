@@ -550,10 +550,23 @@ def _exec_hold(
 ) -> subprocess.CompletedProcess[str]:
     try:
         return _run(
-            ["oc", "-n", namespace, "exec", "-c", "hold", pod_name, "--", "bash", "-lc", cmd],
+            [
+                "oc",
+                "-n",
+                namespace,
+                f"--request-timeout={timeout_s}s",
+                "exec",
+                "-c",
+                "hold",
+                pod_name,
+                "--",
+                "bash",
+                "-c",
+                cmd,
+            ],
             capture=True,
             check=False,
-            timeout_s=timeout_s,
+            timeout_s=timeout_s + 5,
         )
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(
