@@ -147,11 +147,7 @@ class BenchmarkRunner:
         elapsed_ms = int((time.time() - start) * 1000)
 
         code = _extract_from_json(result.value or "", "code")
-        sha = (
-            hashlib.sha256(code.encode("utf-8", errors="ignore")).hexdigest()
-            if code
-            else None
-        )
+        sha = hashlib.sha256(code.encode("utf-8", errors="ignore")).hexdigest() if code else None
 
         return {
             "task_id": task.task_id,
@@ -265,11 +261,7 @@ class BenchmarkRunner:
         elapsed_ms = int((time.time() - start) * 1000)
 
         patch = _extract_from_json(result.value or "", "patch")
-        sha = (
-            hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest()
-            if patch
-            else None
-        )
+        sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest() if patch else None
 
         return {
             "task_id": task.instance_id,
@@ -304,13 +296,25 @@ def _combine_for_eval(task: Task, code: str) -> str:
         )
 
     if task.benchmark == "mbpp":
+        return f"{code}\n\n# --- mbpp tests ---\n{task.test_code}\n"
+
+    if task.benchmark == "humaneval+":
+        entry = task.entry_point
+        if not entry:
+            raise ValueError(f"HumanEval+ task missing entry_point: {task.task_id}")
         return (
             f"{code}\n\n"
-            "# --- mbpp tests ---\n"
-            f"{task.test_code}\n"
+            f"{task.test_code}\n\n"
+            "def __mcode_main():\n"
+            f"    check({entry})\n\n"
+            "if __name__ == '__main__':\n"
+            "    __mcode_main()\n"
         )
 
-    raise ValueError(f"Unsupported benchmark for eval: {task.benchmark}")
+    if task.benchmark == "mbpp+":
+        return f"{code}\n\n# --- mbpp tests ---\n{task.test_code}\n"
+
+    raise ValueError(f"Unsupported benchmark for eval: {task.benchmark!r}")
 
 
 def _make_sandbox(config: BenchConfig):
@@ -413,4 +417,8 @@ def _dataset_metadata(benchmark: str, *, cache_dir: Path) -> dict[str, str | Non
             "url": MBPP_URL,
             "sha256": _sha256_path(path),
         }
+    if name == "humaneval+":
+        return {"name": "HumanEval+", "source": "evalplus"}
+    if name == "mbpp+":
+        return {"name": "MBPP+", "source": "evalplus"}
     return None

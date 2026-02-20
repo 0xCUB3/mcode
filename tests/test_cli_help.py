@@ -17,6 +17,18 @@ def test_cli_bench_swebench_help() -> None:
     assert res.exit_code == 0
 
 
+def test_cli_bench_humaneval_plus_help() -> None:
+    runner = CliRunner()
+    res = runner.invoke(app, ["bench", "humaneval+", "--help"])
+    assert res.exit_code == 0
+
+
+def test_cli_bench_mbpp_plus_help() -> None:
+    runner = CliRunner()
+    res = runner.invoke(app, ["bench", "mbpp+", "--help"])
+    assert res.exit_code == 0
+
+
 def test_cli_report_help() -> None:
     runner = CliRunner()
     res = runner.invoke(app, ["report", "--help"])
