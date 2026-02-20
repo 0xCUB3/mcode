@@ -33,3 +33,6 @@ logs/
 # Editors
 .vscode/
 .idea/
+
+# Planning
+.planning/
