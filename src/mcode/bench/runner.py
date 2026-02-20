@@ -50,6 +50,7 @@ class BenchConfig:
     swebench_force_rebuild: bool = False
     swebench_mem_limit: str = "4g"
     swebench_pids_limit: int = 512
+    lcb_cutoff: str | None = None
 
 
 class BenchmarkRunner:
@@ -79,7 +80,12 @@ class BenchmarkRunner:
         self.sandbox.ensure_image()
         self.llm.check_available()
 
-        tasks = load_benchmark(name, cache_dir=self.config.cache_dir, limit=limit)
+        tasks = load_benchmark(
+            name,
+            cache_dir=self.config.cache_dir,
+            limit=limit,
+            cutoff=self.config.lcb_cutoff,
+        )
         tasks = _apply_task_shard(tasks, self.config.task_shard_count, self.config.task_shard_index)
         config = _augment_run_config(asdict(self.config))
         config["dataset"] = _dataset_metadata(name, cache_dir=self.config.cache_dir) or {}
@@ -314,6 +320,36 @@ def _combine_for_eval(task: Task, code: str) -> str:
     if task.benchmark == "mbpp+":
         return f"{code}\n\n# --- mbpp tests ---\n{task.test_code}\n"
 
+    if task.benchmark == "livecodebench":
+        # Embed code and test data using repr() to avoid triple-quote injection issues.
+        code_repr = repr(code)
+        test_repr = repr(task.test_code)
+        return (
+            "import json as _json, sys, io\n\n"
+            f"{code}\n\n"
+            "# --- livecodebench stdin/stdout harness ---\n"
+            f"_test_cases = _json.loads({test_repr})\n"
+            "_inputs = _test_cases.get('inputs', [])\n"
+            "_outputs = _test_cases.get('outputs', [])\n"
+            "_failed = 0\n"
+            "for _i, (_inp, _exp) in enumerate(zip(_inputs, _outputs)):\n"
+            "    _old_stdin, _old_stdout = sys.stdin, sys.stdout\n"
+            "    sys.stdin = io.StringIO(_inp)\n"
+            "    sys.stdout = _capture = io.StringIO()\n"
+            "    try:\n"
+            f"        exec(compile({code_repr}, '<solution>', 'exec'))\n"
+            "    finally:\n"
+            "        sys.stdin, sys.stdout = _old_stdin, _old_stdout\n"
+            "    _got = _capture.getvalue().rstrip()\n"
+            "    _want = str(_exp).rstrip()\n"
+            "    if _got != _want:\n"
+            "        print(f'FAIL case {_i}: expected {repr(_want)}, got {repr(_got)}',\n"
+            "              file=sys.stderr)\n"
+            "        _failed += 1\n"
+            "if _failed:\n"
+            "    raise SystemExit(f'{_failed}/{len(_inputs)} test cases failed')\n"
+        )
+
     raise ValueError(f"Unsupported benchmark for eval: {task.benchmark!r}")
 
 
@@ -421,4 +457,10 @@ def _dataset_metadata(benchmark: str, *, cache_dir: Path) -> dict[str, str | Non
         return {"name": "HumanEval+", "source": "evalplus"}
     if name == "mbpp+":
         return {"name": "MBPP+", "source": "evalplus"}
+    if name == "livecodebench":
+        return {
+            "name": "LiveCodeBench",
+            "source": "livecodebench/code_generation_lite",
+            "version_tag": "release_v2",
+        }
     return None

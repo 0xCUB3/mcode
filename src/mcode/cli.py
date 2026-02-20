@@ -1452,6 +1452,7 @@ def _bench_common(
     s2_model: str | None = None,
     s2_backend: str = "ollama",
     s2_mode: str = "best_attempt",
+    lcb_cutoff: str | None = None,
 ) -> None:
     sandbox_name = sandbox.strip().lower()
     if sandbox_name not in {"docker", "process"}:
@@ -1491,6 +1492,7 @@ def _bench_common(
         sandbox=sandbox_name,
         task_shard_count=shard_count,
         task_shard_index=shard_index,
+        lcb_cutoff=lcb_cutoff,
     )
     runner = BenchmarkRunner(config=config, results_db=ResultsDB(db))
     summary = runner.run_benchmark(benchmark, limit=limit)
@@ -1818,6 +1820,94 @@ def bench_mbpp_plus(
         s2_model=s2_model,
         s2_backend=s2_backend,
         s2_mode=s2_mode,
+    )
+
+
+@bench_app.command("livecodebench")
+def bench_livecodebench(
+    model: Annotated[str, typer.Option("--model", help="Mellea model id")],
+    backend: Annotated[str, typer.Option("--backend", help="Mellea backend name")] = "ollama",
+    loop_budget: Annotated[
+        int,
+        typer.Option("--loop-budget", min=1, help="Max attempts per task (with error feedback)"),
+    ] = 3,
+    temperature: Annotated[
+        float | None,
+        typer.Option("--temperature", help="Sampling temperature"),
+    ] = None,
+    seed: Annotated[
+        int | None,
+        typer.Option("--seed", help="Random seed for reproducibility"),
+    ] = None,
+    timeout_s: Annotated[
+        int,
+        typer.Option("--timeout", min=1, help="Seconds per sandbox execution attempt"),
+    ] = 60,
+    retrieval: Annotated[
+        bool,
+        typer.Option("--retrieval/--no-retrieval", help="Reserved (no effect yet)"),
+    ] = False,
+    sandbox: Annotated[
+        str,
+        typer.Option(
+            "--sandbox",
+            help="Execution sandbox for code evaluation (docker or process).",
+        ),
+    ] = "docker",
+    shard_count: Annotated[
+        int | None,
+        typer.Option("--shard-count", min=1, help="Total shards for parallel runs"),
+    ] = None,
+    shard_index: Annotated[
+        int | None,
+        typer.Option("--shard-index", min=0, help="Shard index (0..shard-count-1)"),
+    ] = None,
+    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
+    limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
+    strategy: Annotated[
+        str,
+        typer.Option("--strategy", help="Sampling strategy: repair or sofai"),
+    ] = "repair",
+    s2_model: Annotated[
+        str | None,
+        typer.Option("--s2-model", help="Model ID for SOFAI S2 solver (larger model)"),
+    ] = None,
+    s2_backend: Annotated[
+        str,
+        typer.Option("--s2-backend", help="Backend for SOFAI S2 solver"),
+    ] = "ollama",
+    s2_mode: Annotated[
+        str,
+        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
+    ] = "best_attempt",
+    lcb_cutoff: Annotated[
+        str | None,
+        typer.Option(
+            "--lcb-cutoff",
+            help="Contamination cutoff date (YYYY-MM-DD). Only tasks released before this date.",
+        ),
+    ] = None,
+) -> None:
+    """Run LiveCodeBench code generation benchmark."""
+    _bench_common(
+        benchmark="livecodebench",
+        backend=backend,
+        model=model,
+        loop_budget=loop_budget,
+        temperature=temperature,
+        seed=seed,
+        timeout_s=timeout_s,
+        retrieval=retrieval,
+        sandbox=sandbox,
+        shard_count=shard_count,
+        shard_index=shard_index,
+        db=db,
+        limit=limit,
+        strategy=strategy,
+        s2_model=s2_model,
+        s2_backend=s2_backend,
+        s2_mode=s2_mode,
+        lcb_cutoff=lcb_cutoff,
     )
 
 
