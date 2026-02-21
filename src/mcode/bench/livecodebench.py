@@ -23,19 +23,21 @@ def load_livecodebench(cache_dir, *, cutoff: str | None = None) -> list[Task]:
     )
     tasks: list[Task] = []
     for row in dataset:
-        if cutoff is not None and row["release_date"] >= cutoff:
+        contest_date = row.get("contest_date", "")
+        if cutoff is not None and contest_date >= cutoff:
             continue
         prompt = _build_prompt(row)
+        test_code = _merge_test_cases(row)
         tasks.append(
             Task(
                 benchmark="livecodebench",
                 task_id=str(row["question_id"]),
                 prompt=prompt,
                 entry_point=None,
-                test_code=row["input_output"],
+                test_code=test_code,
                 metadata={
                     "source": "livecodebench",
-                    "release_date": row["release_date"],
+                    "contest_date": contest_date,
                     "difficulty": row.get("difficulty", ""),
                     "question_title": row.get("question_title", ""),
                 },
@@ -53,9 +55,40 @@ def _build_prompt(row: dict) -> str:
     return prompt
 
 
-def _parse_test_cases(test_code: str) -> dict:
-    """Parse the JSON test_code string into a dict with inputs/outputs."""
+def _merge_test_cases(row: dict) -> str:
+    public = _load_test_list(row.get("public_test_cases", ""))
+    private = _load_test_list(row.get("private_test_cases", ""))
+    all_cases = public + private
+    inputs = [c.get("input", "") for c in all_cases]
+    outputs = [c.get("output", "") for c in all_cases]
+    return json.dumps({"inputs": inputs, "outputs": outputs})
+
+
+def _load_test_list(raw: str) -> list[dict]:
+    if not raw:
+        return []
     try:
-        return json.loads(test_code)
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return parsed
+        return []
     except (json.JSONDecodeError, TypeError):
-        return {"inputs": [], "outputs": []}
+        return _decompress_test_cases(raw)
+
+
+def _decompress_test_cases(raw: str) -> list[dict]:
+    import base64
+    import pickle
+    import zlib
+
+    try:
+        data = base64.b64decode(raw)
+        data = zlib.decompress(data)
+        loaded = pickle.loads(data)  # noqa: S301
+        if isinstance(loaded, str):
+            loaded = json.loads(loaded)
+        if isinstance(loaded, list):
+            return loaded
+        return []
+    except Exception:
+        return []
