@@ -288,6 +288,10 @@ spec:
                   fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
             - name: MCODE_CACHE_DIR
               value: /cache
+            - name: HF_HOME
+              value: /cache/huggingface
+            - name: EVALPLUS_CACHE_DIR
+              value: /cache/evalplus
           command: ["bash", "-lc"]
           args:
             - |
@@ -341,7 +345,8 @@ spec:
         - name: results
           emptyDir: {{}}
         - name: cache
-          emptyDir: {{}}
+          emptyDir:
+            sizeLimit: 10Gi
 """
 
 
