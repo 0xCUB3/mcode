@@ -11,13 +11,13 @@ WORKDIR /app
 # Install deps first (layer cached unless pyproject.toml or uv.lock change)
 COPY pyproject.toml uv.lock README.md ./
 RUN mkdir -p src/mcode && touch src/mcode/__init__.py && \
-    uv pip install --system '.[evalplus,datasets]'
+    uv pip install --system '.[evalplus]'
 
 # Copy source and reinstall (fast, deps already present)
 COPY src ./src
 RUN uv pip install --system --no-deps .
 
-RUN mkdir -p /work /tmp/mcode-cache /tmp/.cache/evalplus /tmp/.cache/huggingface && \
+RUN mkdir -p /work /tmp/mcode-cache /tmp/.cache/evalplus && \
     chmod -R 777 /work /tmp/mcode-cache /tmp/.cache
 
 ENV MCODE_CACHE_DIR=/tmp/mcode-cache
