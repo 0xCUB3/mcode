@@ -11,9 +11,6 @@ COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 RUN uv pip install --system '.[evalplus,datasets]'
 
-RUN pip install --no-cache-dir \
-    numpy pandas matplotlib seaborn scipy scikit-learn requests
-
 RUN mkdir -p /work /tmp/mcode-cache /tmp/.cache/evalplus /tmp/.cache/huggingface && \
     chmod -R 777 /work /tmp/mcode-cache /tmp/.cache
 
