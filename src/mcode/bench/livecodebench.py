@@ -19,6 +19,7 @@ def load_livecodebench(cache_dir, *, cutoff: str | None = None) -> list[Task]:
         "livecodebench/code_generation_lite",
         version_tag="release_v2",
         split="test",
+        trust_remote_code=True,
     )
     tasks: list[Task] = []
     for row in dataset:
@@ -46,10 +47,7 @@ def load_livecodebench(cache_dir, *, cutoff: str | None = None) -> list[Task]:
 def _build_prompt(row: dict) -> str:
     content = row["question_content"]
     starter = row.get("starter_code", "") or ""
-    prompt = (
-        "Read input from stdin and print output to stdout.\n\n"
-        f"{content}"
-    )
+    prompt = f"Read input from stdin and print output to stdout.\n\n{content}"
     if starter.strip():
         prompt += f"\n\n# Starter code\n{starter}"
     return prompt

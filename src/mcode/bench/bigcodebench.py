@@ -18,7 +18,7 @@ def load_bigcodebench(cache_dir, *, variant: str = "complete") -> list[Task]:
             f"Unknown BigCodeBench variant: {variant!r}. Expected 'complete' or 'instruct'."
         )
 
-    dataset = load_dataset("bigcode/bigcodebench", split="v0.1.4")
+    dataset = load_dataset("bigcode/bigcodebench", split="v0.1.4", trust_remote_code=True)
     tasks: list[Task] = []
     for row in dataset:
         if variant == "complete":
