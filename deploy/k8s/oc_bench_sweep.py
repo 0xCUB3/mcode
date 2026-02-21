@@ -270,7 +270,7 @@ spec:
   completionMode: Indexed
   completions: {cfg.shard_count}
   parallelism: {cfg.parallelism}
-  backoffLimit: 2
+  backoffLimit: 10
   template:
     spec:
       restartPolicy: Never
