@@ -1021,8 +1021,8 @@ def main() -> int:
     )
     p.add_argument(
         "--mcode-memory-request",
-        default="2Gi",
-        help="Memory request for mcode container (default: 2Gi)",
+        default="12Gi",
+        help="Memory request for mcode container (default: 12Gi)",
     )
     p.add_argument(
         "--mcode-cpu-limit",
