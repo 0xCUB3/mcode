@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import importlib
-import types
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,9 +12,7 @@ from mcode.bench.tasks import Task
 _BCB_FIXTURE = [
     {
         "task_id": "BigCodeBench/0",
-        "complete_prompt": (
-            "import random\nimport itertools\ndef task_func():\n    \"\"\"...\"\"\"\n"
-        ),
+        "complete_prompt": ('import random\nimport itertools\ndef task_func():\n    """..."""\n'),
         "instruct_prompt": "Write a function task_func that generates random permutations.",
         "canonical_solution": "...",
         "code_prompt": "def task_func():\n",
@@ -32,7 +29,7 @@ _BCB_FIXTURE = [
     },
     {
         "task_id": "BigCodeBench/1",
-        "complete_prompt": "def task_func(s: str) -> dict:\n    \"\"\"Count chars.\"\"\"\n",
+        "complete_prompt": 'def task_func(s: str) -> dict:\n    """Count chars."""\n',
         "instruct_prompt": "Write a function that counts characters in a string.",
         "canonical_solution": "...",
         "code_prompt": "def task_func(s):\n",
@@ -49,19 +46,17 @@ _BCB_FIXTURE = [
 ]
 
 
-def _make_datasets_module(fixture):
-    datasets_mod = types.ModuleType("datasets")
-    datasets_mod.load_dataset = lambda *args, **kwargs: fixture
-    return {"datasets": datasets_mod}
+def _write_fixture(tmp_path: Path) -> Path:
+    p = tmp_path / "bigcodebench.json"
+    p.write_text(json.dumps(_BCB_FIXTURE))
+    return p
 
 
-def test_load_bigcodebench_complete_produces_tasks() -> None:
-    fake_mods = _make_datasets_module(_BCB_FIXTURE)
-    with patch.dict("sys.modules", fake_mods):
-        import mcode.bench.bigcodebench as bcb_mod
+def test_load_bigcodebench_complete_produces_tasks(tmp_path: Path) -> None:
+    with patch("mcode.bench.bigcodebench._DATA_FILE", _write_fixture(tmp_path)):
+        from mcode.bench.bigcodebench import load_bigcodebench
 
-        importlib.reload(bcb_mod)
-        tasks = bcb_mod.load_bigcodebench(None, variant="complete")
+        tasks = load_bigcodebench(None, variant="complete")
 
     assert len(tasks) == 2
     task0 = next(t for t in tasks if t.task_id == "BigCodeBench/0")
@@ -73,13 +68,11 @@ def test_load_bigcodebench_complete_produces_tasks() -> None:
     assert task0.metadata["source"] == "bigcode/bigcodebench"
 
 
-def test_load_bigcodebench_instruct_produces_tasks() -> None:
-    fake_mods = _make_datasets_module(_BCB_FIXTURE)
-    with patch.dict("sys.modules", fake_mods):
-        import mcode.bench.bigcodebench as bcb_mod
+def test_load_bigcodebench_instruct_produces_tasks(tmp_path: Path) -> None:
+    with patch("mcode.bench.bigcodebench._DATA_FILE", _write_fixture(tmp_path)):
+        from mcode.bench.bigcodebench import load_bigcodebench
 
-        importlib.reload(bcb_mod)
-        tasks = bcb_mod.load_bigcodebench(None, variant="instruct")
+        tasks = load_bigcodebench(None, variant="instruct")
 
     assert len(tasks) == 2
     task0 = next(t for t in tasks if t.task_id == "BigCodeBench/0")
@@ -88,35 +81,19 @@ def test_load_bigcodebench_instruct_produces_tasks() -> None:
     assert task0.metadata["variant"] == "instruct"
 
 
-def test_load_bigcodebench_invalid_variant_raises() -> None:
-    fake_mods = _make_datasets_module(_BCB_FIXTURE)
-    with patch.dict("sys.modules", fake_mods):
-        import mcode.bench.bigcodebench as bcb_mod
+def test_load_bigcodebench_invalid_variant_raises(tmp_path: Path) -> None:
+    with patch("mcode.bench.bigcodebench._DATA_FILE", _write_fixture(tmp_path)):
+        from mcode.bench.bigcodebench import load_bigcodebench
 
-        importlib.reload(bcb_mod)
         with pytest.raises(ValueError, match="unknown"):
-            bcb_mod.load_bigcodebench(None, variant="unknown")
+            load_bigcodebench(None, variant="unknown")
 
 
-def test_load_bigcodebench_missing_datasets() -> None:
-    with patch.dict("sys.modules", {"datasets": None}):
-        import mcode.bench.bigcodebench as bcb_mod
+def test_load_bigcodebench_limit_via_load_benchmark(tmp_path: Path) -> None:
+    with patch("mcode.bench.bigcodebench._DATA_FILE", _write_fixture(tmp_path)):
+        from mcode.bench.tasks import load_benchmark
 
-        importlib.reload(bcb_mod)
-        with pytest.raises(RuntimeError, match="datasets"):
-            bcb_mod.load_bigcodebench(None)
-
-
-def test_load_bigcodebench_limit_via_load_benchmark() -> None:
-    fake_mods = _make_datasets_module(_BCB_FIXTURE)
-    with patch.dict("sys.modules", fake_mods):
-        import mcode.bench.bigcodebench as bcb_mod
-
-        importlib.reload(bcb_mod)
-        import mcode.bench.tasks as tasks_mod
-
-        importlib.reload(tasks_mod)
-        tasks = tasks_mod.load_benchmark("bigcodebench-complete", Path("/tmp"), limit=1)
+        tasks = load_benchmark("bigcodebench-complete", Path("/tmp"), limit=1)
 
     assert len(tasks) == 1
 
