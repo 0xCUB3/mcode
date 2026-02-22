@@ -164,7 +164,14 @@ def _job_token(run_id: str) -> str:
 
 
 def _current_namespace() -> str:
-    return _oc(["project", "-q"])
+    try:
+        return _oc(["project", "-q"])
+    except RuntimeError:
+        # In-cluster: read namespace from mounted ServiceAccount token.
+        ns_path = Path("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+        if ns_path.exists():
+            return ns_path.read_text().strip()
+        raise
 
 
 def _yaml_string(v: str) -> str:

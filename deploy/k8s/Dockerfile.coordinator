@@ -1,0 +1,24 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    HOME=/tmp
+
+# Install oc CLI
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl tar && \
+    curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux-amd64-rhel9.tar.gz \
+      | tar xz -C /usr/local/bin oc kubectl && \
+    apt-get purge -y curl && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY oc_bench_sweep.py ./
+
+RUN mkdir -p /results /tmp && \
+    chmod -R 777 /results /tmp
+
+ENTRYPOINT ["python", "/app/oc_bench_sweep.py"]
+CMD ["--help"]
