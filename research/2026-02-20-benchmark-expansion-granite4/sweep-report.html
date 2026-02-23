@@ -317,10 +317,10 @@
 
       const PALETTE = ["#2563eb", "#dc2626", "#16a34a", "#7c3aed", "#ea580c", "#0891b2", "#6b7280"];
       const COLOR_PRIORITY = [
+        "benchmark",
         "loop_budget",
         "timeout_s",
         "retrieval",
-        "benchmark",
         "model_id",
         "backend_name",
       ];
@@ -788,13 +788,41 @@
           });
       }
 
+        function perBenchmarkFrontiers(rs) {
+          const byBench = new Map();
+          for (const r of rs) {
+            const b = r.benchmark ?? "";
+            if (!byBench.has(b)) byBench.set(b, []);
+            byBench.get(b).push(r);
+          }
+          const result = new Map();
+          for (const [b, rows] of byBench.entries()) {
+            result.set(b, paretoFrontier(rows));
+          }
+          return result;
+        }
+
         function render() {
           for (const u of filterUpdaters.values()) u();
           const colorBy = colorBySel.value;
           const filters = currentFilters();
           const base = applyFilters(points, filters);
-          const frontierPts = paretoFrontier(base);
-          const frontierRows = frontierPts.map(p => p.r);
+
+          const multiBench = uniqVals(base, "benchmark").length > 1;
+          let frontierPts, frontierRows, benchFrontiers;
+          if (multiBench) {
+            benchFrontiers = perBenchmarkFrontiers(base);
+            frontierPts = [];
+            frontierRows = [];
+            for (const [, pts] of benchFrontiers.entries()) {
+              frontierPts.push(...pts);
+              frontierRows.push(...pts.map(p => p.r));
+            }
+          } else {
+            frontierPts = paretoFrontier(base);
+            frontierRows = frontierPts.map(p => p.r);
+            benchFrontiers = null;
+          }
 
         let rs = base;
         if (onlyFrontierCb.checked) {
@@ -818,16 +846,34 @@
           shownText + timeoutText + axisHelp + fixedText;
 
           const traces = makeTraces(rs, colorBy);
-          if (paretoCb.checked && frontierPts.length >= 2) {
-            traces.push({
-              type: "scatter",
-              mode: "lines",
-              name: "Best tradeoffs",
-              x: frontierPts.map(p => p.x),
-              y: frontierPts.map(p => p.y),
-              hoverinfo: "skip",
-              line: { color: "rgba(17,24,39,0.55)", width: 2, dash: "dot" },
-            });
+          if (paretoCb.checked) {
+            if (benchFrontiers && benchFrontiers.size > 1) {
+              const benchNames = Array.from(benchFrontiers.keys()).sort();
+              for (let bi = 0; bi < benchNames.length; bi++) {
+                const bPts = benchFrontiers.get(benchNames[bi]);
+                if (!bPts || bPts.length < 2) continue;
+                traces.push({
+                  type: "scatter",
+                  mode: "lines",
+                  name: `Pareto: ${benchNames[bi]}`,
+                  x: bPts.map(p => p.x),
+                  y: bPts.map(p => p.y),
+                  hoverinfo: "skip",
+                  line: { color: PALETTE[bi % PALETTE.length], width: 2, dash: "dot" },
+                  showlegend: false,
+                });
+              }
+            } else if (frontierPts.length >= 2) {
+              traces.push({
+                type: "scatter",
+                mode: "lines",
+                name: "Best tradeoffs",
+                x: frontierPts.map(p => p.x),
+                y: frontierPts.map(p => p.y),
+                hoverinfo: "skip",
+                line: { color: "rgba(17,24,39,0.55)", width: 2, dash: "dot" },
+              });
+            }
           }
 
           Plotly.react("scatter", traces, {

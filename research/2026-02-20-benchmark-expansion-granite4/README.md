@@ -107,4 +107,24 @@ Compiled from:
 
 ## Findings
 
-- 2026-02-23 18:51 UTC: `bigcodebench-instruct` shard execution showed repeated freeze/retry behavior (especially around shard 9/12/13 paths) with intermittent OOM/forced-retry churn. To keep the sweep moving, we stopped `bigcodebench-instruct b5-t60` and all `t120` instruct runs (`b1-t120`, `b3-t120`, `b5-t120`) and treated them as skipped for this expansion pass.
+**Loop budget scaling.** Retries help a lot on easy-to-medium benchmarks. mbpp+ jumps from 90% (b1) to 97% (b3) to 98% (b5), and humaneval+ from 65% to 79% to 85%. The gains from b3 to b5 are small relative to b1 to b3, suggesting diminishing returns past 3 attempts. On harder benchmarks (livecodebench, bigcodebench-complete) the absolute gains from retries are smaller (0.4% to 3.0% for livecodebench), indicating the model genuinely can't solve those problems rather than just making fixable mistakes.
+
+**Timeout has little effect.** For humaneval+ and mbpp+, 60s and 120s produce nearly identical results because granite4 generates solutions in 1-4 seconds. Even on bigcodebench-complete (40-90s per solve), the two timeout levels are within noise. Timeout only matters for livecodebench where problems that do get solved sometimes need the full window.
+
+**Benchmark difficulty spectrum.** The five benchmarks span a wide range:
+- mbpp+ (90-98%): near-saturated, mostly useful as a sanity check
+- humaneval+ (65-85%): good dynamic range, responds well to retries
+- bigcodebench-complete (12-18%): substantially harder, requires library knowledge and longer solutions
+- livecodebench (0.4-3.0%): competition-level problems, effectively out of reach for granite4 at 8B parameters
+
+**Speed characteristics.** mbpp+ solves average under 1.2s even at b5. humaneval+ scales linearly with budget (1.8s at b1, 6.5s at b5). bigcodebench-complete is 10-20x slower (40-90s/solve) due to longer prompts and sandbox execution. livecodebench sec/solve numbers (260-527s) are inflated because unsolved problems burn the full timeout.
+
+**Infrastructure issues.** bigcodebench-complete b3-t60 only completed 14/20 shards before OOMKills stalled progress. All bigcodebench-instruct configs were skipped entirely: shards hung on sandbox execution (not LLM inference or OOM) with individual test cases never returning. This appears to be a sandbox isolation issue with certain bigcodebench-instruct test harnesses rather than a model or infrastructure limitation. bigcodebench-complete b3-t120 through b5-t120 were also skipped due to the same memory pressure.
+
+## Conclusion
+
+For granite4 at 8B parameters, humaneval+ and mbpp+ confirm competitive single-attempt pass rates (65% and 90%) that scale well with retries. The model hits a wall on competition-level problems (livecodebench) and library-heavy tasks (bigcodebench-complete). Budget=3 captures most of the retry benefit; budget=5 adds only 2-5pp. Timeout=60s is sufficient for all benchmarks except livecodebench.
+
+Recommended default config for future granite4 runs: b3-t60. For cross-model comparisons, b1-t60 (cheapest) and b3-t60 (best tradeoff) are the two most useful data points.
+
+Next steps: re-run bigcodebench-complete (full) and bigcodebench-instruct with a larger-parameter model to see if the sandbox hanging and low pass rates are model-specific.
