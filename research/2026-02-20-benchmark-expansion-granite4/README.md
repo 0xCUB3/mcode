@@ -119,7 +119,17 @@ Compiled from:
 
 **Speed characteristics.** mbpp+ solves average under 1.2s even at b5. humaneval+ scales linearly with budget (1.8s at b1, 6.5s at b5). bigcodebench-complete is 10-20x slower (40-90s/solve) due to longer prompts and sandbox execution. livecodebench sec/solve numbers (260-527s) are inflated because unsolved problems burn the full timeout.
 
-**Infrastructure issues.** bigcodebench-complete b3-t60 only completed 14/20 shards before OOMKills stalled progress. All bigcodebench-instruct configs were skipped entirely: shards hung on sandbox execution (not LLM inference or OOM) with individual test cases never returning. This appears to be a sandbox isolation issue with certain bigcodebench-instruct test harnesses rather than a model or infrastructure limitation. bigcodebench-complete b3-t120 through b5-t120 were also skipped due to the same memory pressure.
+**Infrastructure issues.** bigcodebench-complete b3-t60 only completed 14/20 shards before OOMKills stalled progress. bigcodebench-complete b3-t120 through b5-t120 were skipped due to the same memory pressure. All bigcodebench-instruct configs were skipped entirely because shards hung on sandbox execution (not LLM inference or OOM).
+
+**Root cause of bigcodebench hangs (post-mortem).** Three bugs in `ProcessSandbox` (the in-cluster fallback used when Docker is unavailable) combined to cause cascading resource exhaustion:
+
+1. `proc.kill()` only killed the direct Python child, not grandchild processes. BigCodeBench tasks frequently use libraries that spawn threads or subprocesses (309 tasks use matplotlib, 152 use sklearn/joblib, 31 use subprocess directly). Without `start_new_session=True` and `os.killpg()`, orphaned child processes survived after each task timeout and accumulated over hundreds of tasks until the pod OOMed or exhausted PIDs.
+
+2. No `MPLBACKEND=Agg` in the sandbox env. matplotlib (used by 309/1140 tasks) defaults to an interactive backend when no display variable is set. In a headless pod this either hangs waiting for a display or raises an error, but either way it slows down execution and can leave zombie processes. 19 tasks explicitly call `plt.show()`.
+
+3. No network isolation. 123 tasks require libraries that make network calls (requests, urllib, bs4, socket). In the process sandbox, these are real TCP calls that hang on DNS/connection timeouts (30-120s each). The Docker sandbox blocks this with `network_disabled=True`, but the process sandbox had no equivalent. Instruct-mode code is more likely to attempt real network calls because the model gets less structured guidance.
+
+All three issues are fixed in `process_sandbox.py`: process-group killing via `start_new_session=True` + `os.killpg()`, `MPLBACKEND=Agg` + `OPENBLAS_NUM_THREADS=1` + `MKL_NUM_THREADS=1` in env, and the Docker sandbox also got `MPLBACKEND=Agg` for consistency. Network isolation in the process sandbox would require user-namespace networking or iptables, which is out of scope for now.
 
 ## Conclusion
 
@@ -127,4 +137,4 @@ For granite4 at 8B parameters, humaneval+ and mbpp+ confirm competitive single-a
 
 Recommended default config for future granite4 runs: b3-t60. For cross-model comparisons, b1-t60 (cheapest) and b3-t60 (best tradeoff) are the two most useful data points.
 
-Next steps: re-run bigcodebench-complete (full) and bigcodebench-instruct with a larger-parameter model to see if the sandbox hanging and low pass rates are model-specific.
+Next steps: re-run bigcodebench-complete (full 20 shards) and bigcodebench-instruct now that the sandbox bugs are fixed. If pass rates remain low, it's the model, not infrastructure.

@@ -87,6 +87,7 @@ class DockerSandbox:
                     environment={
                         "PYTHONUNBUFFERED": "1",
                         "PYTHONDONTWRITEBYTECODE": "1",
+                        "MPLBACKEND": "Agg",
                     },
                 )
                 try:

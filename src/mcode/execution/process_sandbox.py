@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -8,6 +9,18 @@ import time
 from pathlib import Path
 
 from mcode.execution.sandbox import SandboxRun
+
+
+def _kill_pg(proc: subprocess.Popen) -> None:
+    """Kill the process and its entire process group (children, grandchildren)."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        proc.kill()
+    except (ProcessLookupError, PermissionError):
+        pass
 
 
 class ProcessSandbox:
@@ -45,11 +58,15 @@ class ProcessSandbox:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 stdin=subprocess.DEVNULL,
+                start_new_session=True,
                 env={
                     "HOME": str(host_dir),
                     "LANG": "C.UTF-8",
                     "PYTHONUNBUFFERED": "1",
                     "PYTHONDONTWRITEBYTECODE": "1",
+                    "MPLBACKEND": "Agg",
+                    "OPENBLAS_NUM_THREADS": "1",
+                    "MKL_NUM_THREADS": "1",
                 },
             )
 
@@ -75,7 +92,7 @@ class ProcessSandbox:
                     remaining = timeout_s - elapsed
                     if remaining <= 0:
                         timed_out = True
-                        proc.kill()
+                        _kill_pg(proc)
                         break
 
                     for key, _ in sel.select(timeout=min(1.0, remaining)):
@@ -95,7 +112,7 @@ class ProcessSandbox:
 
                         if (len(stdout_b) + len(stderr_b)) > max_output_bytes:
                             output_exceeded = True
-                            proc.kill()
+                            _kill_pg(proc)
                             break
 
                     if output_exceeded:
@@ -109,10 +126,7 @@ class ProcessSandbox:
                 try:
                     proc.wait(timeout=1)
                 except Exception:
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
+                    _kill_pg(proc)
                     try:
                         proc.wait(timeout=1)
                     except Exception:
