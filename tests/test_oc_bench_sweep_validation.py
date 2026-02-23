@@ -18,7 +18,14 @@ def _load_oc_bench_sweep_module():
     return module
 
 
-def _make_db(path: Path, *, benchmark: str, shard_index: int, planned_count: int, rows: int) -> None:
+def _make_db(
+    path: Path,
+    *,
+    benchmark: str,
+    shard_index: int,
+    planned_count: int,
+    rows: int,
+) -> None:
     with ResultsDB(path) as rdb:
         run_id = rdb.start_run(
             benchmark,

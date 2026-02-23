@@ -714,7 +714,10 @@ def _validate_shard_db(db_path: Path, *, benchmark: str, shard_index: int) -> tu
             return False, f"benchmark mismatch: expected {benchmark}, got {run_benchmark}"
 
         task_count = int(
-            conn.execute("SELECT COUNT(*) FROM task_results WHERE run_id = ?", (run_id,)).fetchone()[0]
+            conn.execute(
+                "SELECT COUNT(*) FROM task_results WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()[0]
         )
         if task_count <= 0:
             return False, "run has no task_results"
@@ -998,7 +1001,10 @@ def _fetch_results(
                 else:
                     mcode_running = _container_running(pod, "mcode")
                     terminated = _container_terminated(pod, "mcode") is not None
-                    if mcode_running and (now - shard_last_log_probe.get(idx, 0.0)) >= log_probe_interval_s:
+                    if (
+                        mcode_running
+                        and (now - shard_last_log_probe.get(idx, 0.0)) >= log_probe_interval_s
+                    ):
                         shard_last_log_probe[idx] = now
                         if _probe_mcode_log_activity(cfg.namespace, pod_name):
                             shard_last_log_activity[idx] = now
