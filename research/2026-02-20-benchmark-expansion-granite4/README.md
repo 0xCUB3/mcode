@@ -4,13 +4,13 @@ Goal: compare granite4 pass rates across five new benchmarks (humaneval+, mbpp+,
 
 ## Commands
 
-EvalPlus sweep (humaneval+ and mbpp+):
+Build the image first (only needed once, then use `--no-build` for subsequent runs):
 
 ```bash
 .venv/bin/python deploy/k8s/oc_bench_sweep.py \
   --benchmarks humaneval+,mbpp+ --model granite4:latest \
   --loop-budget 1,3,5 --timeout 60,120 \
-  --shard-count 20 --parallelism 3 --no-build \
+  --shard-count 20 --parallelism 3 --build \
   --mcode-memory-request 1Gi --mcode-memory-limit 12Gi \
   --run-id benchmark-expansion \
   --env MCODE_MAX_NEW_TOKENS=1024 \

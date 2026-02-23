@@ -15,7 +15,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NAMESPACE="${NAMESPACE:-$(oc project -q)}"
 JOB_NAME="${COORDINATOR_JOB_NAME:-mcode-coordinator}"
 IMAGE_NAME="${COORDINATOR_IMAGE:-mcode-coordinator}"
-BUILD_CONTEXT="${SCRIPT_DIR}"
+BUILD_CONTEXT="$(mktemp -d -t mcode-coordinator-build.XXXXXX)"
+trap 'rm -rf "${BUILD_CONTEXT}"' EXIT
+cp "${SCRIPT_DIR}/Dockerfile.coordinator" "${BUILD_CONTEXT}/Dockerfile"
+cp "${SCRIPT_DIR}/oc_bench_sweep.py" "${BUILD_CONTEXT}/oc_bench_sweep.py"
 
 # Collect sweep args: everything after "--"
 SWEEP_ARGS=()

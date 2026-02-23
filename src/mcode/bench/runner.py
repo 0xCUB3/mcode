@@ -91,12 +91,13 @@ class BenchmarkRunner:
         )
         tasks = _apply_task_shard(tasks, self.config.task_shard_count, self.config.task_shard_index)
         config = _augment_run_config(asdict(self.config))
+        config["planned_task_count"] = len(tasks)
         config["dataset"] = _dataset_metadata(name, cache_dir=self.config.cache_dir) or {}
         run_id = self.results_db.start_run(name, config)
 
         passed = 0
         total = 0
-        with self.llm.open(), Progress() as progress:
+        with Progress() as progress:
             t = progress.add_task(f"[bold]Running {name}[/bold]", total=len(tasks))
             for task in tasks:
                 total += 1
@@ -122,9 +123,9 @@ class BenchmarkRunner:
             last_run_detail = {
                 "exit_code": run.exit_code,
                 "timed_out": run.timed_out,
-                "stdout": run.stdout,
-                "stderr": run.stderr,
-                "error": run.error,
+                "stdout": _truncate_text(run.stdout),
+                "stderr": _truncate_text(run.stderr),
+                "error": _truncate_text(run.error),
             }
             if run.success:
                 return True
@@ -135,7 +136,8 @@ class BenchmarkRunner:
             check_only=True,
         )
         try:
-            result = self.llm.generate_code(task=task, requirements=[req])
+            with self.llm.open():
+                result = self.llm.generate_code(task=task, requirements=[req])
         except Exception as e:
             elapsed_ms = int((time.time() - start) * 1000)
             tb = traceback.format_exc()
@@ -178,6 +180,7 @@ class BenchmarkRunner:
         )
         tasks = _apply_task_shard(tasks, self.config.task_shard_count, self.config.task_shard_index)
         config = _augment_run_config(asdict(self.config))
+        config["planned_task_count"] = len(tasks)
         config["dataset"] = {
             "name": "SWE-bench_Lite",
             "hf_dataset": "SWE-bench/SWE-bench_Lite",
@@ -197,7 +200,7 @@ class BenchmarkRunner:
 
         passed = 0
         total = 0
-        with self.llm.open(), Progress() as progress:
+        with Progress() as progress:
             t = progress.add_task("[bold]Running swebench-lite[/bold]", total=len(tasks))
             for task in tasks:
                 total += 1
@@ -222,6 +225,7 @@ class BenchmarkRunner:
         )
         tasks = _apply_task_shard(tasks, self.config.task_shard_count, self.config.task_shard_index)
         config = _augment_run_config(asdict(self.config))
+        config["planned_task_count"] = len(tasks)
         config["dataset"] = {
             "name": "SWE-bench_Verified",
             "hf_dataset": "SWE-bench/SWE-bench_Verified",
@@ -241,7 +245,7 @@ class BenchmarkRunner:
 
         passed = 0
         total = 0
-        with self.llm.open(), Progress() as progress:
+        with Progress() as progress:
             t = progress.add_task("[bold]Running swebench-live[/bold]", total=len(tasks))
             for task in tasks:
                 total += 1
@@ -289,12 +293,13 @@ class BenchmarkRunner:
             check_only=True,
         )
         try:
-            result = self.llm.generate_patch(
-                repo=task.repo,
-                problem_statement=task.problem_statement,
-                hints_text=task.hints_text,
-                requirements=[req],
-            )
+            with self.llm.open():
+                result = self.llm.generate_patch(
+                    repo=task.repo,
+                    problem_statement=task.problem_statement,
+                    hints_text=task.hints_text,
+                    requirements=[req],
+                )
         except Exception as e:
             elapsed_ms = int((time.time() - start) * 1000)
             tb = traceback.format_exc()
@@ -324,6 +329,14 @@ class BenchmarkRunner:
             "code_sha256": sha,
             **last_detail,
         }
+
+
+def _truncate_text(value: str | None, *, max_chars: int = 8000) -> str | None:
+    if value is None:
+        return None
+    if len(value) <= max_chars:
+        return value
+    return value[:max_chars]
 
 
 def _extract_from_json(raw: str, key: str) -> str:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 
 from mcode.bench.results import ResultsDB
@@ -28,10 +29,14 @@ def test_run_task_llm_exception_is_recorded(tmp_path: Path) -> None:
         raise RuntimeError("mellea blew up")
 
     # Avoid needing a real Mellea session in unit tests.
+    @contextmanager
+    def fake_open():
+        yield runner.llm
+
+    runner.llm.open = fake_open  # type: ignore[method-assign]
     runner.llm.generate_code = boom  # type: ignore[method-assign]
 
     result = runner.run_task(task)
     assert result["passed"] is False
     assert result["attempts_used"] == 0
     assert "mellea blew up" in (result.get("error") or "")
-

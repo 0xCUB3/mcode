@@ -5,6 +5,7 @@ import argparse
 import datetime as _dt
 import json
 import re
+import sqlite3
 import subprocess
 import sys
 import time
@@ -396,6 +397,10 @@ def _shard_db_path(job_dir: Path, benchmark: str, idx: int) -> Path:
     return job_dir / f"{benchmark}-shard-{idx}.db"
 
 
+def _shard_partial_db_path(job_dir: Path, benchmark: str, idx: int) -> Path:
+    return job_dir / f"{benchmark}-shard-{idx}.partial.db"
+
+
 def _shard_ok_path(job_dir: Path, benchmark: str, idx: int) -> Path:
     return job_dir / f"{benchmark}-shard-{idx}.ok"
 
@@ -620,6 +625,136 @@ def _copy_with_retries(namespace: str, pod_name: str, src: str, dst: Path) -> Ex
     return last_err
 
 
+def _should_recycle_stuck_shard(
+    *,
+    auto_recycle_stuck_shards: bool,
+    recycle_stuck_seconds: int,
+    max_stuck_recycles_per_shard: int,
+    recycle_count: int,
+    mcode_running: bool,
+    mcode_terminated: bool,
+    idle_seconds: float,
+) -> bool:
+    if not auto_recycle_stuck_shards:
+        return False
+    if recycle_stuck_seconds <= 0:
+        return False
+    if max_stuck_recycles_per_shard <= 0:
+        return False
+    if recycle_count >= max_stuck_recycles_per_shard:
+        return False
+    if mcode_terminated:
+        return False
+    if not mcode_running:
+        return False
+    return idle_seconds >= float(recycle_stuck_seconds)
+
+
+def _probe_mcode_log_activity(
+    namespace: str,
+    pod_name: str,
+    *,
+    since_seconds: int = 45,
+) -> bool:
+    try:
+        proc = _run(
+            [
+                "oc",
+                "-n",
+                namespace,
+                f"--request-timeout={max(10, since_seconds)}s",
+                "logs",
+                pod_name,
+                "-c",
+                "mcode",
+                "--tail=1",
+                f"--since={since_seconds}s",
+            ],
+            capture=True,
+            check=False,
+            timeout_s=max(15, since_seconds + 5),
+        )
+    except subprocess.TimeoutExpired:
+        return False
+    if proc.returncode != 0:
+        return False
+    return bool((proc.stdout or "").strip())
+
+
+def _delete_pod(namespace: str, pod_name: str) -> bool:
+    try:
+        _oc(
+            ["delete", "pod", pod_name, "--wait=false"],
+            namespace=namespace,
+            retries=3,
+            timeout_s=30,
+        )
+        return True
+    except RuntimeError as err:
+        if _is_notfound_error(str(err)):
+            return False
+        raise
+
+
+def _validate_shard_db(db_path: Path, *, benchmark: str, shard_index: int) -> tuple[bool, str]:
+    if not db_path.exists():
+        return False, f"missing DB: {db_path.name}"
+
+    conn = sqlite3.connect(db_path)
+    try:
+        run_row = conn.execute(
+            "SELECT id, benchmark, config_json FROM runs ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if run_row is None:
+            return False, "no run rows"
+
+        run_id = int(run_row[0])
+        run_benchmark = str(run_row[1] or "")
+        if run_benchmark != benchmark:
+            return False, f"benchmark mismatch: expected {benchmark}, got {run_benchmark}"
+
+        task_count = int(
+            conn.execute("SELECT COUNT(*) FROM task_results WHERE run_id = ?", (run_id,)).fetchone()[0]
+        )
+        if task_count <= 0:
+            return False, "run has no task_results"
+
+        cfg: dict = {}
+        raw_cfg = run_row[2]
+        if raw_cfg:
+            try:
+                cfg = json.loads(raw_cfg)
+            except Exception:
+                cfg = {}
+
+        cfg_idx = cfg.get("task_shard_index")
+        if cfg_idx is not None:
+            try:
+                if int(cfg_idx) != shard_index:
+                    return (
+                        False,
+                        f"shard index mismatch: expected {shard_index}, got {cfg_idx}",
+                    )
+            except Exception:
+                return False, f"invalid task_shard_index in config_json: {cfg_idx!r}"
+
+        planned = cfg.get("planned_task_count")
+        if planned is not None:
+            try:
+                planned_n = int(planned)
+            except Exception:
+                return False, f"invalid planned_task_count in config_json: {planned!r}"
+            if planned_n != task_count:
+                return (
+                    False,
+                    f"incomplete task_results: expected {planned_n}, got {task_count}",
+                )
+
+        return True, f"rows={task_count}"
+    finally:
+        conn.close()
+
+
 def _logs(namespace: str, pod_name: str, container: str) -> str:
     proc = _run(
         ["oc", "-n", namespace, "logs", pod_name, "-c", container],
@@ -645,6 +780,9 @@ def _fetch_results(
     save_all_logs: bool,
     stalled_seconds: int,
     auto_reduce_parallelism: bool,
+    auto_recycle_stuck_shards: bool,
+    recycle_stuck_seconds: int,
+    max_stuck_recycles_per_shard: int,
 ) -> Path:
     job_dir = out_dir / cfg.job_name
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -654,6 +792,17 @@ def _fetch_results(
     last_status = time.time()
     last_progress = time.time()
     current_parallelism = int(cfg.parallelism)
+    shard_last_log_activity: dict[int, float] = {}
+    shard_last_log_probe: dict[int, float] = {}
+    shard_last_seen_pod: dict[int, str] = {}
+    shard_recycle_count: dict[int, int] = {}
+    log_probe_interval_s = 30.0
+
+    def clear_shard_runtime(idx: int) -> None:
+        shard_last_log_activity.pop(idx, None)
+        shard_last_log_probe.pop(idx, None)
+        shard_last_seen_pod.pop(idx, None)
+
     print(f"==> Fetching results for {cfg.job_name} ...", file=sys.stderr)
 
     while todo:
@@ -673,6 +822,11 @@ def _fetch_results(
             pod_name = str(((pod.get("metadata") or {}).get("name")) or "")
             if not pod_name:
                 continue
+            now = time.time()
+            if shard_last_seen_pod.get(idx) != pod_name:
+                shard_last_seen_pod[idx] = pod_name
+                shard_last_log_activity[idx] = now
+                shard_last_log_probe[idx] = 0.0
             # Ready gate: mcode container writes _READY and _EXIT_CODE.
             ready_cmd = (
                 "if [ -f /results/_READY ]; then "
@@ -694,24 +848,39 @@ def _fetch_results(
                     exit_code = terminated.get("exitCode")
                     db_name = f"{cfg.benchmark}-shard-{idx}.db"
                     db_dst = _shard_db_path(job_dir, cfg.benchmark, idx)
+                    partial_db_dst = _shard_partial_db_path(job_dir, cfg.benchmark, idx)
                     hold_running = _container_running(pod, "hold")
 
                     if save_all_logs or (isinstance(exit_code, int) and exit_code != 0):
                         _save_mcode_log(job_dir, cfg.namespace, pod_name, idx)
 
-                    # If we already have the DB locally, just allow the pod to terminate
-                    # so the Job can make progress.
-                    if isinstance(exit_code, int) and exit_code == 0 and db_dst.exists():
-                        if hold_running and not _mark_copied(cfg.namespace, pod_name):
-                            continue
-                        _mark_shard_ok(job_dir, cfg.benchmark, idx)
-                        todo.remove(idx)
-                        last_progress = time.time()
-                        print(
-                            f"  - shard {idx}: ok (already copied {db_name})",
-                            file=sys.stderr,
+                    # Resume-safe fast path: if an earlier coordinator already copied and
+                    # marked this shard as verified, don't depend on copying from a completed pod.
+                    if (
+                        isinstance(exit_code, int)
+                        and exit_code == 0
+                        and db_dst.exists()
+                        and _shard_ok_path(job_dir, cfg.benchmark, idx).exists()
+                    ):
+                        is_valid, detail = _validate_shard_db(
+                            db_dst,
+                            benchmark=cfg.benchmark,
+                            shard_index=idx,
                         )
-                        continue
+                        if is_valid:
+                            if hold_running and not _mark_copied(cfg.namespace, pod_name):
+                                continue
+                            partial_db_dst.unlink(missing_ok=True)
+                            _mark_shard_ok(job_dir, cfg.benchmark, idx)
+                            todo.remove(idx)
+                            clear_shard_runtime(idx)
+                            last_progress = time.time()
+                            print(
+                                f"  - shard {idx}: ok (already verified {db_name}; {detail})",
+                                file=sys.stderr,
+                            )
+                            continue
+                        _clear_shard_ok(job_dir, cfg.benchmark, idx)
 
                     if isinstance(exit_code, int) and exit_code == 0:
                         if not hold_running:
@@ -722,8 +891,21 @@ def _fetch_results(
                                 db_dst,
                             )
                             if last_err is None and db_dst.exists():
+                                is_valid, detail = _validate_shard_db(
+                                    db_dst,
+                                    benchmark=cfg.benchmark,
+                                    shard_index=idx,
+                                )
+                                if not is_valid:
+                                    _clear_shard_ok(job_dir, cfg.benchmark, idx)
+                                    raise RuntimeError(
+                                        f"Shard {idx} copied DB failed validation ({detail}): "
+                                        f"{db_dst}"
+                                    )
+                                partial_db_dst.unlink(missing_ok=True)
                                 _mark_shard_ok(job_dir, cfg.benchmark, idx)
                                 todo.remove(idx)
+                                clear_shard_runtime(idx)
                                 last_progress = time.time()
                                 print(
                                     f"  - shard {idx}: ok (copied {db_name})",
@@ -761,10 +943,23 @@ def _fetch_results(
                                 f"after retries: {last_err}"
                             ) from last_err
 
+                        is_valid, detail = _validate_shard_db(
+                            db_dst,
+                            benchmark=cfg.benchmark,
+                            shard_index=idx,
+                        )
+                        if not is_valid:
+                            _clear_shard_ok(job_dir, cfg.benchmark, idx)
+                            raise RuntimeError(
+                                f"Shard {idx} copied DB failed validation ({detail}): {db_dst}"
+                            )
+
                         if not _mark_copied(cfg.namespace, pod_name):
                             continue
+                        partial_db_dst.unlink(missing_ok=True)
                         _mark_shard_ok(job_dir, cfg.benchmark, idx)
                         todo.remove(idx)
+                        clear_shard_runtime(idx)
                         last_progress = time.time()
                         print(f"  - shard {idx}: ok (copied {db_name})", file=sys.stderr)
                         continue
@@ -776,7 +971,7 @@ def _fetch_results(
                                 cfg.namespace,
                                 pod_name,
                                 f"/results/{db_name}",
-                                db_dst,
+                                partial_db_dst,
                             )
                         except Exception as e:
                             print(f"  - shard {idx}: partial copy failed: {e}", file=sys.stderr)
@@ -786,6 +981,51 @@ def _fetch_results(
                         f"  - shard {idx}: {reason} (exit={exit_code}); waiting for retry",
                         file=sys.stderr,
                     )
+                    if (
+                        reason.lower() == "oomkilled"
+                        and auto_reduce_parallelism
+                        and current_parallelism > 1
+                    ):
+                        new_parallelism = max(1, current_parallelism // 2)
+                        if new_parallelism < current_parallelism:
+                            _patch_job_parallelism(cfg.namespace, cfg.job_name, new_parallelism)
+                            print(
+                                "  ... auto-reduced parallelism due oomkill: "
+                                f"{current_parallelism} -> {new_parallelism}",
+                                file=sys.stderr,
+                            )
+                            current_parallelism = new_parallelism
+                else:
+                    mcode_running = _container_running(pod, "mcode")
+                    terminated = _container_terminated(pod, "mcode") is not None
+                    if mcode_running and (now - shard_last_log_probe.get(idx, 0.0)) >= log_probe_interval_s:
+                        shard_last_log_probe[idx] = now
+                        if _probe_mcode_log_activity(cfg.namespace, pod_name):
+                            shard_last_log_activity[idx] = now
+                    idle_seconds = now - shard_last_log_activity.get(idx, now)
+                    recycle_count = shard_recycle_count.get(idx, 0)
+                    if _should_recycle_stuck_shard(
+                        auto_recycle_stuck_shards=auto_recycle_stuck_shards,
+                        recycle_stuck_seconds=recycle_stuck_seconds,
+                        max_stuck_recycles_per_shard=max_stuck_recycles_per_shard,
+                        recycle_count=recycle_count,
+                        mcode_running=mcode_running,
+                        mcode_terminated=terminated,
+                        idle_seconds=idle_seconds,
+                    ):
+                        deleted = _delete_pod(cfg.namespace, pod_name)
+                        shard_recycle_count[idx] = recycle_count + 1
+                        shard_last_log_activity[idx] = now
+                        shard_last_log_probe[idx] = now
+                        action = "deleted" if deleted else "already missing"
+                        print(
+                            "  ... auto-recycled stuck shard "
+                            f"{idx} after {int(idle_seconds)}s idle "
+                            f"({action}; recycle {shard_recycle_count[idx]}/"
+                            f"{max_stuck_recycles_per_shard})",
+                            file=sys.stderr,
+                        )
+                        last_progress = now
                 continue
 
             exit_code_s = (check.stdout or "").strip()
@@ -797,16 +1037,30 @@ def _fetch_results(
             db_name = f"{cfg.benchmark}-shard-{idx}.db"
             db_src = f"/results/{db_name}"
             db_dst = _shard_db_path(job_dir, cfg.benchmark, idx)
+            partial_db_dst = _shard_partial_db_path(job_dir, cfg.benchmark, idx)
 
             if exit_code == 0:
-                if db_dst.exists():
-                    if not _mark_copied(cfg.namespace, pod_name):
+                # Resume-safe fast path for already verified shard DBs.
+                if db_dst.exists() and _shard_ok_path(job_dir, cfg.benchmark, idx).exists():
+                    is_valid, detail = _validate_shard_db(
+                        db_dst,
+                        benchmark=cfg.benchmark,
+                        shard_index=idx,
+                    )
+                    if is_valid:
+                        if not _mark_copied(cfg.namespace, pod_name):
+                            continue
+                        partial_db_dst.unlink(missing_ok=True)
+                        _mark_shard_ok(job_dir, cfg.benchmark, idx)
+                        todo.remove(idx)
+                        clear_shard_runtime(idx)
+                        last_progress = time.time()
+                        print(
+                            f"  - shard {idx}: ok (already verified {db_name}; {detail})",
+                            file=sys.stderr,
+                        )
                         continue
-                    _mark_shard_ok(job_dir, cfg.benchmark, idx)
-                    todo.remove(idx)
-                    last_progress = time.time()
-                    print(f"  - shard {idx}: ok (already copied {db_name})", file=sys.stderr)
-                    continue
+                    _clear_shard_ok(job_dir, cfg.benchmark, idx)
 
                 # Must copy successfully before allowing the hold container to exit, otherwise the
                 # Job will mark this index complete and we may lose the only copy of the DB.
@@ -827,13 +1081,26 @@ def _fetch_results(
                         f"after retries: {last_err}"
                     ) from last_err
 
+                is_valid, detail = _validate_shard_db(
+                    db_dst,
+                    benchmark=cfg.benchmark,
+                    shard_index=idx,
+                )
+                if not is_valid:
+                    _clear_shard_ok(job_dir, cfg.benchmark, idx)
+                    raise RuntimeError(
+                        f"Shard {idx} copied DB failed validation ({detail}): {db_dst}"
+                    )
+
                 if save_all_logs:
                     _save_mcode_log(job_dir, cfg.namespace, pod_name, idx)
 
                 if not _mark_copied(cfg.namespace, pod_name):
                     continue
+                partial_db_dst.unlink(missing_ok=True)
                 _mark_shard_ok(job_dir, cfg.benchmark, idx)
                 todo.remove(idx)
+                clear_shard_runtime(idx)
                 last_progress = time.time()
                 print(f"  - shard {idx}: ok (copied {db_name})", file=sys.stderr)
                 continue
@@ -843,7 +1110,7 @@ def _fetch_results(
             _save_mcode_log(job_dir, cfg.namespace, pod_name, idx)
             # Try to copy whatever DB exists (it may be partial).
             try:
-                _copy_from_pod(cfg.namespace, pod_name, db_src, db_dst)
+                _copy_from_pod(cfg.namespace, pod_name, db_src, partial_db_dst)
             except Exception:
                 pass
             _mark_copied(cfg.namespace, pod_name)
@@ -874,62 +1141,52 @@ def _fetch_results(
         if stalled_seconds > 0 and (now - last_progress) > stalled_seconds:
             pod_list = list(idx_to_pod.values())
             running_mcode = sum(1 for p in pod_list if _container_running(p, "mcode"))
-            if running_mcode > 0:
-                print(
-                    "  ... no completed shards yet; mcode containers are still running "
-                    f"({running_mcode}).",
-                    file=sys.stderr,
-                )
-                last_progress = now
-            else:
-                events = _job_events(cfg.namespace, cfg.job_name)
-                recent_events = events[-3:]
-                waiting_reasons = _waiting_reason_counts(pod_list, "mcode")
-                active_pods = len(pod_list)
-                quota_blocked = any(
-                    "exceeded quota" in _event_text(event).lower() for event in recent_events
-                )
-                unschedulable = any(
-                    "unschedulable" in reason.lower() for reason, _ in waiting_reasons
-                )
-                no_active_pods = active_pods == 0
+            events = _job_events(cfg.namespace, cfg.job_name)
+            recent_events = events[-3:]
+            waiting_reasons = _waiting_reason_counts(pod_list, "mcode")
+            active_pods = len(pod_list)
+            quota_blocked = any(
+                "exceeded quota" in _event_text(event).lower() for event in recent_events
+            )
+            unschedulable = any("unschedulable" in reason.lower() for reason, _ in waiting_reasons)
+            no_active_pods = active_pods == 0
 
-                auto_reduce_reason = ""
-                if quota_blocked:
-                    auto_reduce_reason = "quota pressure"
-                elif unschedulable:
-                    auto_reduce_reason = "pods unschedulable"
-                elif no_active_pods:
-                    auto_reduce_reason = "no active pods"
+            auto_reduce_reason = ""
+            if quota_blocked:
+                auto_reduce_reason = "quota pressure"
+            elif unschedulable:
+                auto_reduce_reason = "pods unschedulable"
+            elif no_active_pods:
+                auto_reduce_reason = "no active pods"
 
-                if auto_reduce_reason and auto_reduce_parallelism and current_parallelism > 1:
-                    new_parallelism = max(1, current_parallelism // 2)
-                    if new_parallelism < current_parallelism:
-                        _patch_job_parallelism(cfg.namespace, cfg.job_name, new_parallelism)
-                        print(
-                            "  ... auto-reduced parallelism due "
-                            f"{auto_reduce_reason}: "
-                            f"{current_parallelism} -> {new_parallelism}",
-                            file=sys.stderr,
-                        )
-                        current_parallelism = new_parallelism
-                        last_progress = now
-                        continue
-
-                recent_text = "; ".join(_event_text(event) for event in recent_events) or "none"
-                waiting_text = (
-                    "; ".join(
-                        f"{count}x {_short_reason(reason)}" for reason, count in waiting_reasons[:3]
+            if auto_reduce_reason and auto_reduce_parallelism and current_parallelism > 1:
+                new_parallelism = max(1, current_parallelism // 2)
+                if new_parallelism < current_parallelism:
+                    _patch_job_parallelism(cfg.namespace, cfg.job_name, new_parallelism)
+                    print(
+                        "  ... auto-reduced parallelism due "
+                        f"{auto_reduce_reason}: "
+                        f"{current_parallelism} -> {new_parallelism}",
+                        file=sys.stderr,
                     )
-                    if waiting_reasons
-                    else "none"
+                    current_parallelism = new_parallelism
+                    last_progress = now
+                    continue
+
+            recent_text = "; ".join(_event_text(event) for event in recent_events) or "none"
+            waiting_text = (
+                "; ".join(
+                    f"{count}x {_short_reason(reason)}" for reason, count in waiting_reasons[:3]
                 )
-                raise RuntimeError(
-                    f"Job {cfg.job_name} stalled with {len(todo)} shards remaining "
-                    f"for >{stalled_seconds}s. "
-                    f"Recent events: {recent_text}. "
-                    f"Waiting reasons: {waiting_text}"
-                )
+                if waiting_reasons
+                else "none"
+            )
+            raise RuntimeError(
+                f"Job {cfg.job_name} stalled with {len(todo)} shards remaining "
+                f"for >{stalled_seconds}s (running mcode={running_mcode}). "
+                f"Recent events: {recent_text}. "
+                f"Waiting reasons: {waiting_text}"
+            )
 
         time.sleep(2)
 
@@ -1013,6 +1270,33 @@ def main() -> int:
         dest="auto_reduce_parallelism",
         action="store_false",
         help="Disable automatic parallelism reduction on quota stalls",
+    )
+    p.add_argument(
+        "--auto-recycle-stuck-shards",
+        dest="auto_recycle_stuck_shards",
+        action="store_true",
+        help="Auto-delete shard pods that appear stuck so the Job can retry them (default)",
+    )
+    p.add_argument(
+        "--no-auto-recycle-stuck-shards",
+        dest="auto_recycle_stuck_shards",
+        action="store_false",
+        help="Disable automatic stuck-shard recycling",
+    )
+    p.add_argument(
+        "--recycle-stuck-seconds",
+        type=int,
+        default=1200,
+        help=(
+            "Recycle a running shard pod when no new mcode logs appear for this long "
+            "(0 disables recycling)"
+        ),
+    )
+    p.add_argument(
+        "--max-stuck-recycles-per-shard",
+        type=int,
+        default=3,
+        help="Maximum automatic stuck-shard recycles per shard index (default: 3)",
     )
     p.add_argument(
         "--mcode-cpu-request",
@@ -1129,6 +1413,10 @@ def main() -> int:
         "--keep-cluster-resources",
         action="store_true",
         help="Do not delete Jobs/ConfigMaps after copying results",
+    )
+    p.set_defaults(
+        auto_reduce_parallelism=True,
+        auto_recycle_stuck_shards=True,
     )
     args = p.parse_args()
 
@@ -1250,6 +1538,9 @@ def main() -> int:
             save_all_logs=bool(args.save_all_logs),
             stalled_seconds=int(args.stalled_seconds),
             auto_reduce_parallelism=bool(args.auto_reduce_parallelism),
+            auto_recycle_stuck_shards=bool(args.auto_recycle_stuck_shards),
+            recycle_stuck_seconds=int(args.recycle_stuck_seconds),
+            max_stuck_recycles_per_shard=int(args.max_stuck_recycles_per_shard),
         )
 
         if not args.keep_cluster_resources:
