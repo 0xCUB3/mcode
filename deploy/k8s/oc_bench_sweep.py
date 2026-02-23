@@ -625,77 +625,6 @@ def _copy_with_retries(namespace: str, pod_name: str, src: str, dst: Path) -> Ex
     return last_err
 
 
-def _should_recycle_stuck_shard(
-    *,
-    auto_recycle_stuck_shards: bool,
-    recycle_stuck_seconds: int,
-    max_stuck_recycles_per_shard: int,
-    recycle_count: int,
-    mcode_running: bool,
-    mcode_terminated: bool,
-    idle_seconds: float,
-) -> bool:
-    if not auto_recycle_stuck_shards:
-        return False
-    if recycle_stuck_seconds <= 0:
-        return False
-    if max_stuck_recycles_per_shard <= 0:
-        return False
-    if recycle_count >= max_stuck_recycles_per_shard:
-        return False
-    if mcode_terminated:
-        return False
-    if not mcode_running:
-        return False
-    return idle_seconds >= float(recycle_stuck_seconds)
-
-
-def _probe_mcode_log_activity(
-    namespace: str,
-    pod_name: str,
-    *,
-    since_seconds: int = 45,
-) -> bool:
-    try:
-        proc = _run(
-            [
-                "oc",
-                "-n",
-                namespace,
-                f"--request-timeout={max(10, since_seconds)}s",
-                "logs",
-                pod_name,
-                "-c",
-                "mcode",
-                "--tail=1",
-                f"--since={since_seconds}s",
-            ],
-            capture=True,
-            check=False,
-            timeout_s=max(15, since_seconds + 5),
-        )
-    except subprocess.TimeoutExpired:
-        return False
-    if proc.returncode != 0:
-        return False
-    return bool((proc.stdout or "").strip())
-
-
-def _delete_pod(namespace: str, pod_name: str) -> bool:
-    try:
-        _oc(
-            ["delete", "pod", pod_name, "--wait=false"],
-            namespace=namespace,
-            retries=3,
-            timeout_s=30,
-        )
-        return True
-    except RuntimeError as err:
-        if _is_notfound_error(str(err)):
-            return False
-        raise
-
-
 def _validate_shard_db(db_path: Path, *, benchmark: str, shard_index: int) -> tuple[bool, str]:
     if not db_path.exists():
         return False, f"missing DB: {db_path.name}"
@@ -783,9 +712,6 @@ def _fetch_results(
     save_all_logs: bool,
     stalled_seconds: int,
     auto_reduce_parallelism: bool,
-    auto_recycle_stuck_shards: bool,
-    recycle_stuck_seconds: int,
-    max_stuck_recycles_per_shard: int,
 ) -> Path:
     job_dir = out_dir / cfg.job_name
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -795,15 +721,9 @@ def _fetch_results(
     last_status = time.time()
     last_progress = time.time()
     current_parallelism = int(cfg.parallelism)
-    shard_last_log_activity: dict[int, float] = {}
-    shard_last_log_probe: dict[int, float] = {}
     shard_last_seen_pod: dict[int, str] = {}
-    shard_recycle_count: dict[int, int] = {}
-    log_probe_interval_s = 30.0
 
     def clear_shard_runtime(idx: int) -> None:
-        shard_last_log_activity.pop(idx, None)
-        shard_last_log_probe.pop(idx, None)
         shard_last_seen_pod.pop(idx, None)
 
     print(f"==> Fetching results for {cfg.job_name} ...", file=sys.stderr)
@@ -828,8 +748,6 @@ def _fetch_results(
             now = time.time()
             if shard_last_seen_pod.get(idx) != pod_name:
                 shard_last_seen_pod[idx] = pod_name
-                shard_last_log_activity[idx] = now
-                shard_last_log_probe[idx] = 0.0
             # Ready gate: mcode container writes _READY and _EXIT_CODE.
             ready_cmd = (
                 "if [ -f /results/_READY ]; then "
@@ -998,40 +916,6 @@ def _fetch_results(
                                 file=sys.stderr,
                             )
                             current_parallelism = new_parallelism
-                else:
-                    mcode_running = _container_running(pod, "mcode")
-                    terminated = _container_terminated(pod, "mcode") is not None
-                    if (
-                        mcode_running
-                        and (now - shard_last_log_probe.get(idx, 0.0)) >= log_probe_interval_s
-                    ):
-                        shard_last_log_probe[idx] = now
-                        if _probe_mcode_log_activity(cfg.namespace, pod_name):
-                            shard_last_log_activity[idx] = now
-                    idle_seconds = now - shard_last_log_activity.get(idx, now)
-                    recycle_count = shard_recycle_count.get(idx, 0)
-                    if _should_recycle_stuck_shard(
-                        auto_recycle_stuck_shards=auto_recycle_stuck_shards,
-                        recycle_stuck_seconds=recycle_stuck_seconds,
-                        max_stuck_recycles_per_shard=max_stuck_recycles_per_shard,
-                        recycle_count=recycle_count,
-                        mcode_running=mcode_running,
-                        mcode_terminated=terminated,
-                        idle_seconds=idle_seconds,
-                    ):
-                        deleted = _delete_pod(cfg.namespace, pod_name)
-                        shard_recycle_count[idx] = recycle_count + 1
-                        shard_last_log_activity[idx] = now
-                        shard_last_log_probe[idx] = now
-                        action = "deleted" if deleted else "already missing"
-                        print(
-                            "  ... auto-recycled stuck shard "
-                            f"{idx} after {int(idle_seconds)}s idle "
-                            f"({action}; recycle {shard_recycle_count[idx]}/"
-                            f"{max_stuck_recycles_per_shard})",
-                            file=sys.stderr,
-                        )
-                        last_progress = now
                 continue
 
             exit_code_s = (check.stdout or "").strip()
@@ -1278,33 +1162,6 @@ def main() -> int:
         help="Disable automatic parallelism reduction on quota stalls",
     )
     p.add_argument(
-        "--auto-recycle-stuck-shards",
-        dest="auto_recycle_stuck_shards",
-        action="store_true",
-        help="Auto-delete shard pods that appear stuck so the Job can retry them (default)",
-    )
-    p.add_argument(
-        "--no-auto-recycle-stuck-shards",
-        dest="auto_recycle_stuck_shards",
-        action="store_false",
-        help="Disable automatic stuck-shard recycling",
-    )
-    p.add_argument(
-        "--recycle-stuck-seconds",
-        type=int,
-        default=1200,
-        help=(
-            "Recycle a running shard pod when no new mcode logs appear for this long "
-            "(0 disables recycling)"
-        ),
-    )
-    p.add_argument(
-        "--max-stuck-recycles-per-shard",
-        type=int,
-        default=3,
-        help="Maximum automatic stuck-shard recycles per shard index (default: 3)",
-    )
-    p.add_argument(
         "--mcode-cpu-request",
         default="500m",
         help="CPU request for mcode container (default: 500m)",
@@ -1422,7 +1279,6 @@ def main() -> int:
     )
     p.set_defaults(
         auto_reduce_parallelism=True,
-        auto_recycle_stuck_shards=True,
     )
     args = p.parse_args()
 
@@ -1544,9 +1400,6 @@ def main() -> int:
             save_all_logs=bool(args.save_all_logs),
             stalled_seconds=int(args.stalled_seconds),
             auto_reduce_parallelism=bool(args.auto_reduce_parallelism),
-            auto_recycle_stuck_shards=bool(args.auto_recycle_stuck_shards),
-            recycle_stuck_seconds=int(args.recycle_stuck_seconds),
-            max_stuck_recycles_per_shard=int(args.max_stuck_recycles_per_shard),
         )
 
         if not args.keep_cluster_resources:
