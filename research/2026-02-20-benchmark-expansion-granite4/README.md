@@ -2,6 +2,14 @@
 
 Goal: compare granite4 pass rates across five new benchmarks (humaneval+, mbpp+, livecodebench, bigcodebench-complete, bigcodebench-instruct) to establish baseline numbers alongside existing humaneval/mbpp results.
 
+HTML snapshot: [`sweep-report.html`](https://raw.githack.com/0xCUB3/mcode/main/research/2026-02-20-benchmark-expansion-granite4/sweep-report.html) ([source](sweep-report.html))
+
+Summary table source: [`results-summary.txt`](results-summary.txt)
+
+Data source:
+
+- `results/2026-02-20-benchmark-expansion-granite4/benchmark-expansion/`
+
 ## Commands
 
 Build the image first (only needed once, then use `--no-build` for subsequent runs):
