@@ -168,13 +168,9 @@ def parse_list(val):
         return [val]
     return []
 
-rebuild_cmds = parse_list(inst.get("install_cmd", []))
-test_cmds = parse_list(inst.get("test_cmd", []))
+test_cmds = parse_list(inst.get("test_cmds", []))
 
 eval_lines = ["#!/bin/bash", "set -euo pipefail", "cd /testbed"]
-for cmd in rebuild_cmds:
-    if cmd.strip():
-        eval_lines.append(cmd)
 for cmd in test_cmds:
     if cmd.strip():
         eval_lines.append(cmd)

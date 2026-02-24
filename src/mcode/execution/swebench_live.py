@@ -190,16 +190,6 @@ class SWEbenchLiveSandbox:
                         patch_sha256=patch_sha,
                     )
 
-            # Run rebuild commands.
-            for cmd in task.rebuild_cmds:
-                if cmd.strip():
-                    _exec_in_container(
-                        container,
-                        cmd,
-                        workdir="/testbed",
-                        timeout_s=timeout_s,
-                    )
-
             # Run test commands.
             all_test_output = []
             for cmd in task.test_cmds:
@@ -213,23 +203,8 @@ class SWEbenchLiveSandbox:
                     all_test_output.append(out)
             test_output = "\n".join(all_test_output)
 
-            # Parse test output.
-            test_results = {}
-            if task.log_parser and task.log_parser.strip():
-                try:
-                    ns: dict = {}
-                    exec(task.log_parser, ns)  # noqa: S102
-                    parse_fn = ns.get("parse_log", None)
-                    if callable(parse_fn):
-                        test_results = parse_fn(test_output)
-                        if not isinstance(test_results, dict):
-                            test_results = _parse_pytest_output(test_output)
-                    else:
-                        test_results = _parse_pytest_output(test_output)
-                except Exception:
-                    test_results = _parse_pytest_output(test_output)
-            else:
-                test_results = _parse_pytest_output(test_output)
+            # Parse test output (log_parser is a tag like "pytest", not code).
+            test_results = _parse_pytest_output(test_output)
 
             # Check resolution.
             report = _check_resolution(

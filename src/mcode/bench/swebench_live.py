@@ -13,15 +13,12 @@ class SWEbenchLiveTask:
     base_commit: str
     problem_statement: str
     hints_text: str
-    version: str
     test_patch: str
     test_cmds: list[str]
-    rebuild_cmds: list[str]
     log_parser: str
     fail_to_pass: list[str]
     pass_to_pass: list[str]
-    difficulty: str
-    language: str
+    difficulty: dict
     raw_instance: dict = field(repr=False)
 
 
@@ -78,15 +75,12 @@ def load_swebench_live(
                 base_commit=str(inst.get("base_commit", "")),
                 problem_statement=str(inst.get("problem_statement", "")),
                 hints_text=str(inst.get("hints_text", "")),
-                version=str(inst.get("version", "")),
                 test_patch=str(inst.get("test_patch", "")),
-                test_cmds=_parse_list(inst.get("test_cmd", [])),
-                rebuild_cmds=_parse_list(inst.get("install_cmd", [])),
+                test_cmds=_parse_list(inst.get("test_cmds", [])),
                 log_parser=str(inst.get("log_parser", "")),
                 fail_to_pass=_parse_list(inst.get("FAIL_TO_PASS", [])),
                 pass_to_pass=_parse_list(inst.get("PASS_TO_PASS", [])),
-                difficulty=str(inst.get("difficulty", "")),
-                language=str(inst.get("language", "")),
+                difficulty=inst.get("difficulty") or {},
                 raw_instance=inst,
             )
         )
