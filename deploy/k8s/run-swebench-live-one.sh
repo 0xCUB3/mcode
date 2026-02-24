@@ -324,8 +324,14 @@ spec:
             exit 0
           fi
 
-          # Re-install package in editable mode so patched source is used
-          pip install -e . --no-deps --quiet 2>/dev/null || true
+          # Update editable install paths: rewrite .pth files from /testbed to workdir
+          # so patched source in workdir is used instead of original /testbed.
+          # Avoids pip install -e (which triggers rebuilds for compiled packages).
+          for pth in /usr/local/lib/python*/site-packages/__editable__*.pth; do
+            if [ -f "\$pth" ] && grep -qF "/testbed" "\$pth"; then
+              sed -i "s|/testbed|\$workdir|g" "\$pth" 2>/dev/null || true
+            fi
+          done
 
           eval_copy=/tmp/eval.sh
           cp /inputs/eval.sh "\$eval_copy"
@@ -460,8 +466,14 @@ spec:
             exit 0
           fi
 
-          # Re-install package in editable mode so patched source is used
-          pip install -e . --no-deps --quiet 2>/dev/null || true
+          # Update editable install paths: rewrite .pth files from /testbed to workdir
+          # so patched source in workdir is used instead of original /testbed.
+          # Avoids pip install -e (which triggers rebuilds for compiled packages).
+          for pth in /usr/local/lib/python*/site-packages/__editable__*.pth; do
+            if [ -f "\$pth" ] && grep -qF "/testbed" "\$pth"; then
+              sed -i "s|/testbed|\$workdir|g" "\$pth" 2>/dev/null || true
+            fi
+          done
 
           eval_copy=/tmp/eval.sh
           cp /inputs/eval.sh "\$eval_copy"
