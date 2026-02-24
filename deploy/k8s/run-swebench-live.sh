@@ -142,10 +142,17 @@ for instance_id in "${instance_ids[@]}"; do
   result_json="${out_dir}/${base}-${hash8}.result.json"
   run_log="${out_dir}/${base}-${hash8}.run.log"
 
-  # Skip if result already exists
+  # Skip if result already exists AND the pod actually ran (not stuck in image pull).
+  # Phase "Pending" means the pod never started (e.g. ImagePullBackOff / rate limit).
   if [[ -s "${result_json}" ]]; then
-    echo "SKIP ${instance_id} (result exists)"
-    continue
+    result_phase="$(python3 -c "import json,sys; print(json.load(sys.stdin).get('phase',''))" <"${result_json}" 2>/dev/null || true)"
+    if [[ "${result_phase}" == "Succeeded" || "${result_phase}" == "Failed" ]]; then
+      echo "SKIP ${instance_id} (result exists, phase=${result_phase})"
+      continue
+    else
+      echo "RETRY ${instance_id} (previous phase=${result_phase:-unknown}, removing stale result)"
+      rm -f "${result_json}"
+    fi
   fi
 
   (
