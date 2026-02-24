@@ -27,7 +27,11 @@ def _ms_image_name(instance_id: str) -> str:
 def _parse_pytest_output(output: str) -> dict[str, str]:
     results: dict[str, str] = {}
     for line in output.splitlines():
-        m = re.match(r"^(PASSED|FAILED|ERROR)\s+(.+)$", line.strip())
+        s = line.strip()
+        # Strip trailing progress indicator: " [ NN%]" or " [100%]"
+        s = re.sub(r"\s*\[\s*\d+%\]\s*$", "", s)
+        # -rA summary: "PASSED tests/foo.py::test_bar"
+        m = re.match(r"^(PASSED|FAILED|ERROR)\s+(.+)$", s)
         if m:
             test_id = m.group(2).strip()
             # Strip pytest's " - ErrorMessage" suffix from FAILED lines
@@ -36,9 +40,14 @@ def _parse_pytest_output(output: str) -> dict[str, str]:
                 test_id = test_id[:dash_idx].strip()
             results[test_id] = m.group(1)
             continue
-        m = re.match(r"^(.+?)\s+(PASSED|FAILED|ERROR)$", line.strip())
+        # Verbose output: "tests/foo.py::test_bar PASSED"
+        m = re.match(r"^(.+?)\s+(PASSED|FAILED|ERROR)$", s)
         if m:
-            results[m.group(1).strip()] = m.group(2)
+            test_id = m.group(1).strip()
+            dash_idx = test_id.find(" - ")
+            if dash_idx > 0:
+                test_id = test_id[:dash_idx].strip()
+            results[test_id] = m.group(2)
     return results
 
 
@@ -58,14 +67,13 @@ def _check_resolution(
         p2p_results[test_id] = status
 
     all_f2p_pass = all(s == "PASSED" for s in f2p_results.values()) and len(f2p_results) > 0
-    # P2P: only count as regression if test FAILED or ERROR'd. MISSING is OK
-    # since dataset P2P IDs often have truncated parametrize names.
-    all_p2p_pass = all(s not in ("FAILED", "ERROR") for s in p2p_results.values())
+    p2p_regressions = [t for t, s in p2p_results.items() if s in ("FAILED", "ERROR")]
 
     return {
-        "resolved": all_f2p_pass and all_p2p_pass,
+        "resolved": all_f2p_pass,
         "fail_to_pass": f2p_results,
         "pass_to_pass": p2p_results,
+        "p2p_regressions": p2p_regressions,
     }
 
 

@@ -38,6 +38,18 @@ def test_parse_pytest_output_strips_error_message():
     assert result["tests/test_base.py::test_get_item"] == "FAILED"
 
 
+def test_parse_pytest_output_verbose_with_percentage():
+    output = (
+        "tests/foo.py::test_a PASSED [ 19%]\n"
+        "tests/foo.py::test_b FAILED [ 20%]\n"
+        "tests/foo.py::test_c PASSED [100%]\n"
+    )
+    result = _parse_pytest_output(output)
+    assert result["tests/foo.py::test_a"] == "PASSED"
+    assert result["tests/foo.py::test_b"] == "FAILED"
+    assert result["tests/foo.py::test_c"] == "PASSED"
+
+
 def test_parse_pytest_output_empty():
     assert _parse_pytest_output("") == {}
     assert _parse_pytest_output("some random output\nno test results here\n") == {}
@@ -73,7 +85,8 @@ def test_check_resolution_fail_still_fails():
     assert report["fail_to_pass"]["test_a"] == "FAILED"
 
 
-def test_check_resolution_regression():
+def test_check_resolution_p2p_regression_tracked_not_blocking():
+    """P2P failures are tracked but don't block resolution."""
     test_results = {
         "test_a": "PASSED",
         "test_b": "FAILED",
@@ -83,8 +96,9 @@ def test_check_resolution_regression():
         fail_to_pass=["test_a"],
         pass_to_pass=["test_b"],
     )
-    assert report["resolved"] is False
+    assert report["resolved"] is True
     assert report["pass_to_pass"]["test_b"] == "FAILED"
+    assert report["p2p_regressions"] == ["test_b"]
 
 
 def test_check_resolution_missing_p2p_is_ok():

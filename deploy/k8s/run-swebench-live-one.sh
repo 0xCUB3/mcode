@@ -174,22 +174,23 @@ def parse_list(val):
 f2p = parse_list(inst.get("FAIL_TO_PASS", []))
 p2p = parse_list(inst.get("PASS_TO_PASS", []))
 
-# Build eval.sh: run F2P tests first (exact IDs, critical for resolution),
-# then P2P test files (best-effort, MISSING is OK).
-# F2P tests are passed as exact node IDs via Python to avoid shell quoting
-# issues and to avoid running entire parametrized test files.
-p2p_files = sorted(set(tid.split("::")[0] for tid in p2p if "::" in tid))
+# Build eval.sh: run F2P test files in a single pytest session.
+# Running individual F2P test IDs in isolation can cause spurious failures
+# when tests depend on session-scoped fixtures or conftest setup.
+# Running the full F2P files preserves test context while staying fast.
+# P2P tests are not run (P2P failures don't block resolution since Docker
+# images have stale P2P tests that fail even with gold patches).
+f2p_files = sorted(set(tid.split("::")[0] for tid in f2p if "::" in tid))
 
 eval_lines = ["#!/bin/bash", "cd /testbed"]
-if f2p or p2p:
-    # F2P: run exact test IDs first (small list, critical for resolution)
-    if f2p:
-        quoted = " ".join(f"'{tid}'" for tid in f2p)
-        eval_lines.append(f"pytest -rA --tb=short {quoted} || true")
-    # P2P: run all test files for regression detection (best-effort,
-    # may time out on large repos - MISSING P2P is acceptable)
-    if p2p_files:
-        eval_lines.append(f"pytest -rA --tb=no {' '.join(p2p_files)} || true")
+if f2p_files:
+    eval_lines.append(f"pytest -rA --tb=short {' '.join(f2p_files)} || true")
+elif f2p:
+    # F2P IDs without :: separator - use raw test_cmds
+    raw_cmds = parse_list(inst.get("test_cmds", []))
+    for cmd in raw_cmds:
+        if cmd.strip():
+            eval_lines.append(cmd + " || true")
 else:
     raw_cmds = parse_list(inst.get("test_cmds", []))
     for cmd in raw_cmds:
@@ -295,8 +296,13 @@ spec:
           # Apply test patch
           test_patch=/inputs/test_patch.diff
           if [ -s "\$test_patch" ]; then
-            if ! git apply --verbose "\$test_patch" 2>/dev/null; then
-              git apply --verbose --reject "\$test_patch" 2>/dev/null || true
+            echo '>>>>> Applying Test Patch'
+            if git apply --verbose "\$test_patch"; then
+              echo '>>>>> Test Patch Applied'
+            elif git apply --verbose --reject "\$test_patch"; then
+              echo '>>>>> Test Patch Applied (with rejects)'
+            else
+              echo '>>>>> Test Patch Apply Failed'
             fi
           fi
 
@@ -317,6 +323,9 @@ spec:
             echo '>>>>> Patch Apply Failed'
             exit 0
           fi
+
+          # Re-install package in editable mode so patched source is used
+          pip install -e . --no-deps --quiet 2>/dev/null || true
 
           eval_copy=/tmp/eval.sh
           cp /inputs/eval.sh "\$eval_copy"
@@ -423,8 +432,13 @@ spec:
           # Apply test patch
           test_patch=/inputs/test_patch.diff
           if [ -s "\$test_patch" ]; then
-            if ! git apply --verbose "\$test_patch" 2>/dev/null; then
-              git apply --verbose --reject "\$test_patch" 2>/dev/null || true
+            echo '>>>>> Applying Test Patch'
+            if git apply --verbose "\$test_patch"; then
+              echo '>>>>> Test Patch Applied'
+            elif git apply --verbose --reject "\$test_patch"; then
+              echo '>>>>> Test Patch Applied (with rejects)'
+            else
+              echo '>>>>> Test Patch Apply Failed'
             fi
           fi
 
@@ -445,6 +459,9 @@ spec:
             echo '>>>>> Patch Apply Failed'
             exit 0
           fi
+
+          # Re-install package in editable mode so patched source is used
+          pip install -e . --no-deps --quiet 2>/dev/null || true
 
           eval_copy=/tmp/eval.sh
           cp /inputs/eval.sh "\$eval_copy"
@@ -546,11 +563,14 @@ if Path(eval_log_fp).exists():
 
 # Simple pytest-style parsing
 def parse_pytest(output):
+    import re as _re
     results = {}
     for line in output.splitlines():
-        import re as _re
-        # "PASSED tests/foo.py::test_bar" or "FAILED tests/foo.py::test_bar - ErrorMsg"
-        m = _re.match(r"^(PASSED|FAILED|ERROR)\s+(.+)$", line.strip())
+        s = line.strip()
+        # Strip trailing progress indicator: " [ NN%]" or " [100%]"
+        s = _re.sub(r"\s*\[\s*\d+%\]\s*$", "", s)
+        # "-rA summary: PASSED tests/foo.py::test_bar" or "FAILED tests/... - Err"
+        m = _re.match(r"^(PASSED|FAILED|ERROR)\s+(.+)$", s)
         if m:
             test_id = m.group(2).strip()
             # Strip pytest's " - ErrorMessage" suffix from FAILED lines
@@ -559,20 +579,25 @@ def parse_pytest(output):
                 test_id = test_id[:dash_idx].strip()
             results[test_id] = m.group(1)
             continue
-        # "tests/foo.py::test_bar PASSED"
-        m = _re.match(r"^(.+?)\s+(PASSED|FAILED|ERROR)$", line.strip())
+        # Verbose output: "tests/foo.py::test_bar PASSED"
+        m = _re.match(r"^(.+?)\s+(PASSED|FAILED|ERROR)$", s)
         if m:
-            results[m.group(1).strip()] = m.group(2)
+            test_id = m.group(1).strip()
+            dash_idx = test_id.find(" - ")
+            if dash_idx > 0:
+                test_id = test_id[:dash_idx].strip()
+            results[test_id] = m.group(2)
     return results
 
 test_results = parse_pytest(eval_log_text)
 
 f2p_ok = all(test_results.get(t) == "PASSED" for t in fail_to_pass) and len(fail_to_pass) > 0
-# P2P: only count as regression if a test actually FAILED or ERROR'd.
-# MISSING tests (not collected/found) are OK - dataset P2P IDs often contain
-# truncated parametrize names or special chars that don't match pytest output.
-p2p_ok = all(test_results.get(t, "MISSING") not in ("FAILED", "ERROR") for t in pass_to_pass)
-resolved = f2p_ok and p2p_ok
+# P2P: tracked for diagnostics but does NOT block resolution.
+# Many Docker images have stale P2P tests that fail even with gold patches
+# due to environment drift (Python version, missing deps, etc.).
+# Resolution is determined solely by F2P tests passing.
+p2p_failed = [t for t in pass_to_pass if test_results.get(t, "MISSING") in ("FAILED", "ERROR")]
+resolved = f2p_ok
 
 patch_applied = ">>>>> Applied Patch" in eval_log_text
 
@@ -596,6 +621,7 @@ result = {
     "report": {
         "fail_to_pass": {t: test_results.get(t, "MISSING") for t in fail_to_pass},
         "pass_to_pass": {t: test_results.get(t, "MISSING") for t in pass_to_pass},
+        "p2p_regressions": p2p_failed,
     },
     "error": None,
 }
