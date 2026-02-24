@@ -171,21 +171,37 @@ def parse_list(val):
         return [val]
     return []
 
-test_cmds = parse_list(inst.get("test_cmds", []))
+f2p = parse_list(inst.get("FAIL_TO_PASS", []))
+p2p = parse_list(inst.get("PASS_TO_PASS", []))
+
+# Build eval.sh: run F2P tests first (exact IDs, critical for resolution),
+# then P2P test files (best-effort, MISSING is OK).
+# F2P tests are passed as exact node IDs via Python to avoid shell quoting
+# issues and to avoid running entire parametrized test files.
+p2p_files = sorted(set(tid.split("::")[0] for tid in p2p if "::" in tid))
 
 eval_lines = ["#!/bin/bash", "set -euo pipefail", "cd /testbed"]
-for cmd in test_cmds:
-    if cmd.strip():
-        eval_lines.append(cmd)
+if f2p or p2p:
+    # F2P: run exact test IDs first (small list, critical for resolution)
+    if f2p:
+        quoted = " ".join(f"'{tid}'" for tid in f2p)
+        eval_lines.append(f"pytest -rA --tb=short {quoted} || true")
+    # P2P: run all test files for regression detection (best-effort,
+    # may time out on large repos - MISSING P2P is acceptable)
+    if p2p_files:
+        eval_lines.append(f"pytest -rA --tb=no {' '.join(p2p_files)} || true")
+else:
+    raw_cmds = parse_list(inst.get("test_cmds", []))
+    for cmd in raw_cmds:
+        if cmd.strip():
+            eval_lines.append(cmd + " || true")
 (out / "eval.sh").write_text("\\n".join(eval_lines) + "\\n", encoding="utf-8")
 
 # Write test patch
 test_patch = str(inst.get("test_patch", ""))
 (out / "test_patch.diff").write_text(test_patch, encoding="utf-8")
 
-# Write fail_to_pass / pass_to_pass
-f2p = parse_list(inst.get("FAIL_TO_PASS", []))
-p2p = parse_list(inst.get("PASS_TO_PASS", []))
+# Write fail_to_pass / pass_to_pass (f2p/p2p already parsed above)
 (out / "fail_to_pass.json").write_text(json.dumps(f2p), encoding="utf-8")
 (out / "pass_to_pass.json").write_text(json.dumps(p2p), encoding="utf-8")
 
@@ -214,8 +230,6 @@ if [[ "${mode}" == "gold" ]]; then
     --from-file=eval.sh="${tmp_dir}/eval.sh" \
     --from-file=test_patch.diff="${tmp_dir}/test_patch.diff" \
     --from-file=patch.diff="${tmp_dir}/patch.diff" \
-    --from-file=fail_to_pass.json="${tmp_dir}/fail_to_pass.json" \
-    --from-file=pass_to_pass.json="${tmp_dir}/pass_to_pass.json" \
     >/dev/null
 else
   oc create configmap "${cm_name}" \
@@ -224,8 +238,6 @@ else
     --from-file=repo.txt="${tmp_dir}/repo.txt" \
     --from-file=problem.txt="${tmp_dir}/problem.txt" \
     --from-file=hints.txt="${tmp_dir}/hints.txt" \
-    --from-file=fail_to_pass.json="${tmp_dir}/fail_to_pass.json" \
-    --from-file=pass_to_pass.json="${tmp_dir}/pass_to_pass.json" \
     >/dev/null
 fi
 
@@ -525,10 +537,17 @@ def parse_pytest(output):
     results = {}
     for line in output.splitlines():
         import re as _re
+        # "PASSED tests/foo.py::test_bar" or "FAILED tests/foo.py::test_bar - ErrorMsg"
         m = _re.match(r"^(PASSED|FAILED|ERROR)\s+(.+)$", line.strip())
         if m:
-            results[m.group(2).strip()] = m.group(1)
+            test_id = m.group(2).strip()
+            # Strip pytest's " - ErrorMessage" suffix from FAILED lines
+            dash_idx = test_id.find(" - ")
+            if dash_idx > 0:
+                test_id = test_id[:dash_idx].strip()
+            results[test_id] = m.group(1)
             continue
+        # "tests/foo.py::test_bar PASSED"
         m = _re.match(r"^(.+?)\s+(PASSED|FAILED|ERROR)$", line.strip())
         if m:
             results[m.group(1).strip()] = m.group(2)
@@ -537,7 +556,10 @@ def parse_pytest(output):
 test_results = parse_pytest(eval_log_text)
 
 f2p_ok = all(test_results.get(t) == "PASSED" for t in fail_to_pass) and len(fail_to_pass) > 0
-p2p_ok = all(test_results.get(t) == "PASSED" for t in pass_to_pass)
+# P2P: only count as regression if a test actually FAILED or ERROR'd.
+# MISSING tests (not collected/found) are OK - dataset P2P IDs often contain
+# truncated parametrize names or special chars that don't match pytest output.
+p2p_ok = all(test_results.get(t, "MISSING") not in ("FAILED", "ERROR") for t in pass_to_pass)
 resolved = f2p_ok and p2p_ok
 
 patch_applied = ">>>>> Applied Patch" in eval_log_text

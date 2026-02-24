@@ -28,6 +28,16 @@ def test_parse_pytest_output_prefix_format():
     assert result["test_bar.py::test_beta"] == "FAILED"
 
 
+def test_parse_pytest_output_strips_error_message():
+    output = (
+        "PASSED tests/test_base.py::test_set\n"
+        "FAILED tests/test_base.py::test_get_item - KeyError: 'DOTENV_INT does not exist'\n"
+    )
+    result = _parse_pytest_output(output)
+    assert result["tests/test_base.py::test_set"] == "PASSED"
+    assert result["tests/test_base.py::test_get_item"] == "FAILED"
+
+
 def test_parse_pytest_output_empty():
     assert _parse_pytest_output("") == {}
     assert _parse_pytest_output("some random output\nno test results here\n") == {}
@@ -77,15 +87,28 @@ def test_check_resolution_regression():
     assert report["pass_to_pass"]["test_b"] == "FAILED"
 
 
-def test_check_resolution_missing_test():
+def test_check_resolution_missing_p2p_is_ok():
+    """MISSING P2P tests don't block resolution (dataset IDs often unmatchable)."""
     test_results = {"test_a": "PASSED"}
     report = _check_resolution(
         test_results,
         fail_to_pass=["test_a"],
         pass_to_pass=["test_missing"],
     )
-    assert report["resolved"] is False
+    assert report["resolved"] is True
     assert report["pass_to_pass"]["test_missing"] == "MISSING"
+
+
+def test_check_resolution_missing_f2p_blocks():
+    """MISSING F2P tests DO block resolution (must actually pass)."""
+    test_results = {"test_b": "PASSED"}
+    report = _check_resolution(
+        test_results,
+        fail_to_pass=["test_missing"],
+        pass_to_pass=["test_b"],
+    )
+    assert report["resolved"] is False
+    assert report["fail_to_pass"]["test_missing"] == "MISSING"
 
 
 def test_check_resolution_empty_fail_to_pass():

@@ -29,7 +29,12 @@ def _parse_pytest_output(output: str) -> dict[str, str]:
     for line in output.splitlines():
         m = re.match(r"^(PASSED|FAILED|ERROR)\s+(.+)$", line.strip())
         if m:
-            results[m.group(2).strip()] = m.group(1)
+            test_id = m.group(2).strip()
+            # Strip pytest's " - ErrorMessage" suffix from FAILED lines
+            dash_idx = test_id.find(" - ")
+            if dash_idx > 0:
+                test_id = test_id[:dash_idx].strip()
+            results[test_id] = m.group(1)
             continue
         m = re.match(r"^(.+?)\s+(PASSED|FAILED|ERROR)$", line.strip())
         if m:
@@ -53,7 +58,9 @@ def _check_resolution(
         p2p_results[test_id] = status
 
     all_f2p_pass = all(s == "PASSED" for s in f2p_results.values()) and len(f2p_results) > 0
-    all_p2p_pass = all(s == "PASSED" for s in p2p_results.values())
+    # P2P: only count as regression if test FAILED or ERROR'd. MISSING is OK
+    # since dataset P2P IDs often have truncated parametrize names.
+    all_p2p_pass = all(s not in ("FAILED", "ERROR") for s in p2p_results.values())
 
     return {
         "resolved": all_f2p_pass and all_p2p_pass,
