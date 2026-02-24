@@ -270,11 +270,11 @@ spec:
       image: ${eval_image}
       resources:
         requests:
-          cpu: "500m"
-          memory: "2Gi"
-        limits:
-          cpu: "2"
+          cpu: "1"
           memory: "4Gi"
+        limits:
+          cpu: "3"
+          memory: "12Gi"
       env:
         - name: HOME
           value: /tmp
@@ -412,11 +412,11 @@ spec:
       image: ${eval_image}
       resources:
         requests:
-          cpu: "500m"
-          memory: "2Gi"
-        limits:
-          cpu: "2"
+          cpu: "1"
           memory: "4Gi"
+        limits:
+          cpu: "3"
+          memory: "12Gi"
       env:
         - name: HOME
           value: /tmp

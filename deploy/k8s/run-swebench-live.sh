@@ -139,7 +139,14 @@ for instance_id in "${instance_ids[@]}"; do
   hash8="$(printf '%s' "${instance_id}" | shasum -a 256 | cut -c1-8)"
   base="$(sanitize "${instance_id}")"
   base="${base:0:42}"
+  result_json="${out_dir}/${base}-${hash8}.result.json"
   run_log="${out_dir}/${base}-${hash8}.run.log"
+
+  # Skip if result already exists
+  if [[ -s "${result_json}" ]]; then
+    echo "SKIP ${instance_id} (result exists)"
+    continue
+  fi
 
   (
     set +e
