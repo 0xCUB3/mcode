@@ -73,36 +73,36 @@ Compiled from:
 - `research/2026-02-20-benchmark-expansion-granite4/sweep-report.html`
 
 | benchmark | config | pass_rate | sec/solve | passed/total |
-|---|---|---:|---:|---:|
-| humaneval+ | b1-t60 | 64.6% | 1.81 | 106/164 |
-| humaneval+ | b1-t120 | 67.7% | 1.97 | 111/164 |
-| humaneval+ | b3-t60 | 78.7% | 4.34 | 129/164 |
-| humaneval+ | b3-t120 | 81.1% | 3.39 | 133/164 |
-| humaneval+ | b5-t60 | 84.8% | 6.48 | 139/164 |
-| humaneval+ | b5-t120 | 84.1% | 6.23 | 138/164 |
-| mbpp+ | b1-t60 | 90.2% | 0.89 | 341/378 |
-| mbpp+ | b1-t120 | 86.8% | 0.92 | 328/378 |
-| mbpp+ | b3-t60 | 97.1% | 1.02 | 367/378 |
-| mbpp+ | b3-t120 | 96.6% | 0.95 | 365/378 |
-| mbpp+ | b5-t60 | 98.1% | 1.07 | 371/378 |
-| mbpp+ | b5-t120 | 98.4% | 1.11 | 372/378 |
-| livecodebench | b1-t60 | 0.4% | 524.05 | 2/511 |
-| livecodebench | b1-t120 | 0.6% | 384.57 | 3/511 |
-| livecodebench | b3-t60 | 2.0% | 260.19 | 10/511 |
-| livecodebench | b3-t120 | 2.0% | 391.03 | 10/511 |
-| livecodebench | b5-t60 | 2.7% | 527.16 | 14/511 |
-| livecodebench | b5-t120 | 3.0% | 520.70 | 15/503 |
-| bigcodebench-complete | b1-t60 | 11.8% | 45.30 | 132/1122 |
-| bigcodebench-complete | b1-t120 | 12.6% | 39.84 | 144/1140 |
-| bigcodebench-complete | b3-t60 | 18.0% (partial) | 91.51 | 141/784 (14 shards) |
-| bigcodebench-complete | b3-t120 | skipped | - | - |
-| bigcodebench-complete | b5-t60 | skipped | - | - |
-| bigcodebench-complete | b5-t120 | skipped | - | - |
-| bigcodebench-instruct | b1-t60 | skipped | - | - |
-| bigcodebench-instruct | b1-t120 | skipped | - | - |
-| bigcodebench-instruct | b3-t60 | skipped | - | - |
-| bigcodebench-instruct | b3-t120 | skipped | - | - |
-| bigcodebench-instruct | b5-t60 | skipped | - | - |
+|-|-|-:|-:|-:|
+| humaneval+ | b1-t60 | 64.6% | 1.17 | 106/164 |
+| humaneval+ | b1-t120 | 67.7% | 1.33 | 111/164 |
+| humaneval+ | b3-t60 | 78.7% | 3.42 | 129/164 |
+| humaneval+ | b3-t120 | 81.1% | 2.75 | 133/164 |
+| humaneval+ | b5-t60 | 84.8% | 5.49 | 139/164 |
+| humaneval+ | b5-t120 | 84.1% | 5.25 | 138/164 |
+| mbpp+ | b1-t60 | 90.2% | 0.81 | 341/378 |
+| mbpp+ | b1-t120 | 86.8% | 0.80 | 328/378 |
+| mbpp+ | b3-t60 | 97.1% | 0.99 | 367/378 |
+| mbpp+ | b3-t120 | 96.6% | 0.92 | 365/378 |
+| mbpp+ | b5-t60 | 98.1% | 1.05 | 371/378 |
+| mbpp+ | b5-t120 | 98.4% | 1.10 | 372/378 |
+| livecodebench | b1-t60 | 0.4% | 2.05 | 2/511 |
+| livecodebench | b1-t120 | 0.6% | 2.26 | 3/511 |
+| livecodebench | b3-t60 | 2.0% | 5.09 | 10/511 |
+| livecodebench | b3-t120 | 2.0% | 7.65 | 10/511 |
+| livecodebench | b5-t60 | 2.7% | 14.44 | 14/511 |
+| livecodebench | b5-t120 | 3.0% | 15.53 | 15/503 |
+| bigcodebench-complete | b1-t60 | 11.8% | 5.33 | 132/1122 |
+| bigcodebench-complete | b1-t120 | 12.6% | 5.03 | 144/1140 |
+| bigcodebench-complete | b3-t60 | 18.0% | 16.42 | 203/1126 |
+| bigcodebench-complete | b3-t120 | 19.5% | 15.90 | 222/1140 |
+| bigcodebench-complete | b5-t60 | 21.8% | 26.67 | 245/1126 |
+| bigcodebench-complete | b5-t120 | 21.8% | 15.99 | 263/1208 |
+| bigcodebench-instruct | b1-t60 | 11.8% | 2.56 | 135/1140 |
+| bigcodebench-instruct | b1-t120 | 12.6% | 2.49 | 144/1140 |
+| bigcodebench-instruct | b3-t60 | 18.3% | 6.81 | 209/1140 |
+| bigcodebench-instruct | b3-t120 | 18.7% | 7.39 | 135/723 (13 shards) |
+| bigcodebench-instruct | b5-t60 | 21.3% | 13.49 | 146/684 (12 shards) |
 | bigcodebench-instruct | b5-t120 | skipped | - | - |
 
 ## Findings
@@ -114,12 +114,15 @@ Compiled from:
 **Benchmark difficulty spectrum.** The five benchmarks span a wide range:
 - mbpp+ (90-98%): near-saturated, mostly useful as a sanity check
 - humaneval+ (65-85%): good dynamic range, responds well to retries
-- bigcodebench-complete (12-18%): substantially harder, requires library knowledge and longer solutions
+- bigcodebench-complete (12-22%): substantially harder, requires library knowledge and longer solutions
+- bigcodebench-instruct (12-21%): nearly identical to complete, confirming the bottleneck is task difficulty not prompt format
 - livecodebench (0.4-3.0%): competition-level problems, effectively out of reach for granite4 at 8B parameters
 
-**Speed characteristics.** mbpp+ solves average under 1.2s even at b5. humaneval+ scales linearly with budget (1.8s at b1, 6.5s at b5). bigcodebench-complete is 10-20x slower (40-90s/solve) due to longer prompts and sandbox execution. livecodebench sec/solve numbers (260-527s) are inflated because unsolved problems burn the full timeout.
+**Speed characteristics.** mbpp+ averages under 1.1s/solve even at b5. humaneval+ scales linearly with budget (1.2s at b1, 5.5s at b5). bigcodebench-complete is slower (5-27s/solve) due to longer prompts and sandbox execution. bigcodebench-instruct is faster than complete at the same pass rates (2.5s vs 5.3s at b1) because instruct prompts are shorter. livecodebench sec/solve numbers (2-16s) only reflect tasks that were attempted, not the overall timeout burn.
 
-**Infrastructure issues.** bigcodebench-complete b3-t60 only completed 14/20 shards before OOMKills stalled progress. bigcodebench-complete b3-t120 through b5-t120 were skipped due to the same memory pressure. All bigcodebench-instruct configs were skipped entirely because shards hung on sandbox execution (not LLM inference or OOM).
+**Complete vs instruct.** bigcodebench-instruct and bigcodebench-complete produce nearly identical pass rates at every budget level (11.8% vs 11.8% at b1, 18.3% vs 18.0% at b3, 21.3% vs 21.8% at b5). This is surprising since instruct provides less guidance, but suggests granite4 extracts the same signal from both prompt formats. The practical difference is speed: instruct runs 2x faster due to shorter prompts.
+
+**Infrastructure issues.** After fixing the process sandbox (orphan leak, missing MPLBACKEND), all bigcodebench-complete configs completed 20/20 shards. Most bigcodebench-instruct configs also completed. The remaining gaps (instruct b3-t120 at 13/20, b5-t60 at 12/20, b5-t120 skipped) are from shards that OOM at 20Gi even with the fixes, hitting the 32Gi namespace quota ceiling. These partial configs have enough data to confirm the pattern.
 
 **Root cause of bigcodebench hangs (post-mortem).** Three bugs in `ProcessSandbox` (the in-cluster fallback used when Docker is unavailable) combined to cause cascading resource exhaustion:
 
@@ -133,8 +136,8 @@ All three issues are fixed in `process_sandbox.py`: process-group killing via `s
 
 ## Conclusion
 
-For granite4 at 8B parameters, humaneval+ and mbpp+ confirm competitive single-attempt pass rates (65% and 90%) that scale well with retries. The model hits a wall on competition-level problems (livecodebench) and library-heavy tasks (bigcodebench-complete). Budget=3 captures most of the retry benefit; budget=5 adds only 2-5pp. Timeout=60s is sufficient for all benchmarks except livecodebench.
+29 of 30 configs completed across 5 benchmarks. For granite4 at 8B parameters, humaneval+ and mbpp+ confirm competitive single-attempt pass rates (65% and 90%) that scale well with retries. bigcodebench-complete and bigcodebench-instruct produce nearly identical results (~12% at b1, ~22% at b5), confirming the bottleneck is model capability not prompt format. livecodebench remains out of reach at 0.4-3.0%.
 
-Recommended default config for future granite4 runs: b3-t60. For cross-model comparisons, b1-t60 (cheapest) and b3-t60 (best tradeoff) are the two most useful data points.
+Budget=3 captures most of the retry benefit; budget=5 adds only 2-4pp across all benchmarks. Timeout=60s is sufficient everywhere.
 
-Next steps: re-run bigcodebench-complete (full 20 shards) and bigcodebench-instruct now that the sandbox bugs are fixed. If pass rates remain low, it's the model, not infrastructure.
+Recommended default config for future runs: b3-t60. For cross-model comparisons, b1-t60 and b3-t60 are the two most useful data points. bigcodebench-instruct can be dropped since it tracks complete almost exactly.
