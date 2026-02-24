@@ -58,10 +58,13 @@ db_path="${DB:-experiments/results/swebench-live-${run_tag}.db}"
 name_prefix="${NAME_PREFIX:-mcode-sweb-live-${run_tag}}"
 
 if [[ "${mode}" != "gold" && "${mode}" != "model" ]]; then
-  echo "ERROR: MODE must be 'gold' or 'model' (got ${mode@Q})." >&2
+  echo "ERROR: MODE must be 'gold' or 'model' (got '${mode}')." >&2
   usage
   exit 2
 fi
+
+# Bash 3.2 compatible shell quoting (replaces ${var@Q} from bash 4.4+)
+shquote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 
 instance_ids=("$@")
 
@@ -70,7 +73,10 @@ if (( ${#instance_ids[@]} == 0 )); then
     usage
     exit 2
   fi
-  mapfile -t instance_ids < <(
+  instance_ids=()
+  while IFS= read -r line; do
+    instance_ids+=("$line")
+  done < <(
     uv run python - <<PY
 import logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -87,8 +93,8 @@ except Exception:
 
 from datasets import load_dataset
 
-split = ${split@Q}
-limit = int(${limit@Q})
+split = $(shquote "${split}")
+limit = int($(shquote "${limit}"))
 ds = load_dataset("SWE-bench-Live/SWE-bench-Live", split=split)
 for i, row in enumerate(ds):
     if i >= limit:
@@ -157,16 +163,16 @@ from pathlib import Path
 
 from mcode.bench.results import ResultsDB
 
-out_dir = Path(${out_dir@Q})
-db_path = Path(${db_path@Q})
+out_dir = Path($(shquote "${out_dir}"))
+db_path = Path($(shquote "${db_path}"))
 
-mode = ${mode@Q}
-split = ${split@Q}
-timeout_s = int(${timeout_s@Q})
-parallelism = int(${parallelism@Q})
+mode = $(shquote "${mode}")
+split = $(shquote "${split}")
+timeout_s = int($(shquote "${timeout_s}"))
+parallelism = int($(shquote "${parallelism}"))
 
-backend = ${backend@Q}
-model = ${model@Q}
+backend = $(shquote "${backend}")
+model = $(shquote "${model}")
 
 db = ResultsDB(db_path)
 run_id = db.start_run(

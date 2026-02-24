@@ -48,9 +48,12 @@ mode="${MODE:-model}"
 split="${SPLIT:-verified}"
 
 if [[ "${mode}" != "gold" && "${mode}" != "model" ]]; then
-  echo "ERROR: MODE must be 'gold' or 'model' (got ${mode@Q})." >&2
+  echo "ERROR: MODE must be 'gold' or 'model' (got '${mode}')." >&2
   exit 2
 fi
+
+# Bash 3.2 compatible shell quoting (replaces ${var@Q} from bash 4.4+)
+shquote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 
 namespace="$(oc project -q)"
 
@@ -134,9 +137,9 @@ import json
 from pathlib import Path
 from datasets import load_dataset
 
-instance_id = ${instance_id@Q}
-split = ${split@Q}
-mode = ${mode@Q}
+instance_id = $(shquote "${instance_id}")
+split = $(shquote "${split}")
+mode = $(shquote "${mode}")
 
 ds = load_dataset("SWE-bench-Live/SWE-bench-Live", split=split)
 inst = None
@@ -148,7 +151,7 @@ for row in ds:
 if inst is None:
     raise SystemExit(f"Instance not found: {instance_id!r} (split={split})")
 
-out = Path(${tmp_dir@Q})
+out = Path($(shquote "${tmp_dir}"))
 out.mkdir(parents=True, exist_ok=True)
 
 # Build eval.sh from install_cmd + test_cmd
@@ -499,10 +502,10 @@ phase = os.environ.get("MCODE_SWEB_PHASE", "")
 reason = os.environ.get("MCODE_SWEB_REASON") or None
 gen_log = os.environ.get("MCODE_SWEB_GEN_LOG") or ""
 
-instance_id = ${instance_id@Q}
-eval_log_fp = ${eval_log@Q}
-f2p_fp = Path(${tmp_dir@Q}) / "fail_to_pass.json"
-p2p_fp = Path(${tmp_dir@Q}) / "pass_to_pass.json"
+instance_id = $(shquote "${instance_id}")
+eval_log_fp = $(shquote "${eval_log}")
+f2p_fp = Path($(shquote "${tmp_dir}")) / "fail_to_pass.json"
+p2p_fp = Path($(shquote "${tmp_dir}")) / "pass_to_pass.json"
 
 fail_to_pass = json.loads(f2p_fp.read_text()) if f2p_fp.exists() else []
 pass_to_pass = json.loads(p2p_fp.read_text()) if p2p_fp.exists() else []
@@ -578,7 +581,7 @@ fi
 if [[ "${phase}" != "Succeeded" ]]; then
   echo "ERROR: pod did not succeed (phase=${phase:-unknown})." >&2
   if [[ -n "${out_dir}" ]]; then
-    echo "Note: wrote logs + result JSON under ${out_dir@Q} (prefix=${log_prefix@Q})." >&2
+    echo "Note: wrote logs + result JSON under '${out_dir}' (prefix='${log_prefix}')." >&2
   fi
   exit 1
 fi
