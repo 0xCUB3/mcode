@@ -2137,29 +2137,10 @@ def bench_swebench_live(
         int,
         typer.Option("--timeout", min=1, help="Seconds per SWE-bench eval attempt"),
     ] = 1800,
-    split: Annotated[str, typer.Option("--split", help="Dataset split (dev/test)")] = "test",
-    arch: Annotated[
+    split: Annotated[
         str,
-        typer.Option(
-            "--arch",
-            help=("Image arch: auto/x86_64/arm64 (auto prefers x86_64 for prebuilt images)."),
-        ),
-    ] = "auto",
-    namespace: Annotated[
-        str,
-        typer.Option(
-            "--namespace",
-            help=('Prebuilt image namespace (default: swebench); set to "" to build locally.'),
-        ),
-    ] = "swebench",
-    max_workers: Annotated[
-        int,
-        typer.Option("--max-workers", min=1, help="Parallelism for image building"),
-    ] = 4,
-    force_rebuild: Annotated[
-        bool,
-        typer.Option("--force-rebuild", help="Rebuild images even if they exist"),
-    ] = False,
+        typer.Option("--split", help="Dataset split (test/lite/verified/full)"),
+    ] = "verified",
     mem_limit: Annotated[
         str,
         typer.Option("--mem-limit", help="Eval container memory limit"),
@@ -2195,7 +2176,7 @@ def bench_swebench_live(
         typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
     ] = "best_attempt",
 ) -> None:
-    """Run SWE-bench Live (Verified) benchmark."""
+    """Run Microsoft SWE-bench-Live benchmark."""
     strategy_name = strategy.strip().lower()
     if strategy_name not in {"repair", "sofai"}:
         raise typer.BadParameter("Unknown --strategy. Use repair or sofai.")
@@ -2223,10 +2204,6 @@ def bench_swebench_live(
         retrieval=False,
         timeout_s=timeout_s,
         swebench_split=split,
-        swebench_namespace=_optional_str(namespace),
-        swebench_arch=None if arch == "auto" else arch,
-        swebench_max_workers=max_workers,
-        swebench_force_rebuild=force_rebuild,
         swebench_mem_limit=mem_limit,
         swebench_pids_limit=pids_limit,
         task_shard_count=shard_count,

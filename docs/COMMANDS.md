@@ -211,3 +211,45 @@ Query the DB it prints:
 ```bash
 uv run mcode results --db experiments/results/swebench-lite-*.db --benchmark swebench-lite
 ```
+
+## SWE-bench Live: one Pod per instance (x86_64)
+
+Microsoft SWE-bench-Live uses prebuilt Docker images (`starryzhang/sweb.eval.x86_64.*`), so no local image building is required. Uses the `datasets` library instead of the `swebench` package.
+
+Before running, install the extra locally:
+
+```bash
+uv pip install -e '.[datasets]'
+```
+
+### Gold vs model
+
+- `MODE=gold`: apply the dataset's reference patch and run tests (sanity check for the harness + cluster).
+- `MODE=model`: generate a patch with `mcode` (via Mellea) and evaluate it (real benchmark mode).
+
+### Single instance (debugging)
+
+```bash
+MODE=gold ./deploy/k8s/run-swebench-live-one.sh django__django-11099
+MODE=model BACKEND=ollama MODEL=granite4:latest ./deploy/k8s/run-swebench-live-one.sh django__django-11099
+```
+
+### Batch + SQLite output
+
+`run-swebench-live.sh` launches multiple instance Pods (up to `PARALLELISM` at a time) and creates one SQLite DB at the end.
+
+```bash
+# Gold-patch smoke test (first N instances)
+MODE=gold LIMIT=5 PARALLELISM=2 ./deploy/k8s/run-swebench-live.sh
+
+# Model-run via Ollama (first N instances)
+MODE=model LIMIT=5 PARALLELISM=2 \
+  BACKEND=ollama MODEL=granite4:latest \
+  ./deploy/k8s/run-swebench-live.sh
+```
+
+Query the DB it prints:
+
+```bash
+uv run mcode results --db experiments/results/swebench-live-*.db --benchmark swebench-live
+```

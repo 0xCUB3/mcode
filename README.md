@@ -133,6 +133,29 @@ mcode bench swebench-lite --namespace "" --model granite3.3:8b --limit 5
 
 If image building OOMs, try `--max-workers 1` and increase Docker Desktop memory.
 
+## SWE-bench Live (optional)
+
+[Microsoft SWE-bench-Live](https://github.com/purdueNLP/SWE-bench-Live) is a growing, multi-language benchmark with 1,565+ instances across 164 repos and 8 languages. Unlike SWE-bench Lite, it uses prebuilt Docker images from the `starryzhang` namespace, so there's no local image building.
+
+Install the extra:
+
+```bash
+uv pip install -e '.[datasets]'
+```
+
+Run a small slice:
+
+```bash
+mcode bench swebench-live --model granite3.3:8b --limit 5
+```
+
+On OpenShift (x86_64), run one Pod per instance:
+
+```bash
+# gold-patch smoke test (first N instances)
+MODE=gold LIMIT=5 PARALLELISM=2 ./deploy/k8s/run-swebench-live.sh
+```
+
 ## View results
 
 ```bash

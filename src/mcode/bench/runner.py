@@ -213,35 +213,28 @@ class BenchmarkRunner:
         return RunSummary(run_id=run_id, total=total, passed=passed)
 
     def _run_swebench_live(self, *, limit: int | None) -> RunSummary:
-        from mcode.bench.swebench_lite import load_swebench_lite
-        from mcode.execution.swebench import SWEbenchSandbox
+        from mcode.bench.swebench_live import load_swebench_live
+        from mcode.execution.swebench_live import SWEbenchLiveSandbox
 
-        tasks = load_swebench_lite(
+        tasks = load_swebench_live(
             self.config.cache_dir,
             split=self.config.swebench_split,
             limit=limit,
-            dataset_name="SWE-bench/SWE-bench_Verified",
-            benchmark="swebench-live",
         )
         tasks = _apply_task_shard(tasks, self.config.task_shard_count, self.config.task_shard_index)
         config = _augment_run_config(asdict(self.config))
         config["planned_task_count"] = len(tasks)
         config["dataset"] = {
-            "name": "SWE-bench_Verified",
-            "hf_dataset": "SWE-bench/SWE-bench_Verified",
+            "name": "SWE-bench-Live",
+            "hf_dataset": "SWE-bench-Live/SWE-bench-Live",
             "split": self.config.swebench_split,
         }
         run_id = self.results_db.start_run("swebench-live", config)
 
-        swe_sandbox = SWEbenchSandbox(
-            namespace=self.config.swebench_namespace,
-            arch=self.config.swebench_arch,
-            max_workers=self.config.swebench_max_workers,
+        live_sandbox = SWEbenchLiveSandbox(
             mem_limit=self.config.swebench_mem_limit,
             pids_limit=self.config.swebench_pids_limit,
-            force_rebuild=self.config.swebench_force_rebuild,
         )
-        swe_sandbox.prepare_images([t.raw_instance for t in tasks])
 
         passed = 0
         total = 0
@@ -249,13 +242,88 @@ class BenchmarkRunner:
             t = progress.add_task("[bold]Running swebench-live[/bold]", total=len(tasks))
             for task in tasks:
                 total += 1
-                result = self._run_swebench_task(task, swe_sandbox=swe_sandbox, run_id=run_id)
+                result = self._run_swebench_live_task(
+                    task,
+                    live_sandbox=live_sandbox,
+                    run_id=run_id,
+                )
                 if result["passed"]:
                     passed += 1
                 self.results_db.save_task_result(run_id, result)
                 progress.advance(t, 1)
 
         return RunSummary(run_id=run_id, total=total, passed=passed)
+
+    def _run_swebench_live_task(self, task, *, live_sandbox, run_id: int) -> dict:
+        from mellea.stdlib.requirements.requirement import Requirement, simple_validate
+
+        start = time.time()
+        last_detail: dict = {}
+
+        def _truncate(s: str, max_chars: int = 8000) -> str:
+            return s if len(s) <= max_chars else s[-max_chars:]
+
+        def _patch_test(raw_json: str) -> bool | tuple[bool, str]:
+            nonlocal last_detail
+            patch = _extract_from_json(raw_json, "patch")
+            run = live_sandbox.evaluate_patch(
+                task=task,
+                patch=patch,
+                run_id=f"mcode-{run_id}",
+                timeout_s=self.config.timeout_s,
+            )
+            last_detail = {
+                "exit_code": None,
+                "timed_out": run.timed_out,
+                "stdout": _truncate(run.test_output),
+                "stderr": json.dumps(run.report, sort_keys=True),
+                "error": None if run.resolved else "Not resolved",
+            }
+            if run.resolved and not run.timed_out:
+                return True
+            return (False, _truncate(run.test_output, max_chars=4000) or "Not resolved")
+
+        req = Requirement(
+            validation_fn=simple_validate(_patch_test),
+            check_only=True,
+        )
+        try:
+            with self.llm.open():
+                result = self.llm.generate_patch(
+                    repo=task.repo,
+                    problem_statement=task.problem_statement,
+                    hints_text=task.hints_text,
+                    requirements=[req],
+                )
+        except Exception as e:
+            elapsed_ms = int((time.time() - start) * 1000)
+            tb = traceback.format_exc()
+            return {
+                "task_id": task.instance_id,
+                "passed": False,
+                "attempts_used": 0,
+                "time_ms": elapsed_ms,
+                "exit_code": None,
+                "timed_out": False,
+                "stdout": None,
+                "stderr": (_truncate(tb, max_chars=8000) if tb else None),
+                "error": f"{type(e).__name__}: {e}",
+                "code_sha256": None,
+                **last_detail,
+            }
+        elapsed_ms = int((time.time() - start) * 1000)
+
+        patch = _extract_from_json(result.value or "", "patch")
+        sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest() if patch else None
+
+        return {
+            "task_id": task.instance_id,
+            "passed": result.success,
+            "attempts_used": len(result.sample_generations),
+            "time_ms": elapsed_ms,
+            "code_sha256": sha,
+            **last_detail,
+        }
 
     def _run_swebench_task(self, task, *, swe_sandbox, run_id: int) -> dict:
         from mellea.stdlib.requirements.requirement import Requirement, simple_validate
