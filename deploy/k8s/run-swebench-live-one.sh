@@ -81,6 +81,11 @@ cleanup_tmp() {
   [[ -n "${tmp_eval_log}" ]] && rm -f "${tmp_eval_log}" || true
   [[ -n "${tmp_gen_log}" ]] && rm -f "${tmp_gen_log}" || true
   [[ -n "${tmp_result_json}" ]] && rm -f "${tmp_result_json}" || true
+  # Clean up k8s resources on any exit (including errors/signals)
+  if [[ "${CLEANUP:-0}" == "1" && -n "${pod_name:-}" ]]; then
+    oc delete pod "${pod_name}" --ignore-not-found=true >/dev/null 2>&1 || true
+    oc delete configmap "${pod_name}-inputs" --ignore-not-found=true >/dev/null 2>&1 || true
+  fi
 }
 trap cleanup_tmp EXIT
 
@@ -645,10 +650,7 @@ if out_path:
 print(f"resolved={resolved} patch_successfully_applied={patch_applied}")
 PY
 
-if [[ "${CLEANUP:-0}" == "1" ]]; then
-  oc delete pod "${pod_name}" --ignore-not-found=true >/dev/null
-  oc delete configmap "${cm_name}" --ignore-not-found=true >/dev/null
-fi
+# Cleanup handled by EXIT trap
 
 if [[ "${phase}" != "Succeeded" ]]; then
   echo "WARNING: pod phase=${phase:-unknown} (deadline exceeded or container error)." >&2
