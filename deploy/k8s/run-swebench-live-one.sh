@@ -249,6 +249,9 @@ kind: Pod
 metadata:
   name: ${pod_name}
 spec:
+  serviceAccountName: anyuid-sa
+  securityContext:
+    runAsUser: 0
   restartPolicy: Never
   activeDeadlineSeconds: ${pod_deadline_s}
   volumes:
@@ -265,23 +268,11 @@ spec:
         limits:
           cpu: "3"
           memory: "12Gi"
-      env:
-        - name: HOME
-          value: /tmp
-        - name: PYTHONUSERBASE
-          value: /tmp/.local
       command:
         - bash
         - -lc
         - |
-          mkdir -p /tmp/.config /tmp/.local
-
-          workdir=/tmp/testbed
-          rm -rf "\$workdir"
-          cp -R /testbed "\$workdir" 2>/dev/null || cp -r /testbed "\$workdir" 2>/dev/null || true
-          chmod -R u+rwX,go+rX "\$workdir" 2>/dev/null || true
-          cd "\$workdir"
-          git config --global --add safe.directory "\$workdir" || true
+          cd /testbed
 
           # Apply test patch
           test_patch=/inputs/test_patch.diff
@@ -314,21 +305,7 @@ spec:
             exit 0
           fi
 
-          # Rewrite editable install .pth files to point to workdir.
-          find / -path '*/site-packages/__editable__*.pth' 2>/dev/null | while read pth; do
-            if grep -qF "/testbed" "\$pth"; then
-              echo "Rewriting \$pth"
-              sed -i "s|/testbed|\$workdir|g" "\$pth" 2>/dev/null || true
-            fi
-          done
-
-          # Ensure patched source takes priority over any remaining /testbed references.
-          export PYTHONPATH="\$workdir\${PYTHONPATH:+:\$PYTHONPATH}"
-
-          eval_copy=/tmp/eval.sh
-          cp /inputs/eval.sh "\$eval_copy"
-          sed -i "s|/testbed|\$workdir|g" "\$eval_copy"
-          bash "\$eval_copy" || true
+          bash /inputs/eval.sh || true
       volumeMounts:
         - name: inputs
           mountPath: /inputs
@@ -341,6 +318,9 @@ kind: Pod
 metadata:
   name: ${pod_name}
 spec:
+  serviceAccountName: anyuid-sa
+  securityContext:
+    runAsUser: 0
   restartPolicy: Never
   activeDeadlineSeconds: ${pod_deadline_s}
   volumes:
@@ -409,23 +389,11 @@ spec:
         limits:
           cpu: "3"
           memory: "12Gi"
-      env:
-        - name: HOME
-          value: /tmp
-        - name: PYTHONUSERBASE
-          value: /tmp/.local
       command:
         - bash
         - -lc
         - |
-          mkdir -p /tmp/.config /tmp/.local
-
-          workdir=/tmp/testbed
-          rm -rf "\$workdir"
-          cp -R /testbed "\$workdir" 2>/dev/null || cp -r /testbed "\$workdir" 2>/dev/null || true
-          chmod -R u+rwX,go+rX "\$workdir" 2>/dev/null || true
-          cd "\$workdir"
-          git config --global --add safe.directory "\$workdir" || true
+          cd /testbed
 
           # Apply test patch
           test_patch=/inputs/test_patch.diff
@@ -458,21 +426,7 @@ spec:
             exit 0
           fi
 
-          # Rewrite editable install .pth files to point to workdir.
-          find / -path '*/site-packages/__editable__*.pth' 2>/dev/null | while read pth; do
-            if grep -qF "/testbed" "\$pth"; then
-              echo "Rewriting \$pth"
-              sed -i "s|/testbed|\$workdir|g" "\$pth" 2>/dev/null || true
-            fi
-          done
-
-          # Ensure patched source takes priority over any remaining /testbed references.
-          export PYTHONPATH="\$workdir\${PYTHONPATH:+:\$PYTHONPATH}"
-
-          eval_copy=/tmp/eval.sh
-          cp /inputs/eval.sh "\$eval_copy"
-          sed -i "s|/testbed|\$workdir|g" "\$eval_copy"
-          bash "\$eval_copy" || true
+          bash /inputs/eval.sh || true
       volumeMounts:
         - name: work
           mountPath: /work
