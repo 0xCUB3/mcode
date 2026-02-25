@@ -67,10 +67,12 @@ def _check_resolution(
         p2p_results[test_id] = status
 
     all_f2p_pass = all(s == "PASSED" for s in f2p_results.values()) and len(f2p_results) > 0
+    # P2P: only tests that actually ran and FAILED/ERROR count as regressions.
+    # Tests missing from output (not run) don't count.
     p2p_regressions = [t for t, s in p2p_results.items() if s in ("FAILED", "ERROR")]
 
     return {
-        "resolved": all_f2p_pass,
+        "resolved": all_f2p_pass and len(p2p_regressions) == 0,
         "fail_to_pass": f2p_results,
         "pass_to_pass": p2p_results,
         "p2p_regressions": p2p_regressions,

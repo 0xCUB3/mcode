@@ -85,8 +85,8 @@ def test_check_resolution_fail_still_fails():
     assert report["fail_to_pass"]["test_a"] == "FAILED"
 
 
-def test_check_resolution_p2p_regression_tracked_not_blocking():
-    """P2P failures are tracked but don't block resolution."""
+def test_check_resolution_p2p_regression_blocks_resolution():
+    """P2P failures block resolution (matches official SWE-bench-Live spec)."""
     test_results = {
         "test_a": "PASSED",
         "test_b": "FAILED",
@@ -96,7 +96,7 @@ def test_check_resolution_p2p_regression_tracked_not_blocking():
         fail_to_pass=["test_a"],
         pass_to_pass=["test_b"],
     )
-    assert report["resolved"] is True
+    assert report["resolved"] is False
     assert report["pass_to_pass"]["test_b"] == "FAILED"
     assert report["p2p_regressions"] == ["test_b"]
 

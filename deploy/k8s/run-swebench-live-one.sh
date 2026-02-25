@@ -179,28 +179,13 @@ def parse_list(val):
 f2p = parse_list(inst.get("FAIL_TO_PASS", []))
 p2p = parse_list(inst.get("PASS_TO_PASS", []))
 
-# Build eval.sh: run F2P test files in a single pytest session.
-# Running individual F2P test IDs in isolation can cause spurious failures
-# when tests depend on session-scoped fixtures or conftest setup.
-# Running the full F2P files preserves test context while staying fast.
-# P2P tests are not run (P2P failures don't block resolution since Docker
-# images have stale P2P tests that fail even with gold patches).
-f2p_files = sorted(set(tid.split("::")[0] for tid in f2p if "::" in tid))
-
+# Build eval.sh: use test_cmds from the dataset (matches official evaluation harness).
+# This runs both F2P and P2P tests in the same session.
+raw_cmds = parse_list(inst.get("test_cmds", []))
 eval_lines = ["#!/bin/bash", "cd /testbed"]
-if f2p_files:
-    eval_lines.append(f"pytest -rA --tb=short {' '.join(f2p_files)} || true")
-elif f2p:
-    # F2P IDs without :: separator - use raw test_cmds
-    raw_cmds = parse_list(inst.get("test_cmds", []))
-    for cmd in raw_cmds:
-        if cmd.strip():
-            eval_lines.append(cmd + " || true")
-else:
-    raw_cmds = parse_list(inst.get("test_cmds", []))
-    for cmd in raw_cmds:
-        if cmd.strip():
-            eval_lines.append(cmd + " || true")
+for cmd in raw_cmds:
+    if cmd.strip():
+        eval_lines.append(cmd + " || true")
 (out / "eval.sh").write_text("\\n".join(eval_lines) + "\\n", encoding="utf-8")
 
 # Write test patch
@@ -609,12 +594,11 @@ def parse_pytest(output):
 test_results = parse_pytest(eval_log_text)
 
 f2p_ok = all(test_results.get(t) == "PASSED" for t in fail_to_pass) and len(fail_to_pass) > 0
-# P2P: tracked for diagnostics but does NOT block resolution.
-# Many Docker images have stale P2P tests that fail even with gold patches
-# due to environment drift (Python version, missing deps, etc.).
-# Resolution is determined solely by F2P tests passing.
+# P2P: failures block resolution (matches official SWE-bench-Live evaluation).
+# Only tests that actually ran and FAILED/ERROR count as failures.
+# Tests missing from output (not run) don't count as failures.
 p2p_failed = [t for t in pass_to_pass if test_results.get(t, "MISSING") in ("FAILED", "ERROR")]
-resolved = f2p_ok
+resolved = f2p_ok and len(p2p_failed) == 0
 
 patch_applied = ">>>>> Applied Patch" in eval_log_text
 
