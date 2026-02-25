@@ -11,9 +11,9 @@ from mcode.execution.swebench_live import (
 
 def test_parse_pytest_output_basic():
     output = (
-        "test_foo.py::test_one PASSED\n"
-        "test_foo.py::test_two FAILED\n"
-        "test_foo.py::test_three ERROR\n"
+        "PASSED test_foo.py::test_one\n"
+        "FAILED test_foo.py::test_two\n"
+        "ERROR test_foo.py::test_three\n"
     )
     result = _parse_pytest_output(output)
     assert result["test_foo.py::test_one"] == "PASSED"
@@ -29,6 +29,7 @@ def test_parse_pytest_output_prefix_format():
 
 
 def test_parse_pytest_output_strips_error_message():
+    """FAILED lines have ' - ' replaced with ' ', then split on whitespace."""
     output = (
         "PASSED tests/test_base.py::test_set\n"
         "FAILED tests/test_base.py::test_get_item - KeyError: 'DOTENV_INT does not exist'\n"
@@ -38,16 +39,25 @@ def test_parse_pytest_output_strips_error_message():
     assert result["tests/test_base.py::test_get_item"] == "FAILED"
 
 
-def test_parse_pytest_output_verbose_with_percentage():
+def test_parse_pytest_output_verbose_lines_ignored():
+    """Verbose output (test_id PASSED [NN%]) is ignored; only -rA summary is parsed."""
     output = (
         "tests/foo.py::test_a PASSED [ 19%]\n"
         "tests/foo.py::test_b FAILED [ 20%]\n"
-        "tests/foo.py::test_c PASSED [100%]\n"
+        "PASSED tests/foo.py::test_a\n"
+        "FAILED tests/foo.py::test_b\n"
     )
     result = _parse_pytest_output(output)
     assert result["tests/foo.py::test_a"] == "PASSED"
     assert result["tests/foo.py::test_b"] == "FAILED"
-    assert result["tests/foo.py::test_c"] == "PASSED"
+    assert len(result) == 2
+
+
+def test_parse_pytest_output_parametrized_with_spaces():
+    """Parametrized test IDs with spaces get truncated at first space (matches official)."""
+    output = "PASSED tests/test_foo.py::test_validate[A long name]\n"
+    result = _parse_pytest_output(output)
+    assert result["tests/test_foo.py::test_validate[A"] == "PASSED"
 
 
 def test_parse_pytest_output_empty():

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import io
-import re
 import tarfile
 import threading
 import time
@@ -25,29 +24,19 @@ def _ms_image_name(instance_id: str) -> str:
 
 
 def _parse_pytest_output(output: str) -> dict[str, str]:
+    """Parse pytest -rA output matching official SWE-bench-Live logic."""
+    _STATUSES = {"FAILED", "PASSED", "SKIPPED", "ERROR", "XFAIL"}
     results: dict[str, str] = {}
     for line in output.splitlines():
-        s = line.strip()
-        # Strip trailing progress indicator: " [ NN%]" or " [100%]"
-        s = re.sub(r"\s*\[\s*\d+%\]\s*$", "", s)
-        # -rA summary: "PASSED tests/foo.py::test_bar"
-        m = re.match(r"^(PASSED|FAILED|ERROR)\s+(.+)$", s)
-        if m:
-            test_id = m.group(2).strip()
-            # Strip pytest's " - ErrorMessage" suffix from FAILED lines
-            dash_idx = test_id.find(" - ")
-            if dash_idx > 0:
-                test_id = test_id[:dash_idx].strip()
-            results[test_id] = m.group(1)
+        line = line.strip()
+        if not any(line.startswith(s) for s in _STATUSES):
             continue
-        # Verbose output: "tests/foo.py::test_bar PASSED"
-        m = re.match(r"^(.+?)\s+(PASSED|FAILED|ERROR)$", s)
-        if m:
-            test_id = m.group(1).strip()
-            dash_idx = test_id.find(" - ")
-            if dash_idx > 0:
-                test_id = test_id[:dash_idx].strip()
-            results[test_id] = m.group(2)
+        if line.startswith("FAILED"):
+            line = line.replace(" - ", " ")
+        parts = line.split()
+        if len(parts) <= 1:
+            continue
+        results[parts[1]] = parts[0]
     return results
 
 
