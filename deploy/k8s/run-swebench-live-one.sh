@@ -365,7 +365,15 @@ spec:
           s = LLMSession(model_id=model_id, backend_name=backend)
           s.check_available()
           with s.open():
-              patch = s.generate_patch(repo=repo, problem_statement=problem, hints_text=hints)
+              result = s.generate_patch(repo=repo, problem_statement=problem, hints_text=hints)
+
+          import json as _json
+          raw = result.value or ""
+          try:
+              patch = _json.loads(raw).get("patch", raw)
+          except Exception:
+              patch = raw
+          patch = patch or ""
 
           Path('/work/patch.diff').write_text(patch, encoding='utf-8', errors='replace')
           import hashlib
