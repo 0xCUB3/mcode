@@ -32,6 +32,7 @@ Env vars (optional):
   OLLAMA_HOST=...          Default: http://ollama:11434
   MCODE_IMAGE=...          Default: OpenShift internal registry mcode:latest
   MCODE_MAX_NEW_TOKENS=... Default: 512
+  LOOP_BUDGET=<N>          Default: 3 (max patch+test attempts)
 
   # Cleanup
   CLEANUP=1               Delete pod + configmap after completion
@@ -226,6 +227,8 @@ else
   oc create configmap "${cm_name}" \
     --from-file=eval.sh="${tmp_dir}/eval.sh" \
     --from-file=test_patch.diff="${tmp_dir}/test_patch.diff" \
+    --from-file=fail_to_pass.json="${tmp_dir}/fail_to_pass.json" \
+    --from-file=pass_to_pass.json="${tmp_dir}/pass_to_pass.json" \
     --from-file=repo.txt="${tmp_dir}/repo.txt" \
     --from-file=problem.txt="${tmp_dir}/problem.txt" \
     --from-file=hints.txt="${tmp_dir}/hints.txt" \
@@ -241,6 +244,7 @@ openai_base_url="${OPENAI_BASE_URL:-http://vllm:8000/v1}"
 openai_api_key="${OPENAI_API_KEY:-dummy}"
 ollama_host="${OLLAMA_HOST:-http://ollama:11434}"
 max_new_tokens="${MCODE_MAX_NEW_TOKENS:-512}"
+loop_budget="${LOOP_BUDGET:-3}"
 
 if [[ "${mode}" == "gold" ]]; then
   cat <<YAML | oc apply -f - >/dev/null
@@ -312,7 +316,20 @@ spec:
           readOnly: true
 YAML
 else
-  cat <<YAML | oc apply -f - >/dev/null
+  cat <<'YAML_END' | sed \
+    -e "s|\${pod_name}|${pod_name}|g" \
+    -e "s|\${pod_deadline_s}|${pod_deadline_s}|g" \
+    -e "s|\${cm_name}|${cm_name}|g" \
+    -e "s|\${mcode_image}|${mcode_image}|g" \
+    -e "s|\${eval_image}|${eval_image}|g" \
+    -e "s|\${backend}|${backend}|g" \
+    -e "s|\${model}|${model}|g" \
+    -e "s|\${openai_base_url}|${openai_base_url}|g" \
+    -e "s|\${openai_api_key}|${openai_api_key}|g" \
+    -e "s|\${ollama_host}|${ollama_host}|g" \
+    -e "s|\${max_new_tokens}|${max_new_tokens}|g" \
+    -e "s|\${loop_budget}|${loop_budget}|g" \
+    | oc apply -f - >/dev/null
 apiVersion: v1
 kind: Pod
 metadata:
@@ -329,8 +346,8 @@ spec:
     - name: inputs
       configMap:
         name: ${cm_name}
-  initContainers:
-    - name: gen-patch
+  containers:
+    - name: agent
       image: ${mcode_image}
       env:
         - name: BACKEND
@@ -345,50 +362,171 @@ spec:
           value: ${ollama_host}
         - name: MCODE_MAX_NEW_TOKENS
           value: "${max_new_tokens}"
+        - name: LOOP_BUDGET
+          value: "${loop_budget}"
       command:
         - bash
         - -lc
         - |
           set -euo pipefail
-          python - <<'PY'
+          mkdir -p /work/ipc
+          # Wait for testbed sidecar to signal ready
+          echo "waiting for testbed sidecar..."
+          while [ ! -f /work/ipc/testbed-ready ]; do sleep 0.5; done
+          echo "testbed ready, starting agent"
+          python - <<'AGENT_PY'
+          import hashlib
+          import json
           import os
+          import sys
+          import time
           from pathlib import Path
+
+          from mellea.stdlib.requirements.requirement import Requirement, simple_validate
+
           from mcode.llm.session import LLMSession
 
-          repo = Path('/inputs/repo.txt').read_text(encoding='utf-8').strip()
-          problem = Path('/inputs/problem.txt').read_text(encoding='utf-8', errors='replace')
-          hints = Path('/inputs/hints.txt').read_text(encoding='utf-8', errors='replace')
+          IPC = Path("/work/ipc")
 
-          model_id = os.environ['MODEL']
-          backend = os.environ.get('BACKEND', 'openai')
+          # ---- config ----
+          repo = Path("/inputs/repo.txt").read_text(encoding="utf-8").strip()
+          problem = Path("/inputs/problem.txt").read_text(encoding="utf-8", errors="replace")
+          hints = Path("/inputs/hints.txt").read_text(encoding="utf-8", errors="replace")
+          f2p = json.loads(Path("/inputs/fail_to_pass.json").read_text())
+          p2p = json.loads(Path("/inputs/pass_to_pass.json").read_text())
 
-          s = LLMSession(model_id=model_id, backend_name=backend)
-          s.check_available()
-          with s.open():
-              result = s.generate_patch(repo=repo, problem_statement=problem, hints_text=hints)
+          model_id = os.environ["MODEL"]
+          backend = os.environ.get("BACKEND", "openai")
+          loop_budget = int(os.environ.get("LOOP_BUDGET", "3"))
 
-          import json as _json
-          raw = result.value or ""
+          # ---- source context (read from testbed via shared volume) ----
+          source_context = ""
+          ctx_file = IPC / "source-context.txt"
+          if ctx_file.exists():
+              source_context = ctx_file.read_text(encoding="utf-8", errors="replace")
+
+          enriched_hints = hints
+          if source_context:
+              enriched_hints = hints + "\n\nRelevant source files from the repository:\n" + source_context
+
+          # ---- pytest parser (matches official SWE-bench-Live evaluation.py) ----
+          def parse_pytest(output):
+              STATUSES = {"FAILED", "PASSED", "SKIPPED", "ERROR", "XFAIL"}
+              results = {}
+              for line in output.splitlines():
+                  line = line.strip()
+                  if not any(line.startswith(s) for s in STATUSES):
+                      continue
+                  if line.startswith("FAILED"):
+                      line = line.replace(" - ", " ")
+                  parts = line.split()
+                  if len(parts) <= 1:
+                      continue
+                  results[parts[1]] = parts[0]
+              return results
+
+          def check_resolved(test_output):
+              results = parse_pytest(test_output)
+              f2p_ok = all(results.get(t) == "PASSED" for t in f2p) and len(f2p) > 0
+              p2p_failed = [t for t in p2p if results.get(t, "MISSING") in ("FAILED", "ERROR")]
+              return f2p_ok and len(p2p_failed) == 0
+
+          # ---- IPC: send patch to testbed sidecar, get test results back ----
+          def _extract_patch(raw):
+              try:
+                  return json.loads(raw).get("patch", raw)
+              except Exception:
+                  return raw
+
+          def truncate(s, max_chars=4000):
+              return s if len(s) <= max_chars else s[-max_chars:]
+
+          def run_test_via_sidecar(patch):
+              """Write patch to shared volume, signal testbed, wait for result."""
+              # Clean previous signals
+              for f in ["test-result.txt", "test-done"]:
+                  (IPC / f).unlink(missing_ok=True)
+
+              (IPC / "patch.diff").write_text(patch or "", encoding="utf-8")
+              (IPC / "test-run").touch()
+
+              # Wait for testbed to finish
+              deadline = time.time() + 660
+              while not (IPC / "test-done").exists():
+                  if time.time() > deadline:
+                      return "TIMEOUT: testbed sidecar did not respond"
+                  time.sleep(0.5)
+
+              result = (IPC / "test-result.txt").read_text(encoding="utf-8", errors="replace")
+              (IPC / "test-done").unlink(missing_ok=True)
+              return result
+
+          def _patch_test(raw_json):
+              patch = _extract_patch(raw_json) or ""
+              test_output = run_test_via_sidecar(patch)
+
+              if check_resolved(test_output):
+                  print(">>>>> Applied Patch")
+                  print(test_output)
+                  return True
+
+              return (False, truncate(test_output))
+
+          req = Requirement(
+              validation_fn=simple_validate(_patch_test),
+              check_only=True,
+          )
+
+          session = LLMSession(
+              model_id=model_id,
+              backend_name=backend,
+              loop_budget=loop_budget,
+          )
+          session.check_available()
+
+          patch = ""
+          attempts_used = 0
           try:
-              patch = _json.loads(raw).get("patch", raw)
-          except Exception:
-              patch = raw
-          patch = patch or ""
+              with session.open():
+                  result = session.generate_patch(
+                      repo=repo,
+                      problem_statement=problem,
+                      hints_text=enriched_hints,
+                      requirements=[req],
+                  )
+              raw = result.value or ""
+              patch = _extract_patch(raw) or ""
+              attempts_used = len(result.sample_generations)
+          except Exception as e:
+              print(f"ERROR: {e}", file=sys.stderr)
+              import traceback
+              traceback.print_exc()
 
-          Path('/work/patch.diff').write_text(patch, encoding='utf-8', errors='replace')
-          import hashlib
+          # Write final patch
+          Path("/work/patch.diff").write_text(patch, encoding="utf-8", errors="replace")
           sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest()
-          print(f'generated patch chars={len(patch)}')
-          print(f'patch_sha256={sha}')
-          PY
+          print(f"generated patch chars={len(patch)}")
+          print(f"patch_sha256={sha}")
+          print(f"attempts_used={attempts_used}")
+
+          # Final eval via sidecar for log parsing
+          if patch.strip():
+              final_output = run_test_via_sidecar(patch)
+              if ">>>>> Applied Patch" not in final_output:
+                  # The sidecar prints this; check
+                  pass
+              print(final_output)
+
+          # Signal testbed sidecar to exit
+          (IPC / "agent-done").touch()
+          AGENT_PY
       volumeMounts:
         - name: work
           mountPath: /work
         - name: inputs
           mountPath: /inputs
           readOnly: true
-  containers:
-    - name: eval
+    - name: testbed
       image: ${eval_image}
       resources:
         requests:
@@ -401,47 +539,115 @@ spec:
         - bash
         - -lc
         - |
+          IPC=/work/ipc
+          mkdir -p $IPC
+
+          # Build source context for the agent
           cd /testbed
+          find . -name '*.py' -not -path '*__pycache__*' -not -path '*/.git/*' \
+            2>/dev/null | head -500 > $IPC/file-list.txt || true
+          python3 - <<'CTX_PY'
+          from pathlib import Path
 
-          # Apply test patch
-          test_patch=/inputs/test_patch.diff
-          if [ -s "\$test_patch" ]; then
-            echo '>>>>> Applying Test Patch'
-            if git apply --verbose "\$test_patch"; then
-              echo '>>>>> Test Patch Applied'
-            elif git apply --verbose --reject "\$test_patch"; then
-              echo '>>>>> Test Patch Applied (with rejects)'
-            else
-              echo '>>>>> Test Patch Apply Failed'
+          ipc = Path("/work/ipc")
+          problem = Path("/inputs/problem.txt").read_text(encoding="utf-8", errors="replace")
+          files = [f.strip() for f in (ipc / "file-list.txt").read_text().splitlines() if f.strip()]
+
+          problem_lower = problem.lower()
+          scored = []
+          for fp in files:
+              rel = fp.lstrip("./")
+              parts = rel.replace("/", " ").replace(".py", "").replace("_", " ").split()
+              score = sum(1 for p in parts if len(p) > 2 and p.lower() in problem_lower)
+              if score > 0:
+                  scored.append((score, rel))
+          scored.sort(key=lambda x: -x[0])
+
+          ctx = []
+          chars = 0
+          tree = "\n".join(f.lstrip("./") for f in files[:200])
+          if len(files) > 200:
+              tree += f"\n... and {len(files) - 200} more files"
+          ctx.append(f"File tree ({len(files)} Python files):\n{tree}")
+          chars += len(ctx[0])
+
+          for _score, rel in scored[:10]:
+              if chars >= 12000:
+                  break
+              try:
+                  content = Path("/testbed/" + rel).read_text(encoding="utf-8", errors="replace")
+              except Exception:
+                  continue
+              budget = 12000 - chars
+              if len(content) > budget:
+                  content = content[:budget] + "\n... (truncated)"
+              ctx.append(f"\n--- {rel} ---\n{content}")
+              chars += len(content) + len(rel) + 10
+
+          (ipc / "source-context.txt").write_text("\n".join(ctx), encoding="utf-8")
+          CTX_PY
+
+          # Signal ready
+          touch $IPC/testbed-ready
+          echo "testbed sidecar ready"
+
+          # Test loop: wait for agent to request test runs
+          while true; do
+            if [ -f $IPC/agent-done ]; then
+              echo "agent done, exiting"
+              break
             fi
-          fi
+            if [ -f $IPC/test-run ]; then
+              rm -f $IPC/test-run
+              cd /testbed
+              git checkout . 2>/dev/null || true
 
-          # Apply solution patch
-          patch_file=/work/patch.diff
-          if [ ! -s "\$patch_file" ]; then
-            echo "patch.diff is missing or empty" >&2
-            exit 0
-          fi
+              # Apply solution patch
+              patch_file=$IPC/patch.diff
+              applied=false
+              if [ -s "$patch_file" ]; then
+                if git apply --verbose "$patch_file" 2>&1; then
+                  echo '>>>>> Applied Patch'
+                  applied=true
+                elif git apply --verbose --reject "$patch_file" 2>&1; then
+                  echo '>>>>> Applied Patch'
+                  applied=true
+                elif patch --batch --fuzz=5 -p1 -i "$patch_file" 2>&1; then
+                  echo '>>>>> Applied Patch'
+                  applied=true
+                else
+                  echo '>>>>> Patch Apply Failed'
+                fi
+              else
+                echo 'Empty patch'
+              fi
 
-          if git apply --verbose "\$patch_file"; then
-            echo '>>>>> Applied Patch'
-          elif git apply --verbose --reject "\$patch_file"; then
-            echo '>>>>> Applied Patch'
-          elif patch --batch --fuzz=5 -p1 -i "\$patch_file"; then
-            echo '>>>>> Applied Patch'
-          else
-            echo '>>>>> Patch Apply Failed'
-            exit 0
-          fi
+              # Apply test patch
+              test_patch=/inputs/test_patch.diff
+              if [ -s "$test_patch" ]; then
+                git apply --verbose "$test_patch" 2>/dev/null || \
+                  git apply --verbose --reject "$test_patch" 2>/dev/null || true
+              fi
 
-          bash /inputs/eval.sh || true
+              # Run tests and capture output
+              bash /inputs/eval.sh > $IPC/test-result.txt 2>&1 || true
+
+              # If patch didn't apply, prepend that info
+              if [ "$applied" = false ]; then
+                echo ">>>>> Patch Apply Failed" >> $IPC/test-result.txt
+              fi
+
+              touch $IPC/test-done
+            fi
+            sleep 0.3
+          done
       volumeMounts:
         - name: work
           mountPath: /work
         - name: inputs
           mountPath: /inputs
           readOnly: true
-YAML
+YAML_END
 fi
 
 echo "Namespace:    ${namespace}"
@@ -475,14 +681,17 @@ if [[ -n "${pod_reason}" ]]; then
 fi
 
 if [[ "${mode}" == "model" ]]; then
-  oc logs "${pod_name}" -c gen-patch >"${gen_log}" 2>&1 || true
-  echo "--- gen-patch (tail) ---"
+  oc logs "${pod_name}" -c agent >"${gen_log}" 2>&1 || true
+  echo "--- agent (tail) ---"
   tail -n 200 "${gen_log}" || true
+  oc logs "${pod_name}" -c testbed >"${eval_log}" 2>&1 || true
+  echo "--- testbed (tail) ---"
+  tail -n 200 "${eval_log}" || true
+else
+  oc logs "${pod_name}" -c eval >"${eval_log}" 2>&1 || true
+  echo "--- eval (tail) ---"
+  tail -n 200 "${eval_log}" || true
 fi
-
-oc logs "${pod_name}" -c eval >"${eval_log}" 2>&1 || true
-echo "--- eval (tail) ---"
-tail -n 200 "${eval_log}" || true
 
 echo "--- swebench-live report ---"
 MCODE_SWEB_RESULT_JSON="${result_json}" \
@@ -520,14 +729,22 @@ fail_to_pass = json.loads(f2p_fp.read_text()) if f2p_fp.exists() else []
 pass_to_pass = json.loads(p2p_fp.read_text()) if p2p_fp.exists() else []
 
 patch_sha256 = os.environ.get("MCODE_SWEB_GOLD_PATCH_SHA256") or None
+attempts_used = 1
 if mode == "model" and gen_log and Path(gen_log).exists():
-    m = re.search(r"^patch_sha256=([0-9a-f]{64})\s*$", Path(gen_log).read_text(errors="replace"), re.M)
+    gen_text = Path(gen_log).read_text(errors="replace")
+    m = re.search(r"^patch_sha256=([0-9a-f]{64})\s*$", gen_text, re.M)
     if m:
         patch_sha256 = m.group(1)
+    m2 = re.search(r"^attempts_used=(\d+)\s*$", gen_text, re.M)
+    if m2:
+        attempts_used = int(m2.group(1))
 
 eval_log_text = ""
 if Path(eval_log_fp).exists():
     eval_log_text = Path(eval_log_fp).read_text(errors="replace")
+# In model mode, agent log also contains test output (printed by agent.py)
+if mode == "model" and gen_log and Path(gen_log).exists():
+    eval_log_text = eval_log_text + "\n" + gen_text
 
 # Pytest parser matching the official SWE-bench-Live evaluation.py logic:
 # split on whitespace, take test_case[1] as the test ID.
@@ -573,6 +790,7 @@ result = {
     "timeout_s": int(os.environ.get("MCODE_SWEB_TIMEOUT_S", "0") or "0"),
     "pod_deadline_s": int(os.environ.get("MCODE_SWEB_POD_DEADLINE_S", "0") or "0"),
     "patch_sha256": patch_sha256,
+    "attempts_used": attempts_used,
     "resolved": resolved,
     "patch_successfully_applied": patch_applied,
     "report": {

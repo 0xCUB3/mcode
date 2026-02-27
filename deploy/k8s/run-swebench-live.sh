@@ -37,6 +37,7 @@ Env vars (optional):
   OLLAMA_HOST=...          Default: http://ollama:11434
   MCODE_IMAGE=...          Default: OpenShift internal registry mcode:latest
   MCODE_MAX_NEW_TOKENS=... Default: 512
+  LOOP_BUDGET=<N>          Default: 3 (max patch+test attempts)
 
   # Cleanup
   CLEANUP=1               Delete pods + configmaps as they finish (recommended)
@@ -48,6 +49,7 @@ split="${SPLIT:-verified}"
 limit="${LIMIT:-}"
 parallelism="${PARALLELISM:-4}"
 timeout_s="${TIMEOUT_S:-1800}"
+loop_budget="${LOOP_BUDGET:-3}"
 cleanup="${CLEANUP:-1}"
 backend="${BACKEND:-openai}"
 model="${MODEL:-ibm-granite/granite-3.0-8b-instruct}"
@@ -160,6 +162,7 @@ for instance_id in "${instance_ids[@]}"; do
     MODE="${mode}" \
     SPLIT="${split}" \
     TIMEOUT_S="${timeout_s}" \
+    LOOP_BUDGET="${loop_budget}" \
     NAME_PREFIX="${name_prefix}" \
     OUT_DIR="${out_dir}" \
     CLEANUP="${cleanup}" \
@@ -194,7 +197,7 @@ run_id = db.start_run(
     {
         "backend_name": backend,
         "model_id": model,
-        "loop_budget": 1,
+        "loop_budget": int($(shquote "${loop_budget}")),
         "timeout_s": timeout_s,
         "retrieval": False,
         "runner": "openshift-pods",
@@ -288,7 +291,7 @@ for instance_id in expected_ids:
         {
             "task_id": instance_id,
             "passed": 1 if resolved else 0,
-            "attempts_used": 1 if data else 0,
+            "attempts_used": int(data.get("attempts_used", 1)) if data else 0,
             "time_ms": int(data.get("time_ms") or 0) if data else 0,
             "exit_code": None,
             "timed_out": 1 if timed_out else 0,
