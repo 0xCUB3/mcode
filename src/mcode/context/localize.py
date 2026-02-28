@@ -165,13 +165,15 @@ def localize(
             continue
         if len(content) > max_file_chars:
             content = content[:max_file_chars] + "\n... (truncated)"
+        # Add line numbers to help the model reference exact text
+        numbered = "\n".join(f"{i + 1}: {line}" for i, line in enumerate(content.splitlines()))
         budget = max_context_chars - chars
         if budget <= 0:
             break
-        if len(content) > budget:
-            content = content[:budget] + "\n... (truncated)"
-        parts.append(f"--- {rel} ---\n{content}")
-        chars += len(content) + len(rel) + 10
+        if len(numbered) > budget:
+            numbered = numbered[:budget] + "\n... (truncated)"
+        parts.append(f"--- {rel} ---\n{numbered}")
+        chars += len(numbered) + len(rel) + 10
         included.append(rel)
 
     print(f"included {len(included)} files ({chars} chars)", flush=True)

@@ -150,7 +150,14 @@ def edits_to_patch(raw_json: str, repo_root: str = "/testbed") -> tuple[str, lis
         else:
             span = _fuzzy_find(search, original)
             if span is None:
-                errors.append(f"Search text not found in {rel} (first 60 chars: {search[:60]!r})")
+                # Show actual file content so the model can fix its search text
+                lines = original.splitlines(keepends=True)
+                snippet = "".join(f"{i + 1}: {ln}" for i, ln in enumerate(lines[:40]))
+                errors.append(
+                    f"Search text not found in {rel} "
+                    f"(your search started with: {search[:60]!r}). "
+                    f"Actual file content (first 40 lines):\n{snippet}"
+                )
                 continue
             modified = original[: span[0]] + replace + original[span[1] :]
         diff = difflib.unified_diff(
