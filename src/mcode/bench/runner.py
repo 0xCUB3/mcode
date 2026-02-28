@@ -265,7 +265,9 @@ class BenchmarkRunner:
 
         def _patch_test(raw_json: str) -> bool | tuple[bool, str]:
             nonlocal last_detail
-            patch = edits_to_patch(raw_json, repo_root="/testbed")
+            patch, edit_errors = edits_to_patch(raw_json, repo_root="/testbed")
+            if not patch and edit_errors:
+                return (False, "Edit errors:\n" + "\n".join(edit_errors))
             run = live_sandbox.evaluate_patch(
                 task=task,
                 patch=patch,
@@ -281,7 +283,10 @@ class BenchmarkRunner:
             }
             if run.resolved and not run.timed_out:
                 return True
-            return (False, _truncate(run.test_output, max_chars=4000) or "Not resolved")
+            feedback = _truncate(run.test_output, max_chars=4000) or "Not resolved"
+            if edit_errors:
+                feedback = "Edit errors:\n" + "\n".join(edit_errors) + "\n" + feedback
+            return (False, feedback)
 
         req = Requirement(
             validation_fn=simple_validate(_patch_test),
@@ -313,7 +318,7 @@ class BenchmarkRunner:
             }
         elapsed_ms = int((time.time() - start) * 1000)
 
-        patch = edits_to_patch(result.value or "", repo_root="/testbed")
+        patch, _ = edits_to_patch(result.value or "", repo_root="/testbed")
         sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest() if patch else None
 
         return {
@@ -336,7 +341,9 @@ class BenchmarkRunner:
 
         def _patch_test(raw_json: str) -> bool | tuple[bool, str]:
             nonlocal last_detail
-            patch = edits_to_patch(raw_json, repo_root="/testbed")
+            patch, edit_errors = edits_to_patch(raw_json, repo_root="/testbed")
+            if not patch and edit_errors:
+                return (False, "Edit errors:\n" + "\n".join(edit_errors))
             run = swe_sandbox.evaluate_patch(
                 instance=task.raw_instance,
                 model_id=self.config.model_id,
@@ -354,7 +361,10 @@ class BenchmarkRunner:
             }
             if run.resolved and not run.timed_out:
                 return True
-            return (False, _truncate(run.test_output, max_chars=4000) or "Not resolved")
+            feedback = _truncate(run.test_output, max_chars=4000) or "Not resolved"
+            if edit_errors:
+                feedback = "Edit errors:\n" + "\n".join(edit_errors) + "\n" + feedback
+            return (False, feedback)
 
         req = Requirement(
             validation_fn=simple_validate(_patch_test),
@@ -386,7 +396,7 @@ class BenchmarkRunner:
             }
         elapsed_ms = int((time.time() - start) * 1000)
 
-        patch = edits_to_patch(result.value or "", repo_root="/testbed")
+        patch, _ = edits_to_patch(result.value or "", repo_root="/testbed")
         sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest() if patch else None
 
         return {

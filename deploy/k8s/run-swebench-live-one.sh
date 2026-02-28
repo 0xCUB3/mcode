@@ -437,10 +437,10 @@ spec:
               try:
                   data = json.loads(raw_json)
               except Exception:
-                  return ""
+                  return "", []
               edits = data.get("edits", [])
               if not edits:
-                  return data.get("patch", "")  # fallback for raw diff
+                  return data.get("patch", ""), []  # fallback for raw diff
 
               root = Path(repo_root)
               file_index = [None]  # mutable container for closure
@@ -497,23 +497,30 @@ spec:
                   return (char_start, char_end)
 
               patches = []
+              errors = []
               for edit in edits:
                   fpath = edit.get("file", "")
                   search = edit.get("search", "")
                   replace = edit.get("replace", "")
                   resolved = _resolve_path(fpath)
                   if resolved is None:
+                      errors.append(f"File not found: {fpath}")
                       continue
                   rel, full = resolved
                   try:
                       original = full.read_text(encoding="utf-8", errors="replace")
                   except Exception:
+                      errors.append(f"Cannot read: {fpath}")
                       continue
                   if search in original:
                       modified = original.replace(search, replace, 1)
                   else:
                       span = _fuzzy_find(search, original)
                       if span is None:
+                          errors.append(
+                              f"Search text not found in {rel} "
+                              f"(first 60 chars: {search[:60]!r})"
+                          )
                           continue
                       modified = original[:span[0]] + replace + original[span[1]:]
                   diff = difflib.unified_diff(
@@ -523,7 +530,7 @@ spec:
                       tofile=f"b/{rel}",
                   )
                   patches.append("".join(diff))
-              return "\n".join(patches)
+              return "\n".join(patches), errors
 
           # ---- IPC: send patch to testbed sidecar, get test results back ----
 
@@ -551,15 +558,20 @@ spec:
               return result
 
           def _patch_test(raw_json):
-              patch = edits_to_patch(raw_json) or ""
-              test_output = run_test_via_sidecar(patch)
+              patch, edit_errors = edits_to_patch(raw_json)
+              if not patch and edit_errors:
+                  return (False, "Edit errors:\n" + "\n".join(edit_errors))
+              test_output = run_test_via_sidecar(patch or "")
 
               if check_resolved(test_output):
                   print(">>>>> Applied Patch")
                   print(test_output)
                   return True
 
-              return (False, truncate(test_output))
+              feedback = truncate(test_output)
+              if edit_errors:
+                  feedback = "Edit errors:\n" + "\n".join(edit_errors) + "\n" + feedback
+              return (False, feedback)
 
           req = Requirement(
               validation_fn=simple_validate(_patch_test),
@@ -584,7 +596,8 @@ spec:
                       requirements=[req],
                   )
               raw = result.value or ""
-              patch = edits_to_patch(raw) or ""
+              patch, _ = edits_to_patch(raw)
+              patch = patch or ""
               attempts_used = len(result.sample_generations)
           except Exception as e:
               print(f"ERROR: {e}", file=sys.stderr)

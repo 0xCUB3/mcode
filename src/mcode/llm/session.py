@@ -23,8 +23,11 @@ class PatchOutput(BaseModel):
     edits: list[FileEdit] = Field(..., description="List of search/replace edits to apply")
 
 
-def edits_to_patch(raw_json: str, repo_root: str = "/testbed") -> str:
-    """Convert structured edits JSON to a unified diff string."""
+def edits_to_patch(raw_json: str, repo_root: str = "/testbed") -> tuple[str, list[str]]:
+    """Convert structured edits JSON to a unified diff string.
+
+    Returns (patch_string, error_list).
+    """
     import difflib
     import json
     from pathlib import Path
@@ -32,10 +35,10 @@ def edits_to_patch(raw_json: str, repo_root: str = "/testbed") -> str:
     try:
         data = json.loads(raw_json)
     except Exception:
-        return ""
+        return "", []
     edits = data.get("edits", [])
     if not edits:
-        return data.get("patch", "")  # fallback for raw diff
+        return data.get("patch", ""), []  # fallback for raw diff
 
     root = Path(repo_root)
     file_index: dict[str, Path] | None = None
@@ -100,23 +103,27 @@ def edits_to_patch(raw_json: str, repo_root: str = "/testbed") -> str:
         return (char_start, char_end)
 
     patches = []
+    errors = []
     for edit in edits:
         path = edit.get("file", "")
         search = edit.get("search", "")
         replace = edit.get("replace", "")
         resolved = _resolve_path(path)
         if resolved is None:
+            errors.append(f"File not found: {path}")
             continue
         rel, full = resolved
         try:
             original = full.read_text(encoding="utf-8", errors="replace")
         except Exception:
+            errors.append(f"Cannot read: {path}")
             continue
         if search in original:
             modified = original.replace(search, replace, 1)
         else:
             span = _fuzzy_find(search, original)
             if span is None:
+                errors.append(f"Search text not found in {rel} (first 60 chars: {search[:60]!r})")
                 continue
             modified = original[: span[0]] + replace + original[span[1] :]
         diff = difflib.unified_diff(
@@ -126,7 +133,7 @@ def edits_to_patch(raw_json: str, repo_root: str = "/testbed") -> str:
             tofile=f"b/{rel}",
         )
         patches.append("".join(diff))
-    return "\n".join(patches)
+    return "\n".join(patches), errors
 
 
 @dataclass
