@@ -75,7 +75,15 @@ def build_indented_tree(paths: list[str]) -> str:
 
 
 def _tokenize(text: str) -> list[str]:
-    return re.findall(r"[a-zA-Z_]\w{2,}", text.lower())
+    raw = re.findall(r"[a-zA-Z_]\w{2,}", text.lower())
+    tokens = []
+    for tok in raw:
+        tokens.append(tok)
+        # Split snake_case so "name_checker" also yields "name", "checker"
+        parts = tok.split("_")
+        if len(parts) > 1:
+            tokens.extend(p for p in parts if len(p) >= 3)
+    return tokens
 
 
 def rank_bm25(
@@ -156,15 +164,22 @@ def localize(
     tree = build_indented_tree(top_files)
 
     # LLM picks files from tree
+    # Also provide a flat list so the model can copy exact paths
     system_prompt = (
         "You are an expert software engineer.\n"
         "Given a repository file tree and an issue description, "
         "identify which files most likely need to be modified to fix the issue.\n"
-        "Return only the file paths, ordered by likelihood (most likely first).\n"
-        "Typically 1-5 files are needed.\n"
-        "Use the exact paths from the tree."
+        "Return only file paths from the CANDIDATES list below.\n"
+        "Return 1-5 files, ordered by likelihood (most likely first).\n"
+        "IMPORTANT: Copy paths exactly from the candidates list. "
+        "Do not invent or modify paths."
     )
-    description = f"Repository structure:\n{tree}\n\nIssue:\n{problem_statement.strip()}"
+    candidates = "\n".join(top_files)
+    description = (
+        f"Repository structure:\n{tree}\n\n"
+        f"CANDIDATES (copy exact paths from this list):\n{candidates}\n\n"
+        f"Issue:\n{problem_statement.strip()}"
+    )
     result = session._m.instruct(
         description,
         format=FileLocalization,
