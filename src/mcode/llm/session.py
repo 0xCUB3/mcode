@@ -30,6 +30,7 @@ def edits_to_patch(raw_json: str, repo_root: str = "/testbed") -> tuple[str, lis
     """
     import difflib
     import json
+    import re
     from pathlib import Path
 
     try:
@@ -150,13 +151,29 @@ def edits_to_patch(raw_json: str, repo_root: str = "/testbed") -> tuple[str, lis
         else:
             span = _fuzzy_find(search, original)
             if span is None:
-                # Show actual file content so the model can fix its search text
-                lines = original.splitlines(keepends=True)
-                snippet = "".join(f"{i + 1}: {ln}" for i, ln in enumerate(lines[:40]))
+                # Show relevant file content so the model can fix its search text
+                lines = original.splitlines()
+                # Find lines matching keywords from the search text
+                keywords = set(w.lower() for w in re.findall(r"[a-zA-Z_]\w{3,}", search))
+                scored: list[tuple[int, int]] = []
+                for li, ln in enumerate(lines):
+                    hits = sum(1 for kw in keywords if kw in ln.lower())
+                    if hits:
+                        scored.append((hits, li))
+                scored.sort(key=lambda x: -x[0])
+                # Show context around top matching lines
+                show: set[int] = set()
+                for _, li in scored[:3]:
+                    for j in range(max(0, li - 2), min(len(lines), li + 3)):
+                        show.add(j)
+                if not show:
+                    show = set(range(min(30, len(lines))))
+                snippet_lines = sorted(show)
+                snippet = "\n".join(f"{i + 1}: {lines[i]}" for i in snippet_lines)
                 errors.append(
                     f"Search text not found in {rel} "
                     f"(your search started with: {search[:60]!r}). "
-                    f"Actual file content (first 40 lines):\n{snippet}"
+                    f"Relevant lines from file:\n{snippet}"
                 )
                 continue
             modified = original[: span[0]] + replace + original[span[1] :]
