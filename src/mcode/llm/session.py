@@ -288,6 +288,16 @@ def line_edits_to_patch(raw_json: str, repo_root: str = "/testbed") -> tuple[str
             replace_lines[-1] += "\n"
 
         modified = lines[: start - 1] + replace_lines + lines[end:]
+
+        # Syntax gate: reject edits that break Python syntax before running tests
+        if path.endswith(".py"):
+            modified_src = "".join(modified)
+            try:
+                compile(modified_src, path, "exec")
+            except SyntaxError as exc:
+                errors.append(f"SyntaxError in {path} line {exc.lineno}: {exc.msg}")
+                continue
+
         diff = difflib.unified_diff(
             lines,
             modified,

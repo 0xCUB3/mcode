@@ -244,7 +244,7 @@ openai_base_url="${OPENAI_BASE_URL:-http://vllm:8000/v1}"
 openai_api_key="${OPENAI_API_KEY:-dummy}"
 ollama_host="${OLLAMA_HOST:-http://ollama:11434}"
 max_new_tokens="${MCODE_MAX_NEW_TOKENS:-4096}"
-loop_budget="${LOOP_BUDGET:-3}"
+loop_budget="${LOOP_BUDGET:-5}"
 
 if [[ "${mode}" == "gold" ]]; then
   cat <<YAML | oc apply -f - >/dev/null
@@ -398,7 +398,7 @@ spec:
 
           model_id = os.environ["MODEL"]
           backend = os.environ.get("BACKEND", "openai")
-          loop_budget = int(os.environ.get("LOOP_BUDGET", "3"))
+          loop_budget = int(os.environ.get("LOOP_BUDGET", "5"))
 
           # ---- pytest parser (matches official SWE-bench-Live evaluation.py) ----
           def parse_pytest(output):
