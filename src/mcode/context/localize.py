@@ -25,23 +25,9 @@ _EXCLUDED_DIRS = frozenset(
         "examples",
         "example",
         "benchmarks",
-    }
-)
-
-_INCLUDED_EXTS = frozenset(
-    {
-        ".py",
-        ".pyi",
-        ".toml",
-        ".yaml",
-        ".yml",
-        ".json",
-        ".ini",
-        ".cfg",
-        ".md",
-        ".rst",
-        ".txt",
-        ".sh",
+        "tests",
+        "test",
+        "testing",
     }
 )
 
@@ -49,12 +35,8 @@ _INCLUDED_EXTS = frozenset(
 def collect_source_files(repo_root: str) -> list[str]:
     root = Path(repo_root)
     paths: list[str] = []
-    for p in sorted(root.rglob("*")):
-        if not p.is_file():
-            continue
+    for p in sorted(root.rglob("*.py")):
         if _EXCLUDED_DIRS.intersection(p.parts):
-            continue
-        if p.suffix.lower() not in _INCLUDED_EXTS:
             continue
         paths.append(str(p.relative_to(root)))
     return paths
@@ -152,9 +134,9 @@ def localize(
     repo_root: str,
     problem_statement: str,
     *,
-    bm25_top_n: int = 40,
-    max_context_chars: int = 60000,
-    max_file_chars: int = 4000,
+    bm25_top_n: int = 30,
+    max_context_chars: int = 20000,
+    max_file_chars: int = 2000,
 ) -> tuple[list[str], str]:
     """BM25-based file localization. No LLM call.
 
