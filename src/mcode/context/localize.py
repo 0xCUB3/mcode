@@ -180,12 +180,16 @@ def localize(
     except (json.JSONDecodeError, TypeError, AttributeError):
         localized = []
 
+    # Filter to files that actually exist (LLM may hallucinate paths)
+    root = Path(repo_root)
+    valid_set = set(all_files)
+    localized = [f for f in localized if f in valid_set]
+
     if not localized:
         # Fallback: use top BM25 files
         localized = top_files[:5]
 
     # Read localized files and build hints
-    root = Path(repo_root)
     parts = []
     chars = 0
     for rel in localized:
