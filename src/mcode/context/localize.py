@@ -148,6 +148,7 @@ def localize(
         return [], ""
 
     top_files = rank_bm25(all_files, problem_statement, repo_root, top_n=bm25_top_n)
+    print(f"bm25 top-10: {top_files[:10]}", flush=True)
 
     # Read top files and build hints (cap per-file to fit more files)
     root = Path(repo_root)
@@ -172,6 +173,8 @@ def localize(
         parts.append(f"--- {rel} ---\n{content}")
         chars += len(content) + len(rel) + 10
         included.append(rel)
+
+    print(f"included {len(included)} files ({chars} chars)", flush=True)
 
     hints = ""
     if parts:
