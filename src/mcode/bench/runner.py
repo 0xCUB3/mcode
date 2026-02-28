@@ -13,7 +13,7 @@ from rich.progress import Progress
 from mcode.bench.results import ResultsDB, RunSummary
 from mcode.bench.tasks import Task, load_benchmark
 from mcode.execution.sandbox import DockerSandbox
-from mcode.llm.session import LLMSession
+from mcode.llm.session import LLMSession, edits_to_patch
 
 
 def _default_cache_dir() -> Path:
@@ -265,7 +265,7 @@ class BenchmarkRunner:
 
         def _patch_test(raw_json: str) -> bool | tuple[bool, str]:
             nonlocal last_detail
-            patch = _extract_from_json(raw_json, "patch")
+            patch = edits_to_patch(raw_json, repo_root="/testbed")
             run = live_sandbox.evaluate_patch(
                 task=task,
                 patch=patch,
@@ -313,7 +313,7 @@ class BenchmarkRunner:
             }
         elapsed_ms = int((time.time() - start) * 1000)
 
-        patch = _extract_from_json(result.value or "", "patch")
+        patch = edits_to_patch(result.value or "", repo_root="/testbed")
         sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest() if patch else None
 
         return {
@@ -336,7 +336,7 @@ class BenchmarkRunner:
 
         def _patch_test(raw_json: str) -> bool | tuple[bool, str]:
             nonlocal last_detail
-            patch = _extract_from_json(raw_json, "patch")
+            patch = edits_to_patch(raw_json, repo_root="/testbed")
             run = swe_sandbox.evaluate_patch(
                 instance=task.raw_instance,
                 model_id=self.config.model_id,
@@ -386,7 +386,7 @@ class BenchmarkRunner:
             }
         elapsed_ms = int((time.time() - start) * 1000)
 
-        patch = _extract_from_json(result.value or "", "patch")
+        patch = edits_to_patch(result.value or "", repo_root="/testbed")
         sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest() if patch else None
 
         return {

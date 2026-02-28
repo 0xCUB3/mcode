@@ -36,7 +36,7 @@ Env vars (optional):
   OPENAI_API_KEY=...       Default: dummy
   OLLAMA_HOST=...          Default: http://ollama:11434
   MCODE_IMAGE=...          Default: OpenShift internal registry mcode:latest
-  MCODE_MAX_NEW_TOKENS=... Default: 512
+  MCODE_MAX_NEW_TOKENS=... Default: 4096
   LOOP_BUDGET=<N>          Default: 3 (max patch+test attempts)
 
   # Cleanup

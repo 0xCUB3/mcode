@@ -31,7 +31,7 @@ Env vars (optional):
   OPENAI_API_KEY=...       Default: dummy
   OLLAMA_HOST=...          Default: http://ollama:11434
   MCODE_IMAGE=...          Default: OpenShift internal registry mcode:latest
-  MCODE_MAX_NEW_TOKENS=... Default: 512
+  MCODE_MAX_NEW_TOKENS=... Default: 4096
 
   # Cleanup
   CLEANUP=1               Delete pod + configmap after completion
@@ -191,7 +191,7 @@ model="${MODEL:-ibm-granite/granite-3.0-8b-instruct}"
 openai_base_url="${OPENAI_BASE_URL:-http://vllm:8000/v1}"
 openai_api_key="${OPENAI_API_KEY:-dummy}"
 ollama_host="${OLLAMA_HOST:-http://ollama:11434}"
-max_new_tokens="${MCODE_MAX_NEW_TOKENS:-512}"
+max_new_tokens="${MCODE_MAX_NEW_TOKENS:-4096}"
 
 if [[ "${mode}" == "gold" ]]; then
   cat <<YAML | oc apply -f - >/dev/null

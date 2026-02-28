@@ -31,7 +31,7 @@ Env vars (optional):
   OPENAI_API_KEY=...       Default: dummy
   OLLAMA_HOST=...          Default: http://ollama:11434
   MCODE_IMAGE=...          Default: OpenShift internal registry mcode:latest
-  MCODE_MAX_NEW_TOKENS=... Default: 512
+  MCODE_MAX_NEW_TOKENS=... Default: 4096
   LOOP_BUDGET=<N>          Default: 3 (max patch+test attempts)
 
   # Cleanup
@@ -243,7 +243,7 @@ model="${MODEL:-ibm-granite/granite-3.0-8b-instruct}"
 openai_base_url="${OPENAI_BASE_URL:-http://vllm:8000/v1}"
 openai_api_key="${OPENAI_API_KEY:-dummy}"
 ollama_host="${OLLAMA_HOST:-http://ollama:11434}"
-max_new_tokens="${MCODE_MAX_NEW_TOKENS:-512}"
+max_new_tokens="${MCODE_MAX_NEW_TOKENS:-4096}"
 loop_budget="${LOOP_BUDGET:-3}"
 
 if [[ "${mode}" == "gold" ]]; then
@@ -431,12 +431,101 @@ spec:
               p2p_failed = [t for t in p2p if results.get(t, "MISSING") in ("FAILED", "ERROR")]
               return f2p_ok and len(p2p_failed) == 0
 
-          # ---- IPC: send patch to testbed sidecar, get test results back ----
-          def _extract_patch(raw):
+          # ---- convert structured edits to unified diff ----
+          def edits_to_patch(raw_json, repo_root="/testbed"):
+              import difflib
               try:
-                  return json.loads(raw).get("patch", raw)
+                  data = json.loads(raw_json)
               except Exception:
-                  return raw
+                  return ""
+              edits = data.get("edits", [])
+              if not edits:
+                  return data.get("patch", "")  # fallback for raw diff
+
+              root = Path(repo_root)
+              file_index = [None]  # mutable container for closure
+
+              def _resolve_path(rel):
+                  full = root / rel
+                  if full.is_file():
+                      return (rel, full)
+                  parts = rel.split("/")
+                  for i in range(1, len(parts)):
+                      candidate = "/".join(parts[i:])
+                      full = root / candidate
+                      if full.is_file():
+                          return (candidate, full)
+                  if file_index[0] is None:
+                      file_index[0] = {}
+                      for p in root.rglob("*.py"):
+                          if ".git" not in p.parts and "__pycache__" not in p.parts:
+                              file_index[0][p.name] = p
+                  basename = parts[-1] if parts else ""
+                  if basename in file_index[0]:
+                      matched = file_index[0][basename]
+                      return (str(matched.relative_to(root)), matched)
+                  return None
+
+              def _fuzzy_find(search, text):
+                  if search in text:
+                      idx = text.index(search)
+                      return (idx, idx + len(search))
+                  sm = difflib.SequenceMatcher(None, search, text, autojunk=False)
+                  best = sm.find_longest_match(0, len(search), 0, len(text))
+                  if best.size == 0:
+                      return None
+                  s_lines = search.splitlines(keepends=True)
+                  t_lines = text.splitlines(keepends=True)
+                  n = len(s_lines)
+                  best_ratio = 0.0
+                  best_span = None
+                  for start in range(max(0, best.b // 40 - n), min(len(t_lines), best.b // 40 + n + 1)):
+                      end = start + n
+                      if end > len(t_lines):
+                          break
+                      candidate = "".join(t_lines[start:end])
+                      ratio = difflib.SequenceMatcher(
+                          None, search, candidate, autojunk=False
+                      ).ratio()
+                      if ratio > best_ratio:
+                          best_ratio = ratio
+                          best_span = (start, end)
+                  if best_span is None or best_ratio < 0.6:
+                      return None
+                  char_start = sum(len(l) for l in t_lines[:best_span[0]])
+                  char_end = sum(len(l) for l in t_lines[:best_span[1]])
+                  return (char_start, char_end)
+
+              patches = []
+              for edit in edits:
+                  fpath = edit.get("file", "")
+                  search = edit.get("search", "")
+                  replace = edit.get("replace", "")
+                  resolved = _resolve_path(fpath)
+                  if resolved is None:
+                      continue
+                  rel, full = resolved
+                  try:
+                      original = full.read_text(encoding="utf-8", errors="replace")
+                  except Exception:
+                      continue
+                  if search in original:
+                      modified = original.replace(search, replace, 1)
+                  else:
+                      span = _fuzzy_find(search, original)
+                      if span is None:
+                          continue
+                      modified = original[:span[0]] + replace + original[span[1]:]
+                  diff = difflib.unified_diff(
+                      original.splitlines(keepends=True),
+                      modified.splitlines(keepends=True),
+                      fromfile=f"a/{rel}",
+                      tofile=f"b/{rel}",
+                  )
+                  patches.append("".join(diff))
+              return "\n".join(patches)
+
+          # ---- IPC: send patch to testbed sidecar, get test results back ----
 
           def truncate(s, max_chars=4000):
               return s if len(s) <= max_chars else s[-max_chars:]
@@ -462,7 +551,7 @@ spec:
               return result
 
           def _patch_test(raw_json):
-              patch = _extract_patch(raw_json) or ""
+              patch = edits_to_patch(raw_json) or ""
               test_output = run_test_via_sidecar(patch)
 
               if check_resolved(test_output):
@@ -495,7 +584,7 @@ spec:
                       requirements=[req],
                   )
               raw = result.value or ""
-              patch = _extract_patch(raw) or ""
+              patch = edits_to_patch(raw) or ""
               attempts_used = len(result.sample_generations)
           except Exception as e:
               print(f"ERROR: {e}", file=sys.stderr)

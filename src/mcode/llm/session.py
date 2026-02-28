@@ -13,8 +13,120 @@ class CodeOutput(BaseModel):
     code: str = Field(..., description="Python code only, no markdown.")
 
 
+class FileEdit(BaseModel):
+    file: str = Field(..., description="File path relative to repo root")
+    search: str = Field(..., description="Exact existing text to find")
+    replace: str = Field(..., description="Replacement text")
+
+
 class PatchOutput(BaseModel):
-    patch: str = Field(..., description="A unified diff patch (git apply compatible), no markdown.")
+    edits: list[FileEdit] = Field(..., description="List of search/replace edits to apply")
+
+
+def edits_to_patch(raw_json: str, repo_root: str = "/testbed") -> str:
+    """Convert structured edits JSON to a unified diff string."""
+    import difflib
+    import json
+    from pathlib import Path
+
+    try:
+        data = json.loads(raw_json)
+    except Exception:
+        return ""
+    edits = data.get("edits", [])
+    if not edits:
+        return data.get("patch", "")  # fallback for raw diff
+
+    root = Path(repo_root)
+    file_index: dict[str, Path] | None = None
+
+    def _resolve_path(rel: str) -> tuple[str, Path] | None:
+        """Resolve a model-provided path, with fuzzy fallback."""
+        full = root / rel
+        if full.is_file():
+            return (rel, full)
+        # Try stripping bogus prefixes (e.g. "pylint/src/pylint/x" -> "pylint/x")
+        parts = rel.split("/")
+        for i in range(1, len(parts)):
+            candidate = "/".join(parts[i:])
+            full = root / candidate
+            if full.is_file():
+                return (candidate, full)
+        # Fallback: match by basename against repo file index
+        nonlocal file_index
+        if file_index is None:
+            file_index = {}
+            for p in root.rglob("*.py"):
+                if ".git" not in p.parts and "__pycache__" not in p.parts:
+                    file_index[p.name] = p
+        basename = parts[-1] if parts else ""
+        if basename in file_index:
+            matched = file_index[basename]
+            return (str(matched.relative_to(root)), matched)
+        return None
+
+    def _fuzzy_find(search: str, text: str) -> tuple[int, int] | None:
+        """Find the best fuzzy match for search in text. Returns (start, end)."""
+        if search in text:
+            idx = text.index(search)
+            return (idx, idx + len(search))
+        sm = difflib.SequenceMatcher(None, search, text, autojunk=False)
+        # Find the longest contiguous matching block
+        best = sm.find_longest_match(0, len(search), 0, len(text))
+        if best.size == 0:
+            return None
+        # Expand: align to line boundaries around the match region in text
+        # Use ratio of search vs the candidate region
+        s_lines = search.splitlines(keepends=True)
+        t_lines = text.splitlines(keepends=True)
+        n = len(s_lines)
+        best_ratio = 0.0
+        best_span: tuple[int, int] | None = None
+        # Slide a window of n lines over t_lines
+        for start in range(max(0, best.b // 40 - n), min(len(t_lines), best.b // 40 + n + 1)):
+            end = start + n
+            if end > len(t_lines):
+                break
+            candidate = "".join(t_lines[start:end])
+            ratio = difflib.SequenceMatcher(None, search, candidate, autojunk=False).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_span = (start, end)
+        if best_span is None or best_ratio < 0.6:
+            return None
+        # Convert line span back to char offsets
+        char_start = sum(len(ln) for ln in t_lines[: best_span[0]])
+        char_end = sum(len(ln) for ln in t_lines[: best_span[1]])
+        return (char_start, char_end)
+
+    patches = []
+    for edit in edits:
+        path = edit.get("file", "")
+        search = edit.get("search", "")
+        replace = edit.get("replace", "")
+        resolved = _resolve_path(path)
+        if resolved is None:
+            continue
+        rel, full = resolved
+        try:
+            original = full.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        if search in original:
+            modified = original.replace(search, replace, 1)
+        else:
+            span = _fuzzy_find(search, original)
+            if span is None:
+                continue
+            modified = original[: span[0]] + replace + original[span[1] :]
+        diff = difflib.unified_diff(
+            original.splitlines(keepends=True),
+            modified.splitlines(keepends=True),
+            fromfile=f"a/{rel}",
+            tofile=f"b/{rel}",
+        )
+        patches.append("".join(diff))
+    return "\n".join(patches)
 
 
 @dataclass
@@ -42,6 +154,11 @@ class LLMSession:
         raw = os.environ.get("MCODE_MAX_NEW_TOKENS")
         if raw:
             opts[ModelOption.MAX_NEW_TOKENS] = int(raw)
+        ctx_raw = os.environ.get("MCODE_CONTEXT_WINDOW")
+        if ctx_raw:
+            opts[ModelOption.CONTEXT_WINDOW] = int(ctx_raw)
+        elif self.backend_name == "ollama":
+            opts[ModelOption.CONTEXT_WINDOW] = 16384
         return opts
 
     def _strategy(self):
@@ -153,16 +270,26 @@ class LLMSession:
     ):
         system_prompt = (
             "You are an expert software engineer.\n"
-            "Given a GitHub issue and a repository name, produce a single unified diff patch.\n"
-            "The patch must fix the issue.\n"
-            "The patch must apply cleanly with `git apply` from the repository root."
+            "Given a GitHub issue, a repository, and relevant source files, "
+            "produce SEARCH/REPLACE edits to fix the issue.\n"
+            "Each edit has three fields:\n"
+            '  - "file": path relative to repo root\n'
+            '  - "search": exact existing text to find '
+            "(must match the file exactly)\n"
+            '  - "replace": replacement text\n'
+            "Rules:\n"
+            "- Study the source files provided in the hints section "
+            "to understand the codebase.\n"
+            "- Use file paths and code from the provided source files, "
+            "not imagined ones.\n"
+            "- The search text must appear exactly once in the file.\n"
+            "- Include enough surrounding context in search "
+            "to be unambiguous.\n"
+            "- Keep edits minimal: only change what is needed "
+            "to fix the issue."
         )
         hints_block = f"\n\nHints:\n{hints_text.strip()}" if hints_text.strip() else ""
-        description = (
-            f"Repository: {repo}\n\n"
-            f"Issue:\n{problem_statement.strip()}"
-            f"{hints_block}"
-        )
+        description = f"Repository: {repo}\n\nIssue:\n{problem_statement.strip()}{hints_block}"
         return self._m.instruct(
             description,
             format=PatchOutput,

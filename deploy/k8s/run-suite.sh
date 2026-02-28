@@ -277,7 +277,7 @@ else
     ./deploy/k8s/run-swebench-lite.sh
 
   MODE=model SPLIT=test LIMIT=3 PARALLELISM=1 \
-    BACKEND=ollama MODEL="${model}" OLLAMA_HOST="${ollama_host}" MCODE_MAX_NEW_TOKENS=512 \
+    BACKEND=ollama MODEL="${model}" OLLAMA_HOST="${ollama_host}" MCODE_MAX_NEW_TOKENS=4096 \
     OUT_DIR="${suite_dir}/swebench-model" \
     DB="${suite_dir}/swebench-lite-model.db" \
     CLEANUP=1 \
