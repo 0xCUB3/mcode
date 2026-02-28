@@ -295,3 +295,20 @@ def test_strict_mode_requires_unique_search_text(tmp_path):
     assert patch == ""
     assert len(errors) == 1
     assert "must match exactly once" in errors[0]
+
+
+def test_strict_mode_accepts_leading_slash_path(tmp_path):
+    sub = tmp_path / "dynaconf" / "loaders"
+    sub.mkdir(parents=True)
+    (sub / "base.py").write_text("x = 1\n")
+    raw = json.dumps(
+        {
+            "edits": [
+                {"file": "/dynaconf/loaders/base.py", "search": "x = 1", "replace": "x = 2"},
+            ]
+        }
+    )
+    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path), strict=True)
+    assert "--- a/dynaconf/loaders/base.py" in patch
+    assert "+x = 2" in patch
+    assert errors == []

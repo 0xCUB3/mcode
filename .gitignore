@@ -26,6 +26,9 @@ experiments/results/
 results/
 *.log
 logs/
+results-smoke-*/
+results-swebench-live-*/
+report-screenshot.png
 
 # macOS
 .DS_Store

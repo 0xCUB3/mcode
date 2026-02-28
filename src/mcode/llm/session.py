@@ -50,6 +50,15 @@ def edits_to_patch(
     file_index: dict[str, Path] | None = None
     all_paths: list[str] | None = None
 
+    def _normalize_rel_path(rel: str) -> str:
+        """Normalize model-provided relative file paths."""
+        rel = (rel or "").strip()
+        while rel.startswith("./"):
+            rel = rel[2:]
+        if rel.startswith("/"):
+            rel = rel.lstrip("/")
+        return rel
+
     def _build_index() -> None:
         nonlocal file_index, all_paths
         if file_index is not None:
@@ -138,7 +147,7 @@ def edits_to_patch(
     patches = []
     errors = []
     for edit in edits:
-        path = edit.get("file", "")
+        path = _normalize_rel_path(edit.get("file", ""))
         search = edit.get("search", "")
         replace = edit.get("replace", "")
         resolved = _resolve_path(path)
