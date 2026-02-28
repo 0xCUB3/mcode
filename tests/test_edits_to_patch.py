@@ -18,7 +18,7 @@ def test_edits_to_patch_basic(tmp_path):
             ]
         }
     )
-    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path))
+    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path), strict=False)
     assert "--- a/foo.py" in patch
     assert "+++ b/foo.py" in patch
     assert "-    return 'hi'" in patch
@@ -37,7 +37,7 @@ def test_edits_to_patch_multiple_files(tmp_path):
             ]
         }
     )
-    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path))
+    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path), strict=False)
     assert "--- a/a.py" in patch
     assert "--- a/b.py" in patch
     assert errors == []
@@ -51,7 +51,7 @@ def test_edits_to_patch_missing_file(tmp_path):
             ]
         }
     )
-    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path))
+    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path), strict=False)
     assert patch == ""
     assert len(errors) == 1
     assert "File not found" in errors[0]
@@ -66,7 +66,7 @@ def test_edits_to_patch_search_not_found(tmp_path):
             ]
         }
     )
-    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path))
+    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path), strict=False)
     assert patch == ""
     assert len(errors) == 1
     assert "Search text not found" in errors[0]
@@ -101,7 +101,7 @@ def test_edits_to_patch_replaces_first_occurrence_only(tmp_path):
             ]
         }
     )
-    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path))
+    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path), strict=False)
     assert patch.count("+x = 2") == 1
     assert patch.count("-x = 1") == 1
     assert errors == []
@@ -122,7 +122,7 @@ def test_fuzzy_path_strips_bogus_prefix(tmp_path):
             ]
         }
     )
-    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path))
+    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path), strict=False)
     assert "--- a/pylint/checkers/base.py" in patch
     assert "-x = 1" in patch
     assert "+x = 2" in patch
@@ -136,7 +136,7 @@ def test_fuzzy_path_basename_fallback(tmp_path):
     raw = json.dumps(
         {"edits": [{"file": "completely/wrong/utils.py", "search": "y = 2", "replace": "y = 3"}]}
     )
-    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path))
+    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path), strict=False)
     assert "+y = 3" in patch
     assert errors == []
 
@@ -155,7 +155,7 @@ def test_fuzzy_search_text(tmp_path):
             ]
         }
     )
-    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path))
+    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path), strict=False)
     assert "--- a/foo.py" in patch
     assert "+    x = 10" in patch
     assert errors == []
@@ -174,7 +174,7 @@ def test_fuzzy_search_too_different_is_skipped(tmp_path):
             ]
         }
     )
-    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path))
+    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path), strict=False)
     assert patch == ""
     assert len(errors) == 1
     assert "Search text not found" in errors[0]
@@ -207,7 +207,7 @@ def test_suggest_paths_on_missing_file(tmp_path):
             ]
         }
     )
-    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path))
+    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path), strict=False)
     # The fuzzy prefix-strip resolves this, so it should succeed
     assert "--- a/pylint/checkers/base_checker.py" in patch
     assert errors == []

@@ -27,7 +27,7 @@ def edits_to_patch(
     raw_json: str,
     repo_root: str = "/testbed",
     *,
-    strict: bool = False,
+    strict: bool = True,
 ) -> tuple[str, list[str]]:
     """Convert structured edits JSON to a unified diff string.
 
