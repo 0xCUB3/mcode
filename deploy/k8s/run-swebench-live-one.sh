@@ -384,7 +384,7 @@ spec:
 
           from mellea.stdlib.requirements.requirement import Requirement, simple_validate
 
-          from mcode.llm.session import LLMSession, edits_to_patch
+          from mcode.llm.session import LLMSession, build_file_tree, edits_to_patch
 
           IPC = Path("/work/ipc")
 
@@ -399,15 +399,41 @@ spec:
           backend = os.environ.get("BACKEND", "openai")
           loop_budget = int(os.environ.get("LOOP_BUDGET", "3"))
 
-          # ---- source context (read from testbed via shared volume) ----
-          source_context = ""
-          ctx_file = IPC / "source-context.txt"
-          if ctx_file.exists():
-              source_context = ctx_file.read_text(encoding="utf-8", errors="replace")
-
-          enriched_hints = hints
-          if source_context:
-              enriched_hints = hints + "\n\nRelevant source files from the repository:\n" + source_context
+          # ---- file localization via LLM ----
+          def build_enriched_hints(session):
+              file_tree = build_file_tree(REPO_ROOT)
+              if not file_tree:
+                  return hints
+              localized = session.localize_files(
+                  file_tree=file_tree, problem_statement=problem
+              )
+              print(f"localized files: {localized}", flush=True)
+              if not localized:
+                  return hints
+              parts = []
+              chars = 0
+              for rel in localized:
+                  fp = Path(REPO_ROOT) / rel
+                  if not fp.is_file():
+                      continue
+                  try:
+                      content = fp.read_text(encoding="utf-8", errors="replace")
+                  except Exception:
+                      continue
+                  budget = 12000 - chars
+                  if budget <= 0:
+                      break
+                  if len(content) > budget:
+                      content = content[:budget] + "\n... (truncated)"
+                  parts.append(f"--- {rel} ---\n{content}")
+                  chars += len(content) + len(rel) + 10
+              if not parts:
+                  return hints
+              source_context = "\n".join(parts)
+              base = hints
+              if base:
+                  base += "\n\n"
+              return base + "Relevant source files from the repository:\n" + source_context
 
           # ---- pytest parser (matches official SWE-bench-Live evaluation.py) ----
           def parse_pytest(output):
@@ -493,6 +519,7 @@ spec:
           attempts_used = 0
           try:
               with session.open():
+                  enriched_hints = build_enriched_hints(session)
                   result = session.generate_patch(
                       repo=repo,
                       problem_statement=problem,
@@ -550,51 +577,6 @@ spec:
 
           # Copy testbed to shared volume so agent can read source files
           cp -a /testbed /work/testbed
-
-          # Build source context for the agent
-          cd /testbed
-          find . -name '*.py' -not -path '*__pycache__*' -not -path '*/.git/*' \
-            2>/dev/null | head -500 > $IPC/file-list.txt || true
-          python3 - <<'CTX_PY'
-          from pathlib import Path
-
-          ipc = Path("/work/ipc")
-          problem = Path("/inputs/problem.txt").read_text(encoding="utf-8", errors="replace")
-          files = [f.strip() for f in (ipc / "file-list.txt").read_text().splitlines() if f.strip()]
-
-          problem_lower = problem.lower()
-          scored = []
-          for fp in files:
-              rel = fp.lstrip("./")
-              parts = rel.replace("/", " ").replace(".py", "").replace("_", " ").split()
-              score = sum(1 for p in parts if len(p) > 2 and p.lower() in problem_lower)
-              if score > 0:
-                  scored.append((score, rel))
-          scored.sort(key=lambda x: -x[0])
-
-          ctx = []
-          chars = 0
-          tree = "\n".join(f.lstrip("./") for f in files[:200])
-          if len(files) > 200:
-              tree += f"\n... and {len(files) - 200} more files"
-          ctx.append(f"File tree ({len(files)} Python files):\n{tree}")
-          chars += len(ctx[0])
-
-          for _score, rel in scored[:10]:
-              if chars >= 12000:
-                  break
-              try:
-                  content = Path("/testbed/" + rel).read_text(encoding="utf-8", errors="replace")
-              except Exception:
-                  continue
-              budget = 12000 - chars
-              if len(content) > budget:
-                  content = content[:budget] + "\n... (truncated)"
-              ctx.append(f"\n--- {rel} ---\n{content}")
-              chars += len(content) + len(rel) + 10
-
-          (ipc / "source-context.txt").write_text("\n".join(ctx), encoding="utf-8")
-          CTX_PY
 
           # Signal ready
           touch $IPC/testbed-ready

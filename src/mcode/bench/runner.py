@@ -13,7 +13,7 @@ from rich.progress import Progress
 from mcode.bench.results import ResultsDB, RunSummary
 from mcode.bench.tasks import Task, load_benchmark
 from mcode.execution.sandbox import DockerSandbox
-from mcode.llm.session import LLMSession, edits_to_patch
+from mcode.llm.session import LLMSession, build_file_tree, edits_to_patch
 
 
 def _default_cache_dir() -> Path:
@@ -296,10 +296,16 @@ class BenchmarkRunner:
             )
             try:
                 with self.llm.open():
+                    hints = _build_localized_hints(
+                        self.llm,
+                        repo_root,
+                        task.problem_statement,
+                        task.hints_text,
+                    )
                     result = self.llm.generate_patch(
                         repo=task.repo,
                         problem_statement=task.problem_statement,
-                        hints_text=task.hints_text,
+                        hints_text=hints,
                         requirements=[req],
                     )
             except Exception as e:
@@ -377,10 +383,16 @@ class BenchmarkRunner:
             )
             try:
                 with self.llm.open():
+                    hints = _build_localized_hints(
+                        self.llm,
+                        repo_root,
+                        task.problem_statement,
+                        task.hints_text,
+                    )
                     result = self.llm.generate_patch(
                         repo=task.repo,
                         problem_statement=task.problem_statement,
-                        hints_text=task.hints_text,
+                        hints_text=hints,
                         requirements=[req],
                     )
             except Exception as e:
@@ -413,6 +425,51 @@ class BenchmarkRunner:
             "code_sha256": sha,
             **last_detail,
         }
+
+
+def _build_localized_hints(
+    session: LLMSession,
+    repo_root: Path,
+    problem_statement: str,
+    base_hints: str,
+    *,
+    max_context_chars: int = 12000,
+) -> str:
+    file_tree = build_file_tree(str(repo_root))
+    if not file_tree:
+        return base_hints
+
+    localized = session.localize_files(file_tree=file_tree, problem_statement=problem_statement)
+    if not localized:
+        return base_hints
+
+    parts = []
+    chars = 0
+    for rel in localized:
+        fp = repo_root / rel
+        if not fp.is_file():
+            continue
+        try:
+            content = fp.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        budget = max_context_chars - chars
+        if budget <= 0:
+            break
+        if len(content) > budget:
+            content = content[:budget] + "\n... (truncated)"
+        parts.append(f"--- {rel} ---\n{content}")
+        chars += len(content) + len(rel) + 10
+
+    if not parts:
+        return base_hints
+
+    source_context = "\n".join(parts)
+    enriched = base_hints
+    if enriched:
+        enriched += "\n\n"
+    enriched += "Relevant source files from the repository:\n" + source_context
+    return enriched
 
 
 def _truncate_text(value: str | None, *, max_chars: int = 8000) -> str | None:
