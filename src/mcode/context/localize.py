@@ -136,6 +136,7 @@ def localize(
     *,
     bm25_top_n: int = 30,
     max_context_chars: int = 12000,
+    max_file_chars: int = 3000,
 ) -> tuple[list[str], str]:
     """BM25-based file localization. No LLM call.
 
@@ -148,7 +149,7 @@ def localize(
 
     top_files = rank_bm25(all_files, problem_statement, repo_root, top_n=bm25_top_n)
 
-    # Read top files and build hints
+    # Read top files and build hints (cap per-file to fit more files)
     root = Path(repo_root)
     included: list[str] = []
     parts = []
@@ -161,6 +162,8 @@ def localize(
             content = fp.read_text(encoding="utf-8", errors="replace")
         except Exception:
             continue
+        if len(content) > max_file_chars:
+            content = content[:max_file_chars] + "\n... (truncated)"
         budget = max_context_chars - chars
         if budget <= 0:
             break
