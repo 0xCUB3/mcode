@@ -159,6 +159,7 @@ def localize(
 
     # BM25 pre-filter
     top_files = rank_bm25(all_files, problem_statement, repo_root, top_n=bm25_top_n)
+    print(f"bm25 top-{bm25_top_n}: {top_files[:10]}...", flush=True)
 
     # Build indented tree of top candidates for LLM
     tree = build_indented_tree(top_files)
