@@ -189,6 +189,9 @@ _EXCLUDED_DIRS = frozenset(
         "examples",
         "example",
         "benchmarks",
+        "tests",
+        "test",
+        "testing",
     }
 )
 

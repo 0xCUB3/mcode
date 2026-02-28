@@ -34,6 +34,8 @@ def test_build_file_tree_excludes_non_source_dirs(tmp_path):
         "docs/api",
         "examples/demo",
         "benchmarks/perf",
+        "tests/functional",
+        "test/unit",
     ]
     for d in noise_dirs:
         p = tmp_path / d
@@ -53,6 +55,8 @@ def test_build_file_tree_excludes_non_source_dirs(tmp_path):
         "docs",
         "examples",
         "benchmarks",
+        "tests",
+        "test",
     ]
     for excluded in excluded_names:
         assert excluded not in tree, f"{excluded} should be excluded"
