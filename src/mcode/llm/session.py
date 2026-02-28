@@ -184,6 +184,11 @@ _EXCLUDED_DIRS = frozenset(
         ".venv",
         "venv",
         "env",
+        "doc",
+        "docs",
+        "examples",
+        "example",
+        "benchmarks",
     }
 )
 

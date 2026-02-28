@@ -23,14 +23,38 @@ def test_build_file_tree_basic(tmp_path):
 
 def test_build_file_tree_excludes_non_source_dirs(tmp_path):
     (tmp_path / "good.py").write_text("")
-    for d in [".git/hooks", "__pycache__", "build/lib/pkg", "dist", ".tox/py3", ".eggs"]:
+    noise_dirs = [
+        ".git/hooks",
+        "__pycache__",
+        "build/lib/pkg",
+        "dist",
+        ".tox/py3",
+        ".eggs",
+        "doc/data/messages",
+        "docs/api",
+        "examples/demo",
+        "benchmarks/perf",
+    ]
+    for d in noise_dirs:
         p = tmp_path / d
         p.mkdir(parents=True)
         (p / "junk.py").write_text("")
 
     tree = build_file_tree(str(tmp_path))
     assert "good.py" in tree
-    for excluded in [".git", "__pycache__", "build", "dist", ".tox", ".eggs"]:
+    excluded_names = [
+        ".git",
+        "__pycache__",
+        "build",
+        "dist",
+        ".tox",
+        ".eggs",
+        "doc",
+        "docs",
+        "examples",
+        "benchmarks",
+    ]
+    for excluded in excluded_names:
         assert excluded not in tree, f"{excluded} should be excluded"
 
 
