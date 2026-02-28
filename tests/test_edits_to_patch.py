@@ -248,3 +248,50 @@ def test_partial_success_returns_both_patch_and_errors(tmp_path):
     assert "--- a/good.py" in patch
     assert len(errors) == 1
     assert "File not found: bad.py" in errors[0]
+
+
+def test_strict_mode_rejects_fuzzy_path_fallback(tmp_path):
+    sub = tmp_path / "pkg"
+    sub.mkdir(parents=True)
+    (sub / "utils.py").write_text("y = 2\n")
+    raw = json.dumps(
+        {"edits": [{"file": "wrong/path/utils.py", "search": "y = 2", "replace": "y = 3"}]}
+    )
+    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path), strict=True)
+    assert patch == ""
+    assert len(errors) == 1
+    assert "File not found" in errors[0]
+
+
+def test_strict_mode_rejects_fuzzy_search_match(tmp_path):
+    (tmp_path / "foo.py").write_text("def hello():\n    x = 1\n    y = 2\n    return x + y\n")
+    raw = json.dumps(
+        {
+            "edits": [
+                {
+                    "file": "foo.py",
+                    "search": "def hello():\n    x = 1\n    y = 3\n    return x + y\n",
+                    "replace": "def hello():\n    x = 10\n    y = 20\n    return x + y\n",
+                }
+            ]
+        }
+    )
+    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path), strict=True)
+    assert patch == ""
+    assert len(errors) == 1
+    assert "Search text not found" in errors[0]
+
+
+def test_strict_mode_requires_unique_search_text(tmp_path):
+    (tmp_path / "foo.py").write_text("x = 1\nx = 1\n")
+    raw = json.dumps(
+        {
+            "edits": [
+                {"file": "foo.py", "search": "x = 1", "replace": "x = 2"},
+            ]
+        }
+    )
+    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path), strict=True)
+    assert patch == ""
+    assert len(errors) == 1
+    assert "must match exactly once" in errors[0]

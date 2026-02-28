@@ -38,7 +38,26 @@ def test_collect_source_files_excludes_noise(tmp_path):
         (p / "junk.py").write_text("")
 
     files = collect_source_files(str(tmp_path))
-    assert files == ["good.py"]
+    assert "good.py" in files
+    assert "tests/unit/junk.py" in files
+    assert "test/functional/junk.py" in files
+    assert "build/lib/pkg/junk.py" not in files
+    assert "doc/data/junk.py" not in files
+    assert "docs/api/junk.py" not in files
+
+
+def test_collect_source_files_includes_non_python_text_files(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
+    (tmp_path / "README.md").write_text("# title\n")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "mod.py").write_text("x = 1\n")
+    (tmp_path / "data.bin").write_bytes(b"\x00\x01")
+
+    files = collect_source_files(str(tmp_path))
+    assert "pyproject.toml" in files
+    assert "README.md" in files
+    assert "src/mod.py" in files
+    assert "data.bin" not in files
 
 
 def test_build_indented_tree_basic():

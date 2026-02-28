@@ -23,7 +23,12 @@ class PatchOutput(BaseModel):
     edits: list[FileEdit] = Field(..., description="List of search/replace edits to apply")
 
 
-def edits_to_patch(raw_json: str, repo_root: str = "/testbed") -> tuple[str, list[str]]:
+def edits_to_patch(
+    raw_json: str,
+    repo_root: str = "/testbed",
+    *,
+    strict: bool = False,
+) -> tuple[str, list[str]]:
     """Convert structured edits JSON to a unified diff string.
 
     Returns (patch_string, error_list).
@@ -78,6 +83,8 @@ def edits_to_patch(raw_json: str, repo_root: str = "/testbed") -> tuple[str, lis
         full = root / rel
         if full.is_file():
             return (rel, full)
+        if strict:
+            return None
         parts = rel.split("/")
         for i in range(1, len(parts)):
             candidate = "/".join(parts[i:])
@@ -94,6 +101,8 @@ def edits_to_patch(raw_json: str, repo_root: str = "/testbed") -> tuple[str, lis
 
     def _fuzzy_find(search: str, text: str) -> tuple[int, int] | None:
         """Find the best fuzzy match for search in text. Returns (start, end)."""
+        if strict:
+            return None
         if search in text:
             idx = text.index(search)
             return (idx, idx + len(search))
@@ -146,8 +155,14 @@ def edits_to_patch(raw_json: str, repo_root: str = "/testbed") -> tuple[str, lis
         except Exception:
             errors.append(f"Cannot read: {path}")
             continue
-        if search in original:
+        hit_count = original.count(search)
+        if hit_count == 1:
             modified = original.replace(search, replace, 1)
+        elif hit_count > 1 and strict:
+            errors.append(
+                f"Search text must match exactly once in {rel}, but matched {hit_count} times."
+            )
+            continue
         else:
             span = _fuzzy_find(search, original)
             if span is None:
@@ -200,6 +215,22 @@ class LLMSession:
     s2_solver_mode: str = "best_attempt"
     _m: object | None = field(default=None, repr=False)
     _s2_session: object | None = field(default=None, repr=False)
+
+    def _backend_kwargs(self, *, backend_name: str | None = None) -> dict:
+        name = backend_name or self.backend_name
+        kwargs: dict = {}
+        if name == "ollama":
+            base_url = os.environ.get("OLLAMA_HOST")
+            if base_url:
+                kwargs["base_url"] = base_url
+        elif name == "openai":
+            base_url = os.environ.get("OPENAI_BASE_URL")
+            api_key = os.environ.get("OPENAI_API_KEY")
+            if base_url:
+                kwargs["base_url"] = base_url
+            if api_key:
+                kwargs["api_key"] = api_key
+        return kwargs
 
     def _model_options(self, *, system_prompt: str) -> dict:
         from mellea.backends import ModelOption
@@ -255,6 +286,7 @@ class LLMSession:
             with mellea.start_session(
                 backend_name=self.backend_name,
                 model_id=self.model_id,
+                **self._backend_kwargs(),
             ):
                 return
         except Exception as e:  # pragma: no cover
@@ -288,6 +320,7 @@ class LLMSession:
             backend_name=self.backend_name,
             model_id=self.model_id,
             ctx=ctx,
+            **self._backend_kwargs(),
         ) as m:
             self._m = m
             try:
@@ -296,6 +329,7 @@ class LLMSession:
                         backend_name=self.s2_backend_name,
                         model_id=self.s2_model_id,
                         ctx=ChatContext(),
+                        **self._backend_kwargs(backend_name=self.s2_backend_name),
                     ) as s2:
                         self._s2_session = s2
                         try:

@@ -450,7 +450,7 @@ spec:
               return result
 
           def _patch_test(raw_json):
-              patch, edit_errors = edits_to_patch(raw_json, repo_root=REPO_ROOT)
+              patch, edit_errors = edits_to_patch(raw_json, repo_root=REPO_ROOT, strict=True)
               if edit_errors:
                   for e in edit_errors:
                       print(f"  >> {e}", flush=True)
@@ -497,7 +497,7 @@ spec:
                       requirements=[req],
                   )
               raw = result.value or ""
-              patch, _ = edits_to_patch(raw, repo_root=REPO_ROOT)
+              patch, _ = edits_to_patch(raw, repo_root=REPO_ROOT, strict=True)
               patch = patch or ""
               attempts_used = len(result.sample_generations)
           except Exception as e:

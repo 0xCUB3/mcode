@@ -315,7 +315,7 @@ spec:
           with s.open():
               result = s.generate_patch(repo=repo, problem_statement=problem, hints_text=hints)
 
-          patch, _ = edits_to_patch(result.value or "", repo_root="/work/testbed")
+          patch, _ = edits_to_patch(result.value or "", repo_root="/work/testbed", strict=True)
           patch = patch or ""
           Path('/work/patch.diff').write_text(patch, encoding='utf-8', errors='replace')
           sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest()
