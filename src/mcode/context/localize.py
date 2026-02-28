@@ -135,8 +135,8 @@ def localize(
     problem_statement: str,
     *,
     bm25_top_n: int = 30,
-    max_context_chars: int = 12000,
-    max_file_chars: int = 3000,
+    max_context_chars: int = 20000,
+    max_file_chars: int = 2000,
 ) -> tuple[list[str], str]:
     """BM25-based file localization. No LLM call.
 
