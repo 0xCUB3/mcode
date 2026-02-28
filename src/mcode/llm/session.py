@@ -300,8 +300,15 @@ class LLMSession:
         repo: str,
         problem_statement: str,
         hints_text: str = "",
+        file_paths: list[str] | None = None,
         requirements: list | None = None,
     ):
+        file_constraint = ""
+        if file_paths:
+            file_list = "\n".join(f"  - {f}" for f in file_paths)
+            file_constraint = (
+                f"\n\nYou may ONLY edit these files:\n{file_list}\nDo not edit any other files."
+            )
         system_prompt = (
             "You are an expert software engineer.\n"
             "Given a GitHub issue, a repository, and relevant source files, "
@@ -320,7 +327,7 @@ class LLMSession:
             "- Include enough surrounding context in search "
             "to be unambiguous.\n"
             "- Keep edits minimal: only change what is needed "
-            "to fix the issue."
+            "to fix the issue." + file_constraint
         )
         hints_block = f"\n\nHints:\n{hints_text.strip()}" if hints_text.strip() else ""
         description = f"Repository: {repo}\n\nIssue:\n{problem_statement.strip()}{hints_block}"

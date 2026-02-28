@@ -483,11 +483,9 @@ spec:
           patch = ""
           attempts_used = 0
           try:
+              loc_files, loc_hints = localize_files(REPO_ROOT, problem)
+              print(f"localized files: {loc_files}", flush=True)
               with session.open():
-                  localized, loc_hints = localize_files(
-                      session, REPO_ROOT, problem
-                  )
-                  print(f"localized files: {localized}", flush=True)
                   enriched_hints = hints
                   if loc_hints:
                       enriched_hints = (hints + "\n\n" if hints else "") + loc_hints
@@ -495,6 +493,7 @@ spec:
                       repo=repo,
                       problem_statement=problem,
                       hints_text=enriched_hints,
+                      file_paths=loc_files,
                       requirements=[req],
                   )
               raw = result.value or ""

@@ -5,16 +5,6 @@ import re
 from collections import Counter
 from pathlib import Path
 
-from pydantic import BaseModel, Field
-
-
-class FileLocalization(BaseModel):
-    files: list[str] = Field(
-        ...,
-        description="File paths relative to repo root, most likely to need editing",
-    )
-
-
 _EXCLUDED_DIRS = frozenset(
     {
         ".git",
@@ -141,14 +131,13 @@ def rank_bm25(
 
 
 def localize(
-    session,
     repo_root: str,
     problem_statement: str,
     *,
     bm25_top_n: int = 30,
     max_context_chars: int = 12000,
 ) -> tuple[list[str], str]:
-    """Localize files and build enriched hints.
+    """BM25-based file localization. No LLM call.
 
     Returns (file_paths, hints_text) where hints_text contains the file contents
     ready to pass to generate_patch.
@@ -157,62 +146,14 @@ def localize(
     if not all_files:
         return [], ""
 
-    # BM25 pre-filter
     top_files = rank_bm25(all_files, problem_statement, repo_root, top_n=bm25_top_n)
-    print(f"bm25 top-{bm25_top_n}: {top_files[:10]}...", flush=True)
 
-    # Build indented tree of top candidates for LLM
-    tree = build_indented_tree(top_files)
-
-    # LLM picks files from tree
-    # Also provide a flat list so the model can copy exact paths
-    system_prompt = (
-        "You are an expert software engineer.\n"
-        "Given a repository file tree and an issue description, "
-        "identify which files most likely need to be modified to fix the issue.\n"
-        "Return only file paths from the CANDIDATES list below.\n"
-        "Return 1-5 files, ordered by likelihood (most likely first).\n"
-        "IMPORTANT: Copy paths exactly from the candidates list. "
-        "Do not invent or modify paths."
-    )
-    candidates = "\n".join(top_files)
-    description = (
-        f"Repository structure:\n{tree}\n\n"
-        f"CANDIDATES (copy exact paths from this list):\n{candidates}\n\n"
-        f"Issue:\n{problem_statement.strip()}"
-    )
-    result = session._m.instruct(
-        description,
-        format=FileLocalization,
-        strategy=None,
-        model_options=session._model_options(system_prompt=system_prompt),
-    )
-
-    import json
-
-    try:
-        data = json.loads(result.value)
-        localized = data.get("files", [])
-    except (json.JSONDecodeError, TypeError, AttributeError):
-        localized = []
-
-    # Filter to candidate files only (LLM often picks similar-sounding non-candidates)
+    # Read top files and build hints
     root = Path(repo_root)
-    candidate_set = set(top_files)
-    localized = [f for f in localized if f in candidate_set]
-
-    # Merge LLM picks with BM25 top files for coverage:
-    # LLM picks first, then fill remaining with BM25 (deduped)
-    seen = set(localized)
-    for f in top_files:
-        if f not in seen:
-            localized.append(f)
-            seen.add(f)
-
-    # Read localized files and build hints
+    included: list[str] = []
     parts = []
     chars = 0
-    for rel in localized:
+    for rel in top_files:
         fp = root / rel
         if not fp.is_file():
             continue
@@ -227,9 +168,10 @@ def localize(
             content = content[:budget] + "\n... (truncated)"
         parts.append(f"--- {rel} ---\n{content}")
         chars += len(content) + len(rel) + 10
+        included.append(rel)
 
     hints = ""
     if parts:
         hints = "Relevant source files from the repository:\n" + "\n".join(parts)
 
-    return localized, hints
+    return included, hints

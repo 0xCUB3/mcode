@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import json
-from unittest.mock import MagicMock
-
 from mcode.context.localize import (
     build_indented_tree,
     collect_source_files,
@@ -102,40 +99,21 @@ def test_localize_returns_files_and_hints(tmp_path):
     (tmp_path / "foo.py").write_text("def foo():\n    pass\n")
     (tmp_path / "bar.py").write_text("def bar():\n    pass\n")
 
-    session = MagicMock()
-    mock_result = MagicMock()
-    mock_result.value = json.dumps({"files": ["foo.py"]})
-    session._m.instruct.return_value = mock_result
-
-    files, hints = localize(session, str(tmp_path), "Fix the foo function")
-    # LLM pick comes first, then BM25 fills in remaining
-    assert files[0] == "foo.py"
+    files, hints = localize(str(tmp_path), "Fix the foo function")
+    assert "foo.py" in files
     assert "--- foo.py ---" in hints
     assert "def foo():" in hints
 
 
-def test_localize_falls_back_to_bm25_on_empty_llm(tmp_path):
+def test_localize_includes_multiple_files(tmp_path):
     (tmp_path / "foo.py").write_text("def foo():\n    pass\n")
+    (tmp_path / "bar.py").write_text("def bar():\n    pass\n")
 
-    session = MagicMock()
-    mock_result = MagicMock()
-    mock_result.value = json.dumps({"files": []})
-    session._m.instruct.return_value = mock_result
-
-    files, hints = localize(session, str(tmp_path), "Fix foo")
-    # Falls back to BM25 top files
-    assert len(files) > 0
-    assert "foo.py" in files
+    files, hints = localize(str(tmp_path), "Fix foo and bar")
+    assert len(files) == 2
 
 
-def test_localize_handles_invalid_llm_json(tmp_path):
-    (tmp_path / "foo.py").write_text("x = 1\n")
-
-    session = MagicMock()
-    mock_result = MagicMock()
-    mock_result.value = "not json"
-    session._m.instruct.return_value = mock_result
-
-    files, hints = localize(session, str(tmp_path), "Fix something")
-    # Falls back to BM25
-    assert len(files) > 0
+def test_localize_empty_repo(tmp_path):
+    files, hints = localize(str(tmp_path), "Fix something")
+    assert files == []
+    assert hints == ""
