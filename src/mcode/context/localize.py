@@ -201,9 +201,13 @@ def localize(
     candidate_set = set(top_files)
     localized = [f for f in localized if f in candidate_set]
 
-    if not localized:
-        # Fallback: use top BM25 files
-        localized = top_files[:5]
+    # Merge LLM picks with BM25 top files for coverage:
+    # LLM picks first, then fill remaining with BM25 (deduped)
+    seen = set(localized)
+    for f in top_files:
+        if f not in seen:
+            localized.append(f)
+            seen.add(f)
 
     # Read localized files and build hints
     parts = []

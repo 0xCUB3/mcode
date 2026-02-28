@@ -108,7 +108,8 @@ def test_localize_returns_files_and_hints(tmp_path):
     session._m.instruct.return_value = mock_result
 
     files, hints = localize(session, str(tmp_path), "Fix the foo function")
-    assert files == ["foo.py"]
+    # LLM pick comes first, then BM25 fills in remaining
+    assert files[0] == "foo.py"
     assert "--- foo.py ---" in hints
     assert "def foo():" in hints
 
