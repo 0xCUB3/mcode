@@ -21,19 +21,17 @@ def test_build_file_tree_basic(tmp_path):
     assert "pkg/__init__.py" in paths or "pkg\\__init__.py" in paths
 
 
-def test_build_file_tree_excludes_git_and_pycache(tmp_path):
+def test_build_file_tree_excludes_non_source_dirs(tmp_path):
     (tmp_path / "good.py").write_text("")
-    git_dir = tmp_path / ".git" / "hooks"
-    git_dir.mkdir(parents=True)
-    (git_dir / "pre-commit.py").write_text("")
-    cache_dir = tmp_path / "pkg" / "__pycache__"
-    cache_dir.mkdir(parents=True)
-    (cache_dir / "mod.cpython-311.py").write_text("")
+    for d in [".git/hooks", "__pycache__", "build/lib/pkg", "dist", ".tox/py3", ".eggs"]:
+        p = tmp_path / d
+        p.mkdir(parents=True)
+        (p / "junk.py").write_text("")
 
     tree = build_file_tree(str(tmp_path))
-    assert ".git" not in tree
-    assert "__pycache__" not in tree
     assert "good.py" in tree
+    for excluded in [".git", "__pycache__", "build", "dist", ".tox", ".eggs"]:
+        assert excluded not in tree, f"{excluded} should be excluded"
 
 
 def test_build_file_tree_truncates(tmp_path):

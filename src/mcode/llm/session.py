@@ -169,13 +169,36 @@ def edits_to_patch(raw_json: str, repo_root: str = "/testbed") -> tuple[str, lis
     return "\n".join(patches), errors
 
 
+_EXCLUDED_DIRS = frozenset(
+    {
+        ".git",
+        "__pycache__",
+        ".tox",
+        ".nox",
+        ".eggs",
+        ".mypy_cache",
+        ".pytest_cache",
+        "build",
+        "dist",
+        "node_modules",
+        ".venv",
+        "venv",
+        "env",
+    }
+)
+
+
+def _is_excluded(p) -> bool:
+    return bool(_EXCLUDED_DIRS.intersection(p.parts))
+
+
 def build_file_tree(repo_root: str, *, max_files: int = 500) -> str:
     from pathlib import Path
 
     root = Path(repo_root)
     paths: list[str] = []
     for p in sorted(root.rglob("*.py")):
-        if ".git" in p.parts or "__pycache__" in p.parts:
+        if _is_excluded(p):
             continue
         paths.append(str(p.relative_to(root)))
         if len(paths) >= max_files:
@@ -183,14 +206,7 @@ def build_file_tree(repo_root: str, *, max_files: int = 500) -> str:
     total = len(paths)
     # Count remaining if we hit the cap
     if total >= max_files:
-        remaining = (
-            sum(
-                1
-                for p in root.rglob("*.py")
-                if ".git" not in p.parts and "__pycache__" not in p.parts
-            )
-            - total
-        )
+        remaining = sum(1 for p in root.rglob("*.py") if not _is_excluded(p)) - total
         if remaining > 0:
             paths.append(f"... and {remaining} more files")
     return "\n".join(paths)
