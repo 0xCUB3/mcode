@@ -3,25 +3,26 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
-from mcode.llm.session import LLMSession, build_file_tree
+from mcode.context.localize import (
+    build_indented_tree,
+    collect_source_files,
+    localize,
+    rank_bm25,
+)
 
 
-def test_build_file_tree_basic(tmp_path):
+def test_collect_source_files_basic(tmp_path):
     (tmp_path / "foo.py").write_text("x = 1\n")
     sub = tmp_path / "pkg"
     sub.mkdir()
     (sub / "bar.py").write_text("y = 2\n")
-    (sub / "__init__.py").write_text("")
 
-    tree = build_file_tree(str(tmp_path))
-    lines = tree.strip().splitlines()
-    paths = set(lines)
-    assert "foo.py" in paths
-    assert "pkg/bar.py" in paths or "pkg\\bar.py" in paths
-    assert "pkg/__init__.py" in paths or "pkg\\__init__.py" in paths
+    files = collect_source_files(str(tmp_path))
+    assert "foo.py" in files
+    assert "pkg/bar.py" in files
 
 
-def test_build_file_tree_excludes_non_source_dirs(tmp_path):
+def test_collect_source_files_excludes_noise(tmp_path):
     (tmp_path / "good.py").write_text("")
     noise_dirs = [
         ".git/hooks",
@@ -29,100 +30,111 @@ def test_build_file_tree_excludes_non_source_dirs(tmp_path):
         "build/lib/pkg",
         "dist",
         ".tox/py3",
-        ".eggs",
-        "doc/data/messages",
+        "doc/data",
         "docs/api",
-        "examples/demo",
-        "benchmarks/perf",
-        "tests/functional",
-        "test/unit",
+        "tests/unit",
+        "test/functional",
     ]
     for d in noise_dirs:
         p = tmp_path / d
         p.mkdir(parents=True)
         (p / "junk.py").write_text("")
 
-    tree = build_file_tree(str(tmp_path))
-    assert "good.py" in tree
-    excluded_names = [
-        ".git",
-        "__pycache__",
-        "build",
-        "dist",
-        ".tox",
-        ".eggs",
-        "doc",
-        "docs",
-        "examples",
-        "benchmarks",
-        "tests",
-        "test",
+    files = collect_source_files(str(tmp_path))
+    assert files == ["good.py"]
+
+
+def test_build_indented_tree_basic():
+    paths = [
+        "pylint/checkers/base_checker.py",
+        "pylint/checkers/base/name_checker/checker.py",
+        "pylint/lint/pylinter.py",
     ]
-    for excluded in excluded_names:
-        assert excluded not in tree, f"{excluded} should be excluded"
+    tree = build_indented_tree(paths)
+    assert "pylint/" in tree
+    assert "    checkers/" in tree
+    assert "        base_checker.py" in tree
+    assert "        base/" in tree
+    assert "            name_checker/" in tree
+    assert "                checker.py" in tree
+    assert "    lint/" in tree
+    assert "        pylinter.py" in tree
 
 
-def test_build_file_tree_truncates(tmp_path):
+def test_build_indented_tree_dirs_before_files():
+    paths = ["a/z.py", "a/b/c.py"]
+    tree = build_indented_tree(paths)
+    lines = tree.splitlines()
+    # b/ directory should come before z.py file
+    b_idx = next(i for i, line in enumerate(lines) if "b/" in line)
+    z_idx = next(i for i, line in enumerate(lines) if "z.py" in line)
+    assert b_idx < z_idx
+
+
+def test_rank_bm25_basic(tmp_path):
+    (tmp_path / "name_checker.py").write_text(
+        "class NameChecker:\n    def check_name(self, node):\n        pass\n"
+    )
+    (tmp_path / "base_checker.py").write_text(
+        "class BaseChecker:\n    def run(self):\n        pass\n"
+    )
+    (tmp_path / "pylinter.py").write_text("class PyLinter:\n    def check(self):\n        pass\n")
+
+    paths = ["name_checker.py", "base_checker.py", "pylinter.py"]
+    ranked = rank_bm25(paths, "name checker naming convention", str(tmp_path))
+    # name_checker.py should rank first (has "name" and "checker" in content)
+    assert ranked[0] == "name_checker.py"
+
+
+def test_rank_bm25_empty():
+    assert rank_bm25([], "query", "/nonexistent") == []
+
+
+def test_rank_bm25_respects_top_n(tmp_path):
     for i in range(10):
-        (tmp_path / f"mod_{i}.py").write_text("")
-
-    tree = build_file_tree(str(tmp_path), max_files=5)
-    lines = tree.strip().splitlines()
-    assert any("more files" in line for line in lines)
-
-
-def test_build_file_tree_empty(tmp_path):
-    tree = build_file_tree(str(tmp_path))
-    assert tree == ""
+        (tmp_path / f"mod_{i}.py").write_text(f"x = {i}\n")
+    paths = [f"mod_{i}.py" for i in range(10)]
+    ranked = rank_bm25(paths, "module", str(tmp_path), top_n=3)
+    assert len(ranked) == 3
 
 
-def test_localize_files_returns_paths():
-    session = LLMSession(model_id="test", backend_name="ollama")
+def test_localize_returns_files_and_hints(tmp_path):
+    (tmp_path / "foo.py").write_text("def foo():\n    pass\n")
+    (tmp_path / "bar.py").write_text("def bar():\n    pass\n")
 
+    session = MagicMock()
     mock_result = MagicMock()
-    mock_result.value = json.dumps({"files": ["src/foo.py", "src/bar.py"]})
+    mock_result.value = json.dumps({"files": ["foo.py"]})
+    session._m.instruct.return_value = mock_result
 
-    mock_m = MagicMock()
-    mock_m.instruct.return_value = mock_result
-    session._m = mock_m
-
-    result = session.localize_files(
-        file_tree="src/foo.py\nsrc/bar.py\nsrc/baz.py",
-        problem_statement="Fix the bug in foo",
-    )
-    assert result == ["src/foo.py", "src/bar.py"]
-    mock_m.instruct.assert_called_once()
+    files, hints = localize(session, str(tmp_path), "Fix the foo function")
+    assert files == ["foo.py"]
+    assert "--- foo.py ---" in hints
+    assert "def foo():" in hints
 
 
-def test_localize_files_handles_invalid_json():
-    session = LLMSession(model_id="test", backend_name="ollama")
+def test_localize_falls_back_to_bm25_on_empty_llm(tmp_path):
+    (tmp_path / "foo.py").write_text("def foo():\n    pass\n")
 
-    mock_result = MagicMock()
-    mock_result.value = "not valid json"
-
-    mock_m = MagicMock()
-    mock_m.instruct.return_value = mock_result
-    session._m = mock_m
-
-    result = session.localize_files(
-        file_tree="src/foo.py",
-        problem_statement="Fix the bug",
-    )
-    assert result == []
-
-
-def test_localize_files_handles_empty_files():
-    session = LLMSession(model_id="test", backend_name="ollama")
-
+    session = MagicMock()
     mock_result = MagicMock()
     mock_result.value = json.dumps({"files": []})
+    session._m.instruct.return_value = mock_result
 
-    mock_m = MagicMock()
-    mock_m.instruct.return_value = mock_result
-    session._m = mock_m
+    files, hints = localize(session, str(tmp_path), "Fix foo")
+    # Falls back to BM25 top files
+    assert len(files) > 0
+    assert "foo.py" in files
 
-    result = session.localize_files(
-        file_tree="src/foo.py",
-        problem_statement="Fix the bug",
-    )
-    assert result == []
+
+def test_localize_handles_invalid_llm_json(tmp_path):
+    (tmp_path / "foo.py").write_text("x = 1\n")
+
+    session = MagicMock()
+    mock_result = MagicMock()
+    mock_result.value = "not json"
+    session._m.instruct.return_value = mock_result
+
+    files, hints = localize(session, str(tmp_path), "Fix something")
+    # Falls back to BM25
+    assert len(files) > 0

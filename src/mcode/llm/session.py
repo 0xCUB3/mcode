@@ -9,12 +9,6 @@ from pydantic import BaseModel, Field
 from mcode.bench.tasks import Task
 
 
-class FileLocalization(BaseModel):
-    files: list[str] = Field(
-        ..., description="File paths relative to repo root, most likely to need editing"
-    )
-
-
 class CodeOutput(BaseModel):
     code: str = Field(..., description="Python code only, no markdown.")
 
@@ -167,57 +161,6 @@ def edits_to_patch(raw_json: str, repo_root: str = "/testbed") -> tuple[str, lis
         )
         patches.append("".join(diff))
     return "\n".join(patches), errors
-
-
-_EXCLUDED_DIRS = frozenset(
-    {
-        ".git",
-        "__pycache__",
-        ".tox",
-        ".nox",
-        ".eggs",
-        ".mypy_cache",
-        ".pytest_cache",
-        "build",
-        "dist",
-        "node_modules",
-        ".venv",
-        "venv",
-        "env",
-        "doc",
-        "docs",
-        "examples",
-        "example",
-        "benchmarks",
-        "tests",
-        "test",
-        "testing",
-    }
-)
-
-
-def _is_excluded(p) -> bool:
-    return bool(_EXCLUDED_DIRS.intersection(p.parts))
-
-
-def build_file_tree(repo_root: str, *, max_files: int = 500) -> str:
-    from pathlib import Path
-
-    root = Path(repo_root)
-    paths: list[str] = []
-    for p in sorted(root.rglob("*.py")):
-        if _is_excluded(p):
-            continue
-        paths.append(str(p.relative_to(root)))
-        if len(paths) >= max_files:
-            break
-    total = len(paths)
-    # Count remaining if we hit the cap
-    if total >= max_files:
-        remaining = sum(1 for p in root.rglob("*.py") if not _is_excluded(p)) - total
-        if remaining > 0:
-            paths.append(f"... and {remaining} more files")
-    return "\n".join(paths)
 
 
 @dataclass
@@ -389,29 +332,6 @@ class LLMSession:
             return_sampling_results=True,
             model_options=self._model_options(system_prompt=system_prompt),
         )
-
-    def localize_files(self, *, file_tree: str, problem_statement: str) -> list[str]:
-        system_prompt = (
-            "You are an expert software engineer.\n"
-            "Given a repository file tree and an issue description, "
-            "identify which files most likely need to be modified to fix the issue.\n"
-            "Return only the file paths, ordered by likelihood (most likely first).\n"
-            "Typically 1-5 files are needed."
-        )
-        description = f"File tree:\n{file_tree}\n\nIssue:\n{problem_statement.strip()}"
-        result = self._m.instruct(
-            description,
-            format=FileLocalization,
-            strategy=None,
-            model_options=self._model_options(system_prompt=system_prompt),
-        )
-        import json
-
-        try:
-            data = json.loads(result.value)
-            return data.get("files", [])
-        except (json.JSONDecodeError, TypeError, AttributeError):
-            return []
 
 
 def _code_system_prompt(task: Task) -> str:

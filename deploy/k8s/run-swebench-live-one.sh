@@ -384,7 +384,8 @@ spec:
 
           from mellea.stdlib.requirements.requirement import Requirement, simple_validate
 
-          from mcode.llm.session import LLMSession, build_file_tree, edits_to_patch
+          from mcode.context.localize import localize as localize_files
+          from mcode.llm.session import LLMSession, edits_to_patch
 
           IPC = Path("/work/ipc")
 
@@ -398,42 +399,6 @@ spec:
           model_id = os.environ["MODEL"]
           backend = os.environ.get("BACKEND", "openai")
           loop_budget = int(os.environ.get("LOOP_BUDGET", "3"))
-
-          # ---- file localization via LLM ----
-          def build_enriched_hints(session):
-              file_tree = build_file_tree(REPO_ROOT)
-              if not file_tree:
-                  return hints
-              localized = session.localize_files(
-                  file_tree=file_tree, problem_statement=problem
-              )
-              print(f"localized files: {localized}", flush=True)
-              if not localized:
-                  return hints
-              parts = []
-              chars = 0
-              for rel in localized:
-                  fp = Path(REPO_ROOT) / rel
-                  if not fp.is_file():
-                      continue
-                  try:
-                      content = fp.read_text(encoding="utf-8", errors="replace")
-                  except Exception:
-                      continue
-                  budget = 12000 - chars
-                  if budget <= 0:
-                      break
-                  if len(content) > budget:
-                      content = content[:budget] + "\n... (truncated)"
-                  parts.append(f"--- {rel} ---\n{content}")
-                  chars += len(content) + len(rel) + 10
-              if not parts:
-                  return hints
-              source_context = "\n".join(parts)
-              base = hints
-              if base:
-                  base += "\n\n"
-              return base + "Relevant source files from the repository:\n" + source_context
 
           # ---- pytest parser (matches official SWE-bench-Live evaluation.py) ----
           def parse_pytest(output):
@@ -519,7 +484,13 @@ spec:
           attempts_used = 0
           try:
               with session.open():
-                  enriched_hints = build_enriched_hints(session)
+                  localized, loc_hints = localize_files(
+                      session, REPO_ROOT, problem
+                  )
+                  print(f"localized files: {localized}", flush=True)
+                  enriched_hints = hints
+                  if loc_hints:
+                      enriched_hints = (hints + "\n\n" if hints else "") + loc_hints
                   result = session.generate_patch(
                       repo=repo,
                       problem_statement=problem,
