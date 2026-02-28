@@ -301,7 +301,7 @@ spec:
           import hashlib
           import os
           from pathlib import Path
-          from mcode.llm.session import LLMSession, edits_to_patch
+          from mcode.llm.session import LLMSession, line_edits_to_patch
 
           repo = Path('/inputs/repo.txt').read_text(encoding='utf-8').strip()
           problem = Path('/inputs/problem.txt').read_text(encoding='utf-8', errors='replace')
@@ -315,7 +315,7 @@ spec:
           with s.open():
               result = s.generate_patch(repo=repo, problem_statement=problem, hints_text=hints)
 
-          patch, _ = edits_to_patch(result.value or "", repo_root="/work/testbed", strict=True)
+          patch, _ = line_edits_to_patch(result.value or "", repo_root="/work/testbed")
           patch = patch or ""
           Path('/work/patch.diff').write_text(patch, encoding='utf-8', errors='replace')
           sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest()

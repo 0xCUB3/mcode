@@ -14,7 +14,7 @@ from mcode.bench.results import ResultsDB, RunSummary
 from mcode.bench.tasks import Task, load_benchmark
 from mcode.context.localize import localize as localize_files
 from mcode.execution.sandbox import DockerSandbox
-from mcode.llm.session import LLMSession, edits_to_patch
+from mcode.llm.session import LLMSession, line_edits_to_patch
 
 
 def _default_cache_dir() -> Path:
@@ -268,10 +268,9 @@ class BenchmarkRunner:
 
             def _patch_test(raw_json: str) -> bool | tuple[bool, str]:
                 nonlocal last_detail
-                patch, edit_errors = edits_to_patch(
+                patch, edit_errors = line_edits_to_patch(
                     raw_json,
                     repo_root=str(repo_root),
-                    strict=True,
                 )
                 if not patch and edit_errors:
                     return (False, "Edit errors:\n" + "\n".join(edit_errors))
@@ -330,7 +329,7 @@ class BenchmarkRunner:
                 }
             elapsed_ms = int((time.time() - start) * 1000)
 
-            patch, _ = edits_to_patch(result.value or "", repo_root=str(repo_root), strict=True)
+            patch, _ = line_edits_to_patch(result.value or "", repo_root=str(repo_root))
 
         sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest() if patch else None
 
@@ -356,7 +355,7 @@ class BenchmarkRunner:
 
             def _patch_test(raw_json: str) -> bool | tuple[bool, str]:
                 nonlocal last_detail
-                patch, edit_errors = edits_to_patch(
+                patch, edit_errors = line_edits_to_patch(
                     raw_json,
                     repo_root=str(repo_root),
                     strict=True,
@@ -420,7 +419,7 @@ class BenchmarkRunner:
                 }
             elapsed_ms = int((time.time() - start) * 1000)
 
-            patch, _ = edits_to_patch(result.value or "", repo_root=str(repo_root), strict=True)
+            patch, _ = line_edits_to_patch(result.value or "", repo_root=str(repo_root))
 
         sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest() if patch else None
 

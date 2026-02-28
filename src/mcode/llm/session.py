@@ -23,6 +23,19 @@ class PatchOutput(BaseModel):
     edits: list[FileEdit] = Field(..., description="List of search/replace edits to apply")
 
 
+class LineEdit(BaseModel):
+    file: str = Field(..., description="File path relative to repo root")
+    start_line: int = Field(..., description="First line number to replace (1-indexed, inclusive)")
+    end_line: int = Field(..., description="Last line number to replace (1-indexed, inclusive)")
+    replace: str = Field(
+        ..., description="Replacement text (replaces lines start_line through end_line)"
+    )
+
+
+class LinePatchOutput(BaseModel):
+    edits: list[LineEdit] = Field(..., description="List of line-range edits to apply")
+
+
 def edits_to_patch(
     raw_json: str,
     repo_root: str = "/testbed",
@@ -211,6 +224,80 @@ def edits_to_patch(
     return "\n".join(patches), errors
 
 
+def line_edits_to_patch(raw_json: str, repo_root: str = "/testbed") -> tuple[str, list[str]]:
+    """Convert line-range edits JSON to a unified diff string.
+
+    Returns (patch_string, error_list).
+    """
+    import difflib
+    import json
+    from pathlib import Path
+
+    try:
+        data = json.loads(raw_json)
+    except Exception:
+        return "", []
+    edits = data.get("edits", [])
+    if not edits:
+        return data.get("patch", ""), []
+
+    root = Path(repo_root)
+
+    def _normalize(rel: str) -> str:
+        rel = (rel or "").strip()
+        while rel.startswith("./"):
+            rel = rel[2:]
+        if rel.startswith("/"):
+            rel = rel.lstrip("/")
+        # Strip repo_root-like prefixes the model may hallucinate
+        root_name = root.name
+        for prefix in [f"{root_name}/", "testbed/", "work/testbed/"]:
+            if rel.startswith(prefix):
+                rel = rel[len(prefix) :]
+                break
+        return rel
+
+    patches = []
+    errors = []
+    for edit in edits:
+        path = _normalize(edit.get("file", ""))
+        start = edit.get("start_line", 0)
+        end = edit.get("end_line", 0)
+        replace = edit.get("replace", "")
+
+        full = root / path
+        if not full.is_file():
+            errors.append(f"File not found: {path}")
+            continue
+        try:
+            original = full.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            errors.append(f"Cannot read: {path}")
+            continue
+
+        lines = original.splitlines(keepends=True)
+        if start < 1 or end < start or start > len(lines):
+            errors.append(
+                f"Invalid line range {start}-{end} in {path} (file has {len(lines)} lines)."
+            )
+            continue
+        end = min(end, len(lines))
+
+        replace_lines = replace.splitlines(keepends=True)
+        if replace and not replace.endswith("\n"):
+            replace_lines[-1] += "\n"
+
+        modified = lines[: start - 1] + replace_lines + lines[end:]
+        diff = difflib.unified_diff(
+            lines,
+            modified,
+            fromfile=f"a/{path}",
+            tofile=f"b/{path}",
+        )
+        patches.append("".join(diff))
+    return "\n".join(patches), errors
+
+
 @dataclass
 class LLMSession:
     model_id: str
@@ -379,20 +466,19 @@ class LLMSession:
         system_prompt = (
             "You are an expert software engineer.\n"
             "Given a GitHub issue, a repository, and relevant source files, "
-            "produce SEARCH/REPLACE edits to fix the issue.\n"
-            "Each edit has three fields:\n"
+            "produce line-range edits to fix the issue.\n"
+            "Each edit has four fields:\n"
             '  - "file": path relative to repo root\n'
-            '  - "search": exact existing text to find '
-            "(must match the file exactly)\n"
-            '  - "replace": replacement text\n'
+            '  - "start_line": first line number to replace (1-indexed, inclusive)\n'
+            '  - "end_line": last line number to replace (1-indexed, inclusive)\n'
+            '  - "replace": the new text that replaces those lines\n'
             "Rules:\n"
-            "- Study the source files provided in the hints section "
-            "to understand the codebase.\n"
-            "- Use file paths and code from the provided source files, "
-            "not imagined ones.\n"
-            "- The search text must appear exactly once in the file.\n"
-            "- Include enough surrounding context in search "
-            "to be unambiguous.\n"
+            "- Source files are shown with line numbers (e.g. '42: code here'). "
+            "Use these line numbers for start_line and end_line.\n"
+            "- Use file paths exactly as shown in the hints section.\n"
+            "- To insert new lines without removing existing ones, "
+            "set start_line and end_line to the same line and include "
+            "that original line plus your new lines in replace.\n"
             "- Keep edits minimal: only change what is needed "
             "to fix the issue." + file_constraint
         )
@@ -400,7 +486,7 @@ class LLMSession:
         description = f"Repository: {repo}\n\nIssue:\n{problem_statement.strip()}{hints_block}"
         return self._m.instruct(
             description,
-            format=PatchOutput,
+            format=LinePatchOutput,
             strategy=self._strategy(),
             requirements=requirements or [],
             return_sampling_results=True,

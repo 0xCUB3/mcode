@@ -385,7 +385,7 @@ spec:
           from mellea.stdlib.requirements.requirement import Requirement, simple_validate
 
           from mcode.context.localize import localize as localize_files
-          from mcode.llm.session import LLMSession, edits_to_patch
+          from mcode.llm.session import LLMSession, line_edits_to_patch
 
           IPC = Path("/work/ipc")
 
@@ -450,7 +450,7 @@ spec:
               return result
 
           def _patch_test(raw_json):
-              patch, edit_errors = edits_to_patch(raw_json, repo_root=REPO_ROOT, strict=True)
+              patch, edit_errors = line_edits_to_patch(raw_json, repo_root=REPO_ROOT)
               if edit_errors:
                   for e in edit_errors:
                       print(f"  >> {e}", flush=True)
@@ -497,7 +497,7 @@ spec:
                       requirements=[req],
                   )
               raw = result.value or ""
-              patch, _ = edits_to_patch(raw, repo_root=REPO_ROOT, strict=True)
+              patch, _ = line_edits_to_patch(raw, repo_root=REPO_ROOT)
               patch = patch or ""
               attempts_used = len(result.sample_generations)
           except Exception as e:
