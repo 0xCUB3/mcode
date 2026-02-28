@@ -92,6 +92,41 @@ class SWEbenchLiveSandbox:
                 "Docker is required for SWE-bench Live evaluation; start Docker and retry."
             ) from e
 
+    def repo_context(self, task):
+        """Context manager yielding a temp dir with the repo from the task's Docker image."""
+        import shutil
+        import tempfile
+        from contextlib import contextmanager
+        from pathlib import Path
+
+        import docker
+
+        @contextmanager
+        def _ctx():
+            client = self._get_client()
+            image_name = _ms_image_name(task.instance_id)
+            try:
+                client.images.get(image_name)
+            except docker.errors.ImageNotFound:
+                client.images.pull(image_name)
+
+            dest = tempfile.mkdtemp(prefix="mcode-testbed-")
+            container = client.containers.create(image=image_name, command="true")
+            try:
+                bits, _ = container.get_archive("/testbed")
+                buf = io.BytesIO()
+                for chunk in bits:
+                    buf.write(chunk)
+                buf.seek(0)
+                with tarfile.open(fileobj=buf) as tar:
+                    tar.extractall(dest)
+                yield Path(dest) / "testbed"
+            finally:
+                container.remove(force=True)
+                shutil.rmtree(dest, ignore_errors=True)
+
+        return _ctx()
+
     def evaluate_patch(
         self,
         *,

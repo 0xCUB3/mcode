@@ -128,6 +128,49 @@ class SWEbenchSandbox:
                 ) from e
             raise
 
+    def repo_context(self, instance: dict):
+        """Context manager yielding a temp dir with the repo from the task's Docker image."""
+        import io
+        import shutil
+        import tarfile
+        from contextlib import contextmanager
+
+        import docker
+        from swebench.harness.test_spec.test_spec import make_test_spec
+
+        @contextmanager
+        def _ctx():
+            client = self._get_client()
+            test_spec = make_test_spec(
+                instance,
+                namespace=self.namespace,
+                base_image_tag=self.base_image_tag,
+                env_image_tag=self.env_image_tag,
+                instance_image_tag=self.instance_image_tag,
+                arch=self._effective_arch(),
+            )
+            try:
+                client.images.get(test_spec.instance_image_key)
+            except docker.errors.ImageNotFound:
+                client.images.pull(test_spec.instance_image_key)
+
+            dest = tempfile.mkdtemp(prefix="mcode-testbed-")
+            container = client.containers.create(image=test_spec.instance_image_key, command="true")
+            try:
+                bits, _ = container.get_archive("/testbed")
+                buf = io.BytesIO()
+                for chunk in bits:
+                    buf.write(chunk)
+                buf.seek(0)
+                with tarfile.open(fileobj=buf) as tar:
+                    tar.extractall(dest)
+                yield Path(dest) / "testbed"
+            finally:
+                container.remove(force=True)
+                shutil.rmtree(dest, ignore_errors=True)
+
+        return _ctx()
+
     def evaluate_patch(
         self,
         *,
@@ -208,7 +251,7 @@ class SWEbenchSandbox:
                             "Could not pull the SWE-bench prebuilt image "
                             f"{test_spec.instance_image_key!r}. "
                             "The namespace may not contain images for this instance.\n"
-                            "Try `--namespace none` (or `--namespace \"\"`) to build locally."
+                            'Try `--namespace none` (or `--namespace ""`) to build locally.'
                         ) from e
         else:
             # Build locally (relies on env images produced by `prepare_images`).

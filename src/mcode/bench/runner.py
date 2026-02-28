@@ -263,62 +263,65 @@ class BenchmarkRunner:
         def _truncate(s: str, max_chars: int = 8000) -> str:
             return s if len(s) <= max_chars else s[-max_chars:]
 
-        def _patch_test(raw_json: str) -> bool | tuple[bool, str]:
-            nonlocal last_detail
-            patch, edit_errors = edits_to_patch(raw_json, repo_root="/testbed")
-            if not patch and edit_errors:
-                return (False, "Edit errors:\n" + "\n".join(edit_errors))
-            run = live_sandbox.evaluate_patch(
-                task=task,
-                patch=patch,
-                run_id=f"mcode-{run_id}",
-                timeout_s=self.config.timeout_s,
-            )
-            last_detail = {
-                "exit_code": None,
-                "timed_out": run.timed_out,
-                "stdout": _truncate(run.test_output),
-                "stderr": json.dumps(run.report, sort_keys=True),
-                "error": None if run.resolved else "Not resolved",
-            }
-            if run.resolved and not run.timed_out:
-                return True
-            feedback = _truncate(run.test_output, max_chars=4000) or "Not resolved"
-            if edit_errors:
-                feedback = "Edit errors:\n" + "\n".join(edit_errors) + "\n" + feedback
-            return (False, feedback)
+        with live_sandbox.repo_context(task) as repo_root:
 
-        req = Requirement(
-            validation_fn=simple_validate(_patch_test),
-            check_only=True,
-        )
-        try:
-            with self.llm.open():
-                result = self.llm.generate_patch(
-                    repo=task.repo,
-                    problem_statement=task.problem_statement,
-                    hints_text=task.hints_text,
-                    requirements=[req],
+            def _patch_test(raw_json: str) -> bool | tuple[bool, str]:
+                nonlocal last_detail
+                patch, edit_errors = edits_to_patch(raw_json, repo_root=str(repo_root))
+                if not patch and edit_errors:
+                    return (False, "Edit errors:\n" + "\n".join(edit_errors))
+                run = live_sandbox.evaluate_patch(
+                    task=task,
+                    patch=patch,
+                    run_id=f"mcode-{run_id}",
+                    timeout_s=self.config.timeout_s,
                 )
-        except Exception as e:
-            elapsed_ms = int((time.time() - start) * 1000)
-            tb = traceback.format_exc()
-            return {
-                "task_id": task.instance_id,
-                "passed": False,
-                "attempts_used": 0,
-                "time_ms": elapsed_ms,
-                "exit_code": None,
-                "timed_out": False,
-                "stdout": None,
-                "stderr": (_truncate(tb, max_chars=8000) if tb else None),
-                "error": f"{type(e).__name__}: {e}",
-                "code_sha256": None,
-                **last_detail,
-            }
-        elapsed_ms = int((time.time() - start) * 1000)
+                last_detail = {
+                    "exit_code": None,
+                    "timed_out": run.timed_out,
+                    "stdout": _truncate(run.test_output),
+                    "stderr": json.dumps(run.report, sort_keys=True),
+                    "error": None if run.resolved else "Not resolved",
+                }
+                if run.resolved and not run.timed_out:
+                    return True
+                feedback = _truncate(run.test_output, max_chars=4000) or "Not resolved"
+                if edit_errors:
+                    feedback = "Edit errors:\n" + "\n".join(edit_errors) + "\n" + feedback
+                return (False, feedback)
 
-        patch, _ = edits_to_patch(result.value or "", repo_root="/testbed")
+            req = Requirement(
+                validation_fn=simple_validate(_patch_test),
+                check_only=True,
+            )
+            try:
+                with self.llm.open():
+                    result = self.llm.generate_patch(
+                        repo=task.repo,
+                        problem_statement=task.problem_statement,
+                        hints_text=task.hints_text,
+                        requirements=[req],
+                    )
+            except Exception as e:
+                elapsed_ms = int((time.time() - start) * 1000)
+                tb = traceback.format_exc()
+                return {
+                    "task_id": task.instance_id,
+                    "passed": False,
+                    "attempts_used": 0,
+                    "time_ms": elapsed_ms,
+                    "exit_code": None,
+                    "timed_out": False,
+                    "stdout": None,
+                    "stderr": (_truncate(tb, max_chars=8000) if tb else None),
+                    "error": f"{type(e).__name__}: {e}",
+                    "code_sha256": None,
+                    **last_detail,
+                }
+            elapsed_ms = int((time.time() - start) * 1000)
+
+            patch, _ = edits_to_patch(result.value or "", repo_root=str(repo_root))
+
         sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest() if patch else None
 
         return {
@@ -339,64 +342,67 @@ class BenchmarkRunner:
         def _truncate(s: str, max_chars: int = 8000) -> str:
             return s if len(s) <= max_chars else s[-max_chars:]
 
-        def _patch_test(raw_json: str) -> bool | tuple[bool, str]:
-            nonlocal last_detail
-            patch, edit_errors = edits_to_patch(raw_json, repo_root="/testbed")
-            if not patch and edit_errors:
-                return (False, "Edit errors:\n" + "\n".join(edit_errors))
-            run = swe_sandbox.evaluate_patch(
-                instance=task.raw_instance,
-                model_id=self.config.model_id,
-                patch=patch,
-                run_id=f"mcode-{run_id}",
-                timeout_s=self.config.timeout_s,
-            )
-            inst_report = run.report.get(task.instance_id, {})
-            last_detail = {
-                "exit_code": None,
-                "timed_out": run.timed_out,
-                "stdout": _truncate(run.test_output),
-                "stderr": json.dumps(inst_report, sort_keys=True),
-                "error": None if run.resolved else "Not resolved",
-            }
-            if run.resolved and not run.timed_out:
-                return True
-            feedback = _truncate(run.test_output, max_chars=4000) or "Not resolved"
-            if edit_errors:
-                feedback = "Edit errors:\n" + "\n".join(edit_errors) + "\n" + feedback
-            return (False, feedback)
+        with swe_sandbox.repo_context(task.raw_instance) as repo_root:
 
-        req = Requirement(
-            validation_fn=simple_validate(_patch_test),
-            check_only=True,
-        )
-        try:
-            with self.llm.open():
-                result = self.llm.generate_patch(
-                    repo=task.repo,
-                    problem_statement=task.problem_statement,
-                    hints_text=task.hints_text,
-                    requirements=[req],
+            def _patch_test(raw_json: str) -> bool | tuple[bool, str]:
+                nonlocal last_detail
+                patch, edit_errors = edits_to_patch(raw_json, repo_root=str(repo_root))
+                if not patch and edit_errors:
+                    return (False, "Edit errors:\n" + "\n".join(edit_errors))
+                run = swe_sandbox.evaluate_patch(
+                    instance=task.raw_instance,
+                    model_id=self.config.model_id,
+                    patch=patch,
+                    run_id=f"mcode-{run_id}",
+                    timeout_s=self.config.timeout_s,
                 )
-        except Exception as e:
-            elapsed_ms = int((time.time() - start) * 1000)
-            tb = traceback.format_exc()
-            return {
-                "task_id": task.instance_id,
-                "passed": False,
-                "attempts_used": 0,
-                "time_ms": elapsed_ms,
-                "exit_code": None,
-                "timed_out": False,
-                "stdout": None,
-                "stderr": _truncate(tb, max_chars=8000) if tb else None,
-                "error": f"{type(e).__name__}: {e}",
-                "code_sha256": None,
-                **last_detail,
-            }
-        elapsed_ms = int((time.time() - start) * 1000)
+                inst_report = run.report.get(task.instance_id, {})
+                last_detail = {
+                    "exit_code": None,
+                    "timed_out": run.timed_out,
+                    "stdout": _truncate(run.test_output),
+                    "stderr": json.dumps(inst_report, sort_keys=True),
+                    "error": None if run.resolved else "Not resolved",
+                }
+                if run.resolved and not run.timed_out:
+                    return True
+                feedback = _truncate(run.test_output, max_chars=4000) or "Not resolved"
+                if edit_errors:
+                    feedback = "Edit errors:\n" + "\n".join(edit_errors) + "\n" + feedback
+                return (False, feedback)
 
-        patch, _ = edits_to_patch(result.value or "", repo_root="/testbed")
+            req = Requirement(
+                validation_fn=simple_validate(_patch_test),
+                check_only=True,
+            )
+            try:
+                with self.llm.open():
+                    result = self.llm.generate_patch(
+                        repo=task.repo,
+                        problem_statement=task.problem_statement,
+                        hints_text=task.hints_text,
+                        requirements=[req],
+                    )
+            except Exception as e:
+                elapsed_ms = int((time.time() - start) * 1000)
+                tb = traceback.format_exc()
+                return {
+                    "task_id": task.instance_id,
+                    "passed": False,
+                    "attempts_used": 0,
+                    "time_ms": elapsed_ms,
+                    "exit_code": None,
+                    "timed_out": False,
+                    "stdout": None,
+                    "stderr": _truncate(tb, max_chars=8000) if tb else None,
+                    "error": f"{type(e).__name__}: {e}",
+                    "code_sha256": None,
+                    **last_detail,
+                }
+            elapsed_ms = int((time.time() - start) * 1000)
+
+            patch, _ = edits_to_patch(result.value or "", repo_root=str(repo_root))
+
         sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest() if patch else None
 
         return {

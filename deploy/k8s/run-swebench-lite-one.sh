@@ -271,6 +271,12 @@ spec:
       configMap:
         name: ${cm_name}
   initContainers:
+    - name: copy-testbed
+      image: ${eval_image}
+      command: ["cp", "-a", "/testbed", "/work/testbed"]
+      volumeMounts:
+        - name: work
+          mountPath: /work
     - name: gen-patch
       image: ${mcode_image}
       env:
@@ -292,9 +298,10 @@ spec:
         - |
           set -euo pipefail
           python - <<'PY'
+          import hashlib
           import os
           from pathlib import Path
-          from mcode.llm.session import LLMSession
+          from mcode.llm.session import LLMSession, edits_to_patch
 
           repo = Path('/inputs/repo.txt').read_text(encoding='utf-8').strip()
           problem = Path('/inputs/problem.txt').read_text(encoding='utf-8', errors='replace')
@@ -306,10 +313,11 @@ spec:
           s = LLMSession(model_id=model_id, backend_name=backend)
           s.check_available()
           with s.open():
-              patch = s.generate_patch(repo=repo, problem_statement=problem, hints_text=hints)
+              result = s.generate_patch(repo=repo, problem_statement=problem, hints_text=hints)
 
+          patch, _ = edits_to_patch(result.value or "", repo_root="/work/testbed")
+          patch = patch or ""
           Path('/work/patch.diff').write_text(patch, encoding='utf-8', errors='replace')
-          import hashlib
           sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest()
           print(f'generated patch chars={len(patch)}')
           print(f'patch_sha256={sha}')

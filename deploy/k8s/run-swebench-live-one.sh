@@ -384,7 +384,7 @@ spec:
 
           from mellea.stdlib.requirements.requirement import Requirement, simple_validate
 
-          from mcode.llm.session import LLMSession
+          from mcode.llm.session import LLMSession, edits_to_patch
 
           IPC = Path("/work/ipc")
 
@@ -431,106 +431,7 @@ spec:
               p2p_failed = [t for t in p2p if results.get(t, "MISSING") in ("FAILED", "ERROR")]
               return f2p_ok and len(p2p_failed) == 0
 
-          # ---- convert structured edits to unified diff ----
-          def edits_to_patch(raw_json, repo_root="/testbed"):
-              import difflib
-              try:
-                  data = json.loads(raw_json)
-              except Exception:
-                  return "", []
-              edits = data.get("edits", [])
-              if not edits:
-                  return data.get("patch", ""), []  # fallback for raw diff
-
-              root = Path(repo_root)
-              file_index = [None]  # mutable container for closure
-
-              def _resolve_path(rel):
-                  full = root / rel
-                  if full.is_file():
-                      return (rel, full)
-                  parts = rel.split("/")
-                  for i in range(1, len(parts)):
-                      candidate = "/".join(parts[i:])
-                      full = root / candidate
-                      if full.is_file():
-                          return (candidate, full)
-                  if file_index[0] is None:
-                      file_index[0] = {}
-                      for p in root.rglob("*.py"):
-                          if ".git" not in p.parts and "__pycache__" not in p.parts:
-                              file_index[0][p.name] = p
-                  basename = parts[-1] if parts else ""
-                  if basename in file_index[0]:
-                      matched = file_index[0][basename]
-                      return (str(matched.relative_to(root)), matched)
-                  return None
-
-              def _fuzzy_find(search, text):
-                  if search in text:
-                      idx = text.index(search)
-                      return (idx, idx + len(search))
-                  sm = difflib.SequenceMatcher(None, search, text, autojunk=False)
-                  best = sm.find_longest_match(0, len(search), 0, len(text))
-                  if best.size == 0:
-                      return None
-                  s_lines = search.splitlines(keepends=True)
-                  t_lines = text.splitlines(keepends=True)
-                  n = len(s_lines)
-                  best_ratio = 0.0
-                  best_span = None
-                  for start in range(max(0, best.b // 40 - n), min(len(t_lines), best.b // 40 + n + 1)):
-                      end = start + n
-                      if end > len(t_lines):
-                          break
-                      candidate = "".join(t_lines[start:end])
-                      ratio = difflib.SequenceMatcher(
-                          None, search, candidate, autojunk=False
-                      ).ratio()
-                      if ratio > best_ratio:
-                          best_ratio = ratio
-                          best_span = (start, end)
-                  if best_span is None or best_ratio < 0.6:
-                      return None
-                  char_start = sum(len(l) for l in t_lines[:best_span[0]])
-                  char_end = sum(len(l) for l in t_lines[:best_span[1]])
-                  return (char_start, char_end)
-
-              patches = []
-              errors = []
-              for edit in edits:
-                  fpath = edit.get("file", "")
-                  search = edit.get("search", "")
-                  replace = edit.get("replace", "")
-                  resolved = _resolve_path(fpath)
-                  if resolved is None:
-                      errors.append(f"File not found: {fpath}")
-                      continue
-                  rel, full = resolved
-                  try:
-                      original = full.read_text(encoding="utf-8", errors="replace")
-                  except Exception:
-                      errors.append(f"Cannot read: {fpath}")
-                      continue
-                  if search in original:
-                      modified = original.replace(search, replace, 1)
-                  else:
-                      span = _fuzzy_find(search, original)
-                      if span is None:
-                          errors.append(
-                              f"Search text not found in {rel} "
-                              f"(first 60 chars: {search[:60]!r})"
-                          )
-                          continue
-                      modified = original[:span[0]] + replace + original[span[1]:]
-                  diff = difflib.unified_diff(
-                      original.splitlines(keepends=True),
-                      modified.splitlines(keepends=True),
-                      fromfile=f"a/{rel}",
-                      tofile=f"b/{rel}",
-                  )
-                  patches.append("".join(diff))
-              return "\n".join(patches), errors
+          REPO_ROOT = "/work/testbed"
 
           # ---- IPC: send patch to testbed sidecar, get test results back ----
 
@@ -558,7 +459,10 @@ spec:
               return result
 
           def _patch_test(raw_json):
-              patch, edit_errors = edits_to_patch(raw_json)
+              patch, edit_errors = edits_to_patch(raw_json, repo_root=REPO_ROOT)
+              if edit_errors:
+                  for e in edit_errors:
+                      print(f"  >> {e}", flush=True)
               if not patch and edit_errors:
                   return (False, "Edit errors:\n" + "\n".join(edit_errors))
               test_output = run_test_via_sidecar(patch or "")
@@ -596,7 +500,7 @@ spec:
                       requirements=[req],
                   )
               raw = result.value or ""
-              patch, _ = edits_to_patch(raw)
+              patch, _ = edits_to_patch(raw, repo_root=REPO_ROOT)
               patch = patch or ""
               attempts_used = len(result.sample_generations)
           except Exception as e:
@@ -643,6 +547,9 @@ spec:
         - |
           IPC=/work/ipc
           mkdir -p $IPC
+
+          # Copy testbed to shared volume so agent can read source files
+          cp -a /testbed /work/testbed
 
           # Build source context for the agent
           cd /testbed

@@ -42,26 +42,49 @@ def edits_to_patch(raw_json: str, repo_root: str = "/testbed") -> tuple[str, lis
 
     root = Path(repo_root)
     file_index: dict[str, Path] | None = None
+    all_paths: list[str] | None = None
+
+    def _build_index() -> None:
+        nonlocal file_index, all_paths
+        if file_index is not None:
+            return
+        file_index = {}
+        all_paths = []
+        for p in root.rglob("*.py"):
+            if ".git" not in p.parts and "__pycache__" not in p.parts:
+                file_index[p.name] = p
+                all_paths.append(str(p.relative_to(root)))
+
+    def _suggest_paths(rel: str) -> list[str]:
+        """Find real paths similar to a hallucinated one."""
+        _build_index()
+        assert all_paths is not None
+        keywords = set()
+        for part in rel.replace("/", " ").replace(".py", "").replace("_", " ").split():
+            if len(part) > 3:
+                keywords.add(part.lower())
+        scored = []
+        for p in all_paths:
+            p_lower = p.lower()
+            hits = sum(1 for kw in keywords if kw in p_lower)
+            if hits > 0:
+                scored.append((hits, p))
+        scored.sort(key=lambda x: -x[0])
+        return [p for _, p in scored[:5]]
 
     def _resolve_path(rel: str) -> tuple[str, Path] | None:
         """Resolve a model-provided path, with fuzzy fallback."""
         full = root / rel
         if full.is_file():
             return (rel, full)
-        # Try stripping bogus prefixes (e.g. "pylint/src/pylint/x" -> "pylint/x")
         parts = rel.split("/")
         for i in range(1, len(parts)):
             candidate = "/".join(parts[i:])
             full = root / candidate
             if full.is_file():
                 return (candidate, full)
-        # Fallback: match by basename against repo file index
-        nonlocal file_index
-        if file_index is None:
-            file_index = {}
-            for p in root.rglob("*.py"):
-                if ".git" not in p.parts and "__pycache__" not in p.parts:
-                    file_index[p.name] = p
+        _build_index()
+        assert file_index is not None
         basename = parts[-1] if parts else ""
         if basename in file_index:
             matched = file_index[basename]
@@ -110,7 +133,11 @@ def edits_to_patch(raw_json: str, repo_root: str = "/testbed") -> tuple[str, lis
         replace = edit.get("replace", "")
         resolved = _resolve_path(path)
         if resolved is None:
-            errors.append(f"File not found: {path}")
+            suggestions = _suggest_paths(path)
+            hint = ""
+            if suggestions:
+                hint = " Did you mean: " + ", ".join(suggestions)
+            errors.append(f"File not found: {path}.{hint}")
             continue
         rel, full = resolved
         try:

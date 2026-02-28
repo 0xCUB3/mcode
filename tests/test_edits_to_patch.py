@@ -192,6 +192,48 @@ def test_error_feedback_includes_file_path(tmp_path):
     assert "nonexistent/path/foo.py" in errors[0]
 
 
+def test_suggest_paths_on_missing_file(tmp_path):
+    sub = tmp_path / "pylint" / "checkers"
+    sub.mkdir(parents=True)
+    (sub / "base_checker.py").write_text("x = 1\n")
+    raw = json.dumps(
+        {
+            "edits": [
+                {
+                    "file": "src/pylint/checkers/base_checker.py",
+                    "search": "x = 1",
+                    "replace": "x = 2",
+                }
+            ]
+        }
+    )
+    patch, errors = edits_to_patch(raw, repo_root=str(tmp_path))
+    # The fuzzy prefix-strip resolves this, so it should succeed
+    assert "--- a/pylint/checkers/base_checker.py" in patch
+    assert errors == []
+
+
+def test_suggest_paths_unresolvable_with_keywords(tmp_path):
+    sub = tmp_path / "pylint" / "checkers"
+    sub.mkdir(parents=True)
+    (sub / "base_checker.py").write_text("x = 1\n")
+    (sub / "messages_handler.py").write_text("y = 2\n")
+    raw = json.dumps(
+        {
+            "edits": [
+                {
+                    "file": "wrong/path/messages_checker.py",
+                    "search": "x = 1",
+                    "replace": "x = 2",
+                }
+            ]
+        }
+    )
+    _, errors = edits_to_patch(raw, repo_root=str(tmp_path))
+    assert len(errors) == 1
+    assert "Did you mean" in errors[0]
+
+
 def test_partial_success_returns_both_patch_and_errors(tmp_path):
     (tmp_path / "good.py").write_text("x = 1\n")
     raw = json.dumps(
