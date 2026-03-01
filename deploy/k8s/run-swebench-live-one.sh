@@ -382,10 +382,8 @@ spec:
           import time
           from pathlib import Path
 
-          from mellea.stdlib.requirements.requirement import Requirement, simple_validate
-
           from mcode.context.localize import localize as localize_files
-          from mcode.llm.session import LLMSession, line_edits_to_patch
+          from mcode.llm.session import LLMSession
 
           IPC = Path("/work/ipc")
 
@@ -426,52 +424,19 @@ spec:
 
           # ---- IPC: send patch to testbed sidecar, get test results back ----
 
-          def truncate(s, max_chars=4000):
-              return s if len(s) <= max_chars else s[-max_chars:]
-
           def run_test_via_sidecar(patch):
-              """Write patch to shared volume, signal testbed, wait for result."""
-              # Clean previous signals
               for f in ["test-result.txt", "test-done"]:
                   (IPC / f).unlink(missing_ok=True)
-
               (IPC / "patch.diff").write_text(patch or "", encoding="utf-8")
               (IPC / "test-run").touch()
-
-              # Wait for testbed to finish
               deadline = time.time() + 660
               while not (IPC / "test-done").exists():
                   if time.time() > deadline:
                       return "TIMEOUT: testbed sidecar did not respond"
                   time.sleep(0.5)
-
               result = (IPC / "test-result.txt").read_text(encoding="utf-8", errors="replace")
               (IPC / "test-done").unlink(missing_ok=True)
               return result
-
-          def _patch_test(raw_json):
-              patch, edit_errors = line_edits_to_patch(raw_json, repo_root=REPO_ROOT)
-              if edit_errors:
-                  for e in edit_errors:
-                      print(f"  >> {e}", flush=True)
-              if not patch and edit_errors:
-                  return (False, "Edit errors:\n" + "\n".join(edit_errors))
-              test_output = run_test_via_sidecar(patch or "")
-
-              if check_resolved(test_output):
-                  print(">>>>> Applied Patch")
-                  print(test_output)
-                  return True
-
-              feedback = truncate(test_output)
-              if edit_errors:
-                  feedback = "Edit errors:\n" + "\n".join(edit_errors) + "\n" + feedback
-              return (False, feedback)
-
-          req = Requirement(
-              validation_fn=simple_validate(_patch_test),
-              check_only=True,
-          )
 
           session = LLMSession(
               model_id=model_id,
@@ -481,28 +446,17 @@ spec:
           session.check_available()
 
           patch = ""
-          attempts_used = 0
           try:
               with session.open():
-                  loc_files, loc_hints = localize_files(
-                      REPO_ROOT, problem, llm_session=session,
-                  )
+                  loc_files, _ = localize_files(REPO_ROOT, problem)
                   print(f"localized files: {loc_files}", flush=True)
-                  enriched_hints = hints
-                  if loc_hints:
-                      enriched_hints = (hints + "\n\n" if hints else "") + loc_hints
-                  result = session.generate_patch(
+                  patch = session.generate_patch(
                       repo=repo,
                       problem_statement=problem,
-                      hints_text=enriched_hints,
+                      hints_text=hints or "",
                       file_paths=loc_files,
-                      requirements=[req],
                       repo_root=REPO_ROOT,
                   )
-              raw = result.value or ""
-              patch, _ = line_edits_to_patch(raw, repo_root=REPO_ROOT)
-              patch = patch or ""
-              attempts_used = len(result.sample_generations)
           except Exception as e:
               print(f"ERROR: {e}", file=sys.stderr)
               import traceback
@@ -513,14 +467,11 @@ spec:
           sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest()
           print(f"generated patch chars={len(patch)}")
           print(f"patch_sha256={sha}")
-          print(f"attempts_used={attempts_used}")
+          print(f"attempts_used=1")
 
           # Final eval via sidecar for log parsing
           if patch.strip():
               final_output = run_test_via_sidecar(patch)
-              if ">>>>> Applied Patch" not in final_output:
-                  # The sidecar prints this; check
-                  pass
               print(final_output)
 
           # Signal testbed sidecar to exit
