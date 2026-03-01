@@ -5,7 +5,7 @@ import subprocess
 from unittest.mock import MagicMock, patch
 
 
-def test_generate_patch_calls_react(tmp_path):
+def test_generate_patch_calls_ollama(tmp_path):
     env = {
         **os.environ,
         "GIT_AUTHOR_NAME": "t",
@@ -28,17 +28,32 @@ def test_generate_patch_calls_react(tmp_path):
     session = LLMSession(model_id="test", backend_name="ollama")
 
     mock_mellea = MagicMock()
+    mock_mellea.backend._base_url = None
+    mock_mellea.backend._get_ollama_model_id.return_value = "test"
     session._m = mock_mellea
 
-    mock_thunk = MagicMock()
-    mock_thunk.value = "done"
+    # Model calls final_answer on first turn
+    mock_tc = MagicMock()
+    mock_tc.function.name = "final_answer"
+    mock_tc.function.arguments = {"summary": "done"}
 
-    with patch("mcode.llm.session.asyncio") as mock_asyncio:
-        mock_asyncio.run.return_value = (mock_thunk, MagicMock())
+    mock_resp = MagicMock()
+    mock_resp.message.tool_calls = [mock_tc]
+    mock_resp.message.content = ""
+    mock_resp.message.model_dump.return_value = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [],
+    }
+
+    mock_client = MagicMock()
+    mock_client.chat.return_value = mock_resp
+
+    with patch("ollama.Client", return_value=mock_client):
         result = session.generate_patch(
             repo="test/repo",
             problem_statement="Fix the bug",
             repo_root=str(tmp_path),
         )
-    mock_asyncio.run.assert_called_once()
+    mock_client.chat.assert_called_once()
     assert isinstance(result, str)

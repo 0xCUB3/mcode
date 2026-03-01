@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -173,14 +172,39 @@ class LLMSession:
         file_paths: list[str] | None = None,
         repo_root: str,
     ) -> str:
-        from mellea.backends.tools import MelleaTool
-        from mellea.stdlib.context import ChatContext
-        from mellea.stdlib.frameworks.react import react
+        import ollama as _ollama
+        from mellea.backends.tools import convert_function_to_ollama_tool
 
         from mcode.agent.tools import get_diff, make_tools
 
         tool_fns = make_tools(repo_root)
-        tools = [MelleaTool.from_callable(fn, name) for name, fn in tool_fns.items()]
+
+        # Build ollama tool schemas from our functions
+        tool_schemas = []
+        for name, fn in tool_fns.items():
+            schema = convert_function_to_ollama_tool(fn, name).model_dump()
+            tool_schemas.append(schema)
+
+        # Add final_answer tool
+        tool_schemas.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": "final_answer",
+                    "description": "Call when you are done fixing the bug.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "summary": {
+                                "type": "string",
+                                "description": "Brief summary of changes made",
+                            }
+                        },
+                        "required": ["summary"],
+                    },
+                },
+            }
+        )
 
         file_hint = ""
         if file_paths:
@@ -189,7 +213,13 @@ class LLMSession:
             )
         hints_block = f"\n\nAdditional context:\n{hints_text.strip()}" if hints_text.strip() else ""
 
-        goal = (
+        system_prompt = (
+            "You are an expert software engineer fixing a bug in an "
+            "open-source repository. Use the provided tools to explore "
+            "the codebase and apply minimal, targeted fixes."
+        )
+
+        user_msg = (
             f"You are fixing a bug in {repo}.\n\n"
             f"Issue:\n{problem_statement.strip()}"
             f"{file_hint}{hints_block}\n\n"
@@ -200,35 +230,53 @@ class LLMSession:
             "When done, call final_answer with a summary."
         )
 
-        system_prompt = (
-            "You are an expert software engineer fixing a bug in an "
-            "open-source repository. Use the provided tools to explore "
-            "the codebase and apply minimal, targeted fixes."
-        )
+        messages: list[dict] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_msg},
+        ]
 
-        ctx = ChatContext()
+        ctx_window = int(os.environ.get("MCODE_CONTEXT_WINDOW", "32768"))
         budget = max(1, self.loop_budget) * 5
+        client = _ollama.Client(host=self._m.backend._base_url)
 
-        try:
-            asyncio.run(
-                react(
-                    goal=goal,
-                    context=ctx,
-                    backend=self._m.backend,
-                    tools=tools,
-                    loop_budget=budget,
-                    model_options=self._model_options(system_prompt=system_prompt),
+        for turn in range(1, budget + 1):
+            print(f"  [react] turn {turn}/{budget}", flush=True)
+            try:
+                resp = client.chat(
+                    model=self._m.backend._get_ollama_model_id(),
+                    messages=messages,
+                    tools=tool_schemas,
+                    options={"num_ctx": ctx_window},
                 )
-            )
-        except RuntimeError as e:
-            if "could not complete react loop" in str(e):
-                pass
-            else:
-                raise
-        except Exception:
-            # Ollama/backend errors (malformed tool calls, timeouts, etc.)
-            # Return whatever diff we have so far.
-            pass
+            except Exception as e:
+                print(f"  [react] ollama error: {e}", flush=True)
+                break
+
+            msg = resp.message
+            messages.append(msg.model_dump())
+
+            if not msg.tool_calls:
+                print(f"  [react] no tool call, model said: {str(msg.content)[:120]}", flush=True)
+                continue
+
+            for tc in msg.tool_calls:
+                name = tc.function.name
+                args = tc.function.arguments
+
+                if name == "final_answer":
+                    print(f"  [react] final_answer: {args}", flush=True)
+                    return get_diff(repo_root)
+
+                fn = tool_fns.get(name)
+                if fn is None:
+                    result = f"Error: unknown tool {name}"
+                else:
+                    try:
+                        result = fn(**args)
+                    except Exception as e:
+                        result = f"Error: {e}"
+
+                messages.append({"role": "tool", "content": str(result)})
 
         return get_diff(repo_root)
 

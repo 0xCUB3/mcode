@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import signal
 import subprocess
 from pathlib import Path
 
@@ -30,6 +31,23 @@ _SOURCE_SUFFIXES = frozenset(
 )
 
 
+def _safe_search(pattern: str, line: str) -> bool:
+    """Regex search with a 2-second timeout to prevent catastrophic backtracking."""
+
+    def _timeout_handler(signum, frame):
+        raise TimeoutError
+
+    old = signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(2)
+    try:
+        return bool(re.search(pattern, line, re.IGNORECASE))
+    except TimeoutError:
+        return False
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
+
+
 def make_tools(repo_root: str) -> dict[str, callable]:
     root = Path(repo_root)
 
@@ -39,29 +57,31 @@ def make_tools(repo_root: str) -> dict[str, callable]:
         Args:
             query: regex pattern or literal string to search for
         """
+        print(f"  [tool] search_code({query!r})", flush=True)
         matches: list[str] = []
         try:
-            for p in sorted(root.rglob("*")):
-                if not p.is_file():
-                    continue
-                if _SKIP_DIRS.intersection(p.parts):
-                    continue
-                if p.suffix not in _SOURCE_SUFFIXES:
-                    continue
-                try:
-                    text = p.read_text(encoding="utf-8", errors="replace")
-                except Exception:
-                    continue
-                for i, line in enumerate(text.splitlines(), 1):
-                    if re.search(query, line, re.IGNORECASE):
-                        rel = str(p.relative_to(root))
-                        matches.append(f"{rel}:{i}: {line.strip()}")
-                        if len(matches) >= 20:
-                            break
-                if len(matches) >= 20:
-                    break
+            re.compile(query)
         except re.error:
-            return search_code(re.escape(query))
+            query = re.escape(query)
+        for p in sorted(root.rglob("*")):
+            if not p.is_file():
+                continue
+            if _SKIP_DIRS.intersection(p.parts):
+                continue
+            if p.suffix not in _SOURCE_SUFFIXES:
+                continue
+            try:
+                text = p.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            for i, line in enumerate(text.splitlines(), 1):
+                if _safe_search(query, line):
+                    rel = str(p.relative_to(root))
+                    matches.append(f"{rel}:{i}: {line.strip()}")
+                    if len(matches) >= 20:
+                        break
+            if len(matches) >= 20:
+                break
         if not matches:
             return "No matches found."
         return "\n".join(matches)
@@ -74,6 +94,7 @@ def make_tools(repo_root: str) -> dict[str, callable]:
             start_line: first line to read (1-indexed)
             end_line: last line to read (1-indexed, inclusive)
         """
+        print(f"  [tool] read_file({path!r}, {start_line}, {end_line})", flush=True)
         fp = root / path
         if not fp.is_file():
             return f"Error: file not found: {path}"
@@ -99,6 +120,11 @@ def make_tools(repo_root: str) -> dict[str, callable]:
             end_line: last line to replace (1-indexed, inclusive)
             replacement: new text to replace those lines with
         """
+        preview = replacement[:80] + "..." if len(replacement) > 80 else replacement
+        print(
+            f"  [tool] apply_edit({path!r}, {start_line}, {end_line}, {preview!r})",
+            flush=True,
+        )
         fp = root / path
         if not fp.is_file():
             return f"Error: file not found: {path}"
