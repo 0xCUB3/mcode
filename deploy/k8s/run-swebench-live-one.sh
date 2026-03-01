@@ -32,7 +32,7 @@ Env vars (optional):
   OLLAMA_HOST=...          Default: http://ollama:11434
   MCODE_IMAGE=...          Default: OpenShift internal registry mcode:latest
   MCODE_MAX_NEW_TOKENS=... Default: 4096
-  LOOP_BUDGET=<N>          Default: 3 (max patch+test attempts)
+  LOOP_BUDGET=<N>          Default: 5 (max patch+test attempts)
 
   # Cleanup
   CLEANUP=1               Delete pod + configmap after completion
@@ -483,9 +483,11 @@ spec:
           patch = ""
           attempts_used = 0
           try:
-              loc_files, loc_hints = localize_files(REPO_ROOT, problem)
-              print(f"localized files: {loc_files}", flush=True)
               with session.open():
+                  loc_files, loc_hints = localize_files(
+                      REPO_ROOT, problem, llm_session=session,
+                  )
+                  print(f"localized files: {loc_files}", flush=True)
                   enriched_hints = hints
                   if loc_hints:
                       enriched_hints = (hints + "\n\n" if hints else "") + loc_hints
@@ -495,6 +497,7 @@ spec:
                       hints_text=enriched_hints,
                       file_paths=loc_files,
                       requirements=[req],
+                      repo_root=REPO_ROOT,
                   )
               raw = result.value or ""
               patch, _ = line_edits_to_patch(raw, repo_root=REPO_ROOT)

@@ -32,6 +32,10 @@ class LineEdit(BaseModel):
     )
 
 
+class FileLocalization(BaseModel):
+    files: list[str] = Field(..., description="File paths most likely to need editing")
+
+
 class LinePatchOutput(BaseModel):
     edits: list[LineEdit] = Field(..., description="List of line-range edits to apply")
 
@@ -447,6 +451,48 @@ class LLMSession:
             finally:
                 self._m = None
 
+    def localize_files(
+        self,
+        *,
+        file_tree: str,
+        bm25_candidates: list[str],
+        problem_statement: str,
+    ) -> list[str]:
+        from mellea.stdlib.sampling import RepairTemplateStrategy
+
+        candidate_list = "\n".join(f"  - {f}" for f in bm25_candidates)
+        system_prompt = (
+            "Given a repo file tree, a ranked candidate list, and an issue description, "
+            "pick up to 5 files that need editing to fix the issue.\n"
+            "Choose ONLY from the candidate list. Return the most relevant files first."
+        )
+        prompt = (
+            f"File tree:\n{file_tree}\n\n"
+            f"Candidate files (ranked by text similarity):\n{candidate_list}\n\n"
+            f"Issue:\n{problem_statement}"
+        )
+        try:
+            result = self._m.instruct(
+                prompt,
+                format=FileLocalization,
+                strategy=RepairTemplateStrategy(loop_budget=1),
+                requirements=[],
+                return_sampling_results=True,
+                model_options=self._model_options(system_prompt=system_prompt),
+            )
+            import json
+
+            data = json.loads(result.value or "{}")
+            files = data.get("files", [])
+            # Filter to only candidates that exist in the BM25 list
+            valid = [f for f in files if f in set(bm25_candidates)]
+            if valid:
+                return valid[:5]
+        except Exception as e:
+            print(f"LLM localization failed, falling back to BM25: {e}", flush=True)
+
+        return bm25_candidates[:5]
+
     def generate_code(self, *, task: Task, requirements: list | None = None):
         system_prompt = _code_system_prompt(task)
         return self._m.instruct(
@@ -466,6 +512,7 @@ class LLMSession:
         hints_text: str = "",
         file_paths: list[str] | None = None,
         requirements: list | None = None,
+        repo_root: str | None = None,
     ):
         file_constraint = ""
         if file_paths:

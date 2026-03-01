@@ -299,8 +299,12 @@ class BenchmarkRunner:
                 check_only=True,
             )
             try:
-                loc_files, loc_hints = localize_files(str(repo_root), task.problem_statement)
                 with self.llm.open():
+                    loc_files, loc_hints = localize_files(
+                        str(repo_root),
+                        task.problem_statement,
+                        llm_session=self.llm,
+                    )
                     hints = task.hints_text
                     if loc_hints:
                         hints = (hints + "\n\n" if hints else "") + loc_hints
@@ -310,6 +314,7 @@ class BenchmarkRunner:
                         hints_text=hints,
                         file_paths=loc_files,
                         requirements=[req],
+                        repo_root=str(repo_root),
                     )
             except Exception as e:
                 elapsed_ms = int((time.time() - start) * 1000)
@@ -389,8 +394,12 @@ class BenchmarkRunner:
                 check_only=True,
             )
             try:
-                loc_files, loc_hints = localize_files(str(repo_root), task.problem_statement)
                 with self.llm.open():
+                    loc_files, loc_hints = localize_files(
+                        str(repo_root),
+                        task.problem_statement,
+                        llm_session=self.llm,
+                    )
                     hints = task.hints_text
                     if loc_hints:
                         hints = (hints + "\n\n" if hints else "") + loc_hints
@@ -400,6 +409,7 @@ class BenchmarkRunner:
                         hints_text=hints,
                         file_paths=loc_files,
                         requirements=[req],
+                        repo_root=str(repo_root),
                     )
             except Exception as e:
                 elapsed_ms = int((time.time() - start) * 1000)

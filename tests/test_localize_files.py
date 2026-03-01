@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 from mcode.context.localize import (
     build_indented_tree,
     collect_source_files,
@@ -117,3 +119,41 @@ def test_localize_empty_repo(tmp_path):
     files, hints = localize(str(tmp_path), "Fix something")
     assert files == []
     assert hints == ""
+
+
+def test_localize_with_llm_session(tmp_path):
+    """LLM session narrows BM25 candidates to a subset."""
+    (tmp_path / "checker.py").write_text("class NameChecker:\n    pass\n")
+    (tmp_path / "utils.py").write_text("def helper():\n    pass\n")
+    (tmp_path / "config.py").write_text("CONFIG = {}\n")
+
+    mock_session = MagicMock()
+    mock_session.localize_files.return_value = ["checker.py"]
+
+    files, hints = localize(
+        str(tmp_path),
+        "Fix the name checker",
+        llm_session=mock_session,
+    )
+
+    mock_session.localize_files.assert_called_once()
+    assert files == ["checker.py"]
+    assert "--- checker.py ---" in hints
+    # utils.py should not be included since LLM narrowed to checker.py
+    assert "--- utils.py ---" not in hints
+
+
+def test_localize_with_llm_session_fallback(tmp_path):
+    """When LLM returns files not on disk, they are skipped."""
+    (tmp_path / "real.py").write_text("x = 1\n")
+
+    mock_session = MagicMock()
+    mock_session.localize_files.return_value = ["nonexistent.py", "real.py"]
+
+    files, hints = localize(
+        str(tmp_path),
+        "Fix something",
+        llm_session=mock_session,
+    )
+
+    assert files == ["real.py"]
