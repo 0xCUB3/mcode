@@ -225,6 +225,10 @@ class LLMSession:
                 pass
             else:
                 raise
+        except Exception:
+            # Ollama/backend errors (malformed tool calls, timeouts, etc.)
+            # Return whatever diff we have so far.
+            pass
 
         return get_diff(repo_root)
 
