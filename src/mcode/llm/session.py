@@ -174,7 +174,6 @@ class LLMSession:
     ) -> str:
         import asyncio
 
-        from mellea.backends.model_options import ModelOption
         from mellea.backends.tools import MelleaTool
         from mellea.stdlib.context import ChatContext
         from mellea.stdlib.frameworks.react import react
@@ -213,15 +212,12 @@ class LLMSession:
 
         budget = max(1, self.loop_budget) * 5
         model_opts = self._model_options(system_prompt=system_prompt)
-        ctx_raw = os.environ.get("MCODE_CONTEXT_WINDOW")
-        if ctx_raw:
-            model_opts[ModelOption.CONTEXT_WINDOW] = int(ctx_raw)
 
         async def _run():
             try:
                 result, _ = await react(
                     goal=goal,
-                    context=ChatContext(),
+                    context=ChatContext(window_size=budget * 2 + 1),
                     backend=self._m.backend,
                     tools=tools,
                     loop_budget=budget,
