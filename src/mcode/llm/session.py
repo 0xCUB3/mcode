@@ -174,26 +174,14 @@ class LLMSession:
     ) -> str:
         import asyncio
 
-        from mellea.backends.model_options import ModelOption
         from mellea.backends.tools import tool
-        from mellea.stdlib import functional as mfuncs
-        from mellea.stdlib.components.chat import Message
         from mellea.stdlib.context import ChatContext
+        from mellea.stdlib.frameworks.react import react
 
         from mcode.agent.tools import get_diff, make_tools
 
         tool_fns = make_tools(repo_root)
-
-        def final_answer(summary: str) -> str:
-            """Call when you are done fixing the bug.
-
-            Args:
-                summary: Brief summary of changes made
-            """
-            return summary
-
-        all_tools = [tool(fn, name=name) for name, fn in tool_fns.items()]
-        all_tools.append(tool(final_answer))
+        tools = [tool(fn, name=name) for name, fn in tool_fns.items()]
 
         file_hint = ""
         if file_paths:
@@ -213,59 +201,25 @@ class LLMSession:
             f"Fix this bug in {repo} by editing the existing source code.\n\n"
             f"Issue:\n{problem_statement.strip()}"
             f"{file_hint}{hints_block}\n\n"
-            "Steps:\n"
-            "1. search_code to find relevant code\n"
-            "2. read_file to understand the buggy code\n"
-            "3. apply_edit to fix the bug IN THE EXISTING SOURCE FILE\n"
-            "4. call final_answer when done\n\n"
-            "IMPORTANT: Only edit existing files in the repository. "
-            "Do not create new files or test scripts."
+            "Only edit existing files. Do not create new files or test scripts."
         )
 
         budget = max(1, self.loop_budget) * 5
         model_opts = self._model_options(system_prompt=system_prompt)
-        model_opts[ModelOption.TOOLS] = all_tools
 
         async def _run():
-            ctx = ChatContext(window_size=budget * 2 + 1)
-
-            for turn in range(1, budget + 1):
-                action = (
-                    Message(content=goal, role="user")
-                    if turn == 1
-                    else Message(content="", role="user")
+            try:
+                result, _ = await react(
+                    goal=goal,
+                    context=ChatContext(window_size=budget * 2 + 1),
+                    backend=self._m.backend,
+                    tools=tools,
+                    loop_budget=budget,
+                    model_options=model_opts,
                 )
-                print(f"  [react] turn {turn}/{budget}", flush=True)
-
-                try:
-                    step, ctx = await mfuncs.aact(
-                        action=action,
-                        context=ctx,
-                        backend=self._m.backend,
-                        strategy=None,
-                        model_options=model_opts,
-                        tool_calls=True,
-                        silence_context_type_warning=True,
-                    )
-                except Exception as e:
-                    print(f"  [react] error: {e}", flush=True)
-                    break
-
-                if not step.tool_calls:
-                    print(
-                        f"  [react] no tool call, model said: {str(step.value)[:120]}",
-                        flush=True,
-                    )
-                    continue
-
-                tool_results = mfuncs._call_tools(step, backend=self._m.backend)
-                for tr in tool_results:
-                    ctx = ctx.add(tr)
-                    if tr.name == "final_answer":
-                        print(f"  [react] final_answer: {tr.content[:120]}", flush=True)
-                        return get_diff(repo_root)
-
-            print("  [react] budget exhausted without final_answer", flush=True)
+                print(f"  [react] final_answer: {result.value[:120]}", flush=True)
+            except RuntimeError:
+                print("  [react] budget exhausted without final_answer", flush=True)
             return get_diff(repo_root)
 
         return asyncio.run(_run())

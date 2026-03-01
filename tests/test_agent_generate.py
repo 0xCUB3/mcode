@@ -5,7 +5,7 @@ import subprocess
 from unittest.mock import MagicMock, patch
 
 
-def test_generate_patch_uses_mellea_aact(tmp_path):
+def test_generate_patch_uses_react(tmp_path):
     env = {
         **os.environ,
         "GIT_AUTHOR_NAME": "t",
@@ -30,36 +30,17 @@ def test_generate_patch_uses_mellea_aact(tmp_path):
     mock_mellea = MagicMock()
     session._m = mock_mellea
 
-    # aact returns (ModelOutputThunk, Context).
-    # Simulate final_answer tool call on first turn.
-    mock_tool_result = MagicMock()
-    mock_tool_result.name = "final_answer"
-    mock_tool_result.content = "done"
-
-    mock_step = MagicMock()
-    mock_step.tool_calls = {"final_answer": MagicMock()}
-    mock_step.value = ""
-
+    mock_result = MagicMock()
+    mock_result.value = "done"
     mock_ctx = MagicMock()
 
-    call_count = 0
+    async def mock_react(*args, **kwargs):
+        return (mock_result, mock_ctx)
 
-    async def mock_aact(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        return (mock_step, mock_ctx)
-
-    def mock_call_tools(result, backend):
-        return [mock_tool_result]
-
-    with (
-        patch("mellea.stdlib.functional.aact", mock_aact),
-        patch("mellea.stdlib.functional._call_tools", mock_call_tools),
-    ):
+    with patch("mellea.stdlib.frameworks.react.react", mock_react):
         result = session.generate_patch(
             repo="test/repo",
             problem_statement="Fix the bug",
             repo_root=str(tmp_path),
         )
-    assert call_count == 1
     assert isinstance(result, str)
