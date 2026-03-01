@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 from mcode.context.localize import (
     build_indented_tree,
     collect_source_files,
@@ -64,7 +62,6 @@ def test_build_indented_tree_dirs_before_files():
     paths = ["a/z.py", "a/b/c.py"]
     tree = build_indented_tree(paths)
     lines = tree.splitlines()
-    # b/ directory should come before z.py file
     b_idx = next(i for i, line in enumerate(lines) if "b/" in line)
     z_idx = next(i for i, line in enumerate(lines) if "z.py" in line)
     assert b_idx < z_idx
@@ -81,7 +78,6 @@ def test_rank_bm25_basic(tmp_path):
 
     paths = ["name_checker.py", "base_checker.py", "pylinter.py"]
     ranked = rank_bm25(paths, "name checker naming convention", str(tmp_path))
-    # name_checker.py should rank first (has "name" and "checker" in content)
     assert ranked[0] == "name_checker.py"
 
 
@@ -97,14 +93,13 @@ def test_rank_bm25_respects_top_n(tmp_path):
     assert len(ranked) == 3
 
 
-def test_localize_returns_files_and_hints(tmp_path):
+def test_localize_returns_files(tmp_path):
     (tmp_path / "foo.py").write_text("def foo():\n    pass\n")
     (tmp_path / "bar.py").write_text("def bar():\n    pass\n")
 
     files, hints = localize(str(tmp_path), "Fix the foo function")
     assert "foo.py" in files
-    assert "--- foo.py ---" in hints
-    assert "def foo():" in hints
+    assert hints == ""
 
 
 def test_localize_includes_multiple_files(tmp_path):
@@ -119,41 +114,3 @@ def test_localize_empty_repo(tmp_path):
     files, hints = localize(str(tmp_path), "Fix something")
     assert files == []
     assert hints == ""
-
-
-def test_localize_with_llm_session(tmp_path):
-    """LLM session narrows BM25 candidates to a subset."""
-    (tmp_path / "checker.py").write_text("class NameChecker:\n    pass\n")
-    (tmp_path / "utils.py").write_text("def helper():\n    pass\n")
-    (tmp_path / "config.py").write_text("CONFIG = {}\n")
-
-    mock_session = MagicMock()
-    mock_session.localize_files.return_value = ["checker.py"]
-
-    files, hints = localize(
-        str(tmp_path),
-        "Fix the name checker",
-        llm_session=mock_session,
-    )
-
-    mock_session.localize_files.assert_called_once()
-    assert files == ["checker.py"]
-    assert "--- checker.py ---" in hints
-    # utils.py should not be included since LLM narrowed to checker.py
-    assert "--- utils.py ---" not in hints
-
-
-def test_localize_with_llm_session_fallback(tmp_path):
-    """When LLM returns files not on disk, they are skipped."""
-    (tmp_path / "real.py").write_text("x = 1\n")
-
-    mock_session = MagicMock()
-    mock_session.localize_files.return_value = ["nonexistent.py", "real.py"]
-
-    files, hints = localize(
-        str(tmp_path),
-        "Fix something",
-        llm_session=mock_session,
-    )
-
-    assert files == ["real.py"]

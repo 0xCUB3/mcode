@@ -134,72 +134,13 @@ def localize(
     repo_root: str,
     problem_statement: str,
     *,
-    llm_session=None,
     bm25_top_n: int = 30,
-    max_context_chars: int = 60000,
-    max_file_chars: int = 10000,
 ) -> tuple[list[str], str]:
-    """File localization with optional LLM narrowing.
-
-    If llm_session is provided, BM25 top-30 are passed to the LLM to narrow down
-    to 1-5 files, which are then shown in full (up to 20K chars each).
-    Otherwise falls back to BM25-only behavior.
-
-    Returns (file_paths, hints_text) where hints_text contains the file contents
-    ready to pass to generate_patch.
-    """
+    """BM25 file localization. Returns (ranked_file_paths, "")."""
     all_files = collect_source_files(repo_root)
     if not all_files:
         return [], ""
 
-    bm25_candidates = rank_bm25(all_files, problem_statement, repo_root, top_n=bm25_top_n)
-    print(f"bm25 top-10: {bm25_candidates[:10]}", flush=True)
-
-    # Phase 2: LLM narrowing (if session available)
-    if llm_session is not None:
-        file_tree = build_indented_tree(all_files)
-        narrowed = llm_session.localize_files(
-            file_tree=file_tree,
-            bm25_candidates=bm25_candidates,
-            problem_statement=problem_statement,
-        )
-        print(f"llm narrowed to: {narrowed}", flush=True)
-        top_files = narrowed
-        # Show LLM-picked files in full since there are fewer
-        max_file_chars = 20000
-    else:
-        top_files = bm25_candidates
-
-    # Read top files and build hints (cap per-file to fit more files)
-    root = Path(repo_root)
-    included: list[str] = []
-    parts = []
-    chars = 0
-    for rel in top_files:
-        fp = root / rel
-        if not fp.is_file():
-            continue
-        try:
-            content = fp.read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            continue
-        if len(content) > max_file_chars:
-            content = content[:max_file_chars] + "\n... (truncated)"
-        # Add line numbers to help the model reference exact text
-        numbered = "\n".join(f"{i + 1}: {line}" for i, line in enumerate(content.splitlines()))
-        budget = max_context_chars - chars
-        if budget <= 0:
-            break
-        if len(numbered) > budget:
-            numbered = numbered[:budget] + "\n... (truncated)"
-        parts.append(f"--- {rel} ---\n{numbered}")
-        chars += len(numbered) + len(rel) + 10
-        included.append(rel)
-
-    print(f"included {len(included)} files ({chars} chars)", flush=True)
-
-    hints = ""
-    if parts:
-        hints = "Relevant source files from the repository:\n" + "\n".join(parts)
-
-    return included, hints
+    ranked = rank_bm25(all_files, problem_statement, repo_root, top_n=bm25_top_n)
+    print(f"bm25 top-10: {ranked[:10]}", flush=True)
+    return ranked, ""
