@@ -112,10 +112,11 @@ def make_tools(repo_root: str) -> dict[str, callable]:
         return header + "\n" + "\n".join(numbered)
 
     def apply_edit(path: str, start_line: int, end_line: int, replacement: str) -> str:
-        """Replace lines in a file. Validates Python syntax before accepting.
+        """Replace lines in an existing file. Only works on files already in the repo.
+        Validates Python syntax before accepting.
 
         Args:
-            path: file path relative to repo root
+            path: file path relative to repo root (must be an existing file)
             start_line: first line to replace (1-indexed, inclusive)
             end_line: last line to replace (1-indexed, inclusive)
             replacement: new text to replace those lines with

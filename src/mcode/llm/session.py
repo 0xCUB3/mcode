@@ -215,19 +215,22 @@ class LLMSession:
 
         system_prompt = (
             "You are an expert software engineer fixing a bug in an "
-            "open-source repository. Use the provided tools to explore "
-            "the codebase and apply minimal, targeted fixes."
+            "open-source repository. You MUST edit existing source files "
+            "to fix the bug. Do NOT create new files. Do NOT write test "
+            "scripts. Only modify the existing code that contains the bug."
         )
 
         user_msg = (
-            f"You are fixing a bug in {repo}.\n\n"
+            f"Fix this bug in {repo} by editing the existing source code.\n\n"
             f"Issue:\n{problem_statement.strip()}"
             f"{file_hint}{hints_block}\n\n"
-            "Use the tools to find the relevant code, understand it, "
-            "and apply a fix. "
-            "Call search_code to find relevant symbols, read_file to "
-            "examine code, and apply_edit to make changes. "
-            "When done, call final_answer with a summary."
+            "Steps:\n"
+            "1. search_code to find relevant code\n"
+            "2. read_file to understand the buggy code\n"
+            "3. apply_edit to fix the bug IN THE EXISTING SOURCE FILE\n"
+            "4. call final_answer when done\n\n"
+            "IMPORTANT: Only edit existing files in the repository. "
+            "Do not create new files or test scripts."
         )
 
         messages: list[dict] = [
