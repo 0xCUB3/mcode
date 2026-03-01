@@ -174,14 +174,14 @@ class LLMSession:
     ) -> str:
         import asyncio
 
-        from mellea.backends.tools import MelleaTool
+        from mellea.backends.tools import tool
         from mellea.stdlib.context import ChatContext
         from mellea.stdlib.frameworks.react import react
 
         from mcode.agent.tools import get_diff, make_tools
 
         tool_fns = make_tools(repo_root)
-        tools = [MelleaTool.from_callable(fn, name) for name, fn in tool_fns.items()]
+        tools = [tool(fn, name=name) for name, fn in tool_fns.items()]
 
         file_hint = ""
         if file_paths:
