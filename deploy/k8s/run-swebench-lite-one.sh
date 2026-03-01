@@ -301,7 +301,8 @@ spec:
           import hashlib
           import os
           from pathlib import Path
-          from mcode.llm.session import LLMSession, line_edits_to_patch
+          from mcode.context.localize import localize as localize_files
+          from mcode.llm.session import LLMSession
 
           repo = Path('/inputs/repo.txt').read_text(encoding='utf-8').strip()
           problem = Path('/inputs/problem.txt').read_text(encoding='utf-8', errors='replace')
@@ -310,13 +311,19 @@ spec:
           model_id = os.environ['MODEL']
           backend = os.environ.get('BACKEND', 'openai')
 
+          REPO_ROOT = "/work/testbed"
           s = LLMSession(model_id=model_id, backend_name=backend)
           s.check_available()
           with s.open():
-              result = s.generate_patch(repo=repo, problem_statement=problem, hints_text=hints)
+              loc_files, _ = localize_files(REPO_ROOT, problem)
+              patch = s.generate_patch(
+                  repo=repo,
+                  problem_statement=problem,
+                  hints_text=hints or "",
+                  file_paths=loc_files,
+                  repo_root=REPO_ROOT,
+              )
 
-          patch, _ = line_edits_to_patch(result.value or "", repo_root="/work/testbed")
-          patch = patch or ""
           Path('/work/patch.diff').write_text(patch, encoding='utf-8', errors='replace')
           sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest()
           print(f'generated patch chars={len(patch)}')
