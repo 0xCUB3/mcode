@@ -207,17 +207,24 @@ class LLMSession:
         budget = max(1, self.loop_budget) * 5
         model_opts = self._model_options(system_prompt=system_prompt)
 
+        timeout_s = int(os.environ.get("MCODE_REACT_TIMEOUT", str(budget * 30)))
+
         async def _run():
             try:
-                result, _ = await react(
-                    goal=goal,
-                    context=ChatContext(window_size=budget * 2 + 1),
-                    backend=self._m.backend,
-                    tools=tools,
-                    loop_budget=budget,
-                    model_options=model_opts,
+                result, _ = await asyncio.wait_for(
+                    react(
+                        goal=goal,
+                        context=ChatContext(),
+                        backend=self._m.backend,
+                        tools=tools,
+                        loop_budget=budget,
+                        model_options=model_opts,
+                    ),
+                    timeout=timeout_s,
                 )
                 print(f"  [react] final_answer: {result.value[:120]}", flush=True)
+            except TimeoutError:
+                print(f"  [react] timed out after {timeout_s}s", flush=True)
             except RuntimeError:
                 print("  [react] budget exhausted without final_answer", flush=True)
             return get_diff(repo_root)

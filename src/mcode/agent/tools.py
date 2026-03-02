@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-import signal
 import subprocess
 from pathlib import Path
 
@@ -32,20 +31,18 @@ _SOURCE_SUFFIXES = frozenset(
 
 
 def _safe_search(pattern: str, line: str) -> bool:
-    """Regex search with a 2-second timeout to prevent catastrophic backtracking."""
+    """Regex search with a timeout to prevent catastrophic backtracking.
 
-    def _timeout_handler(signum, frame):
-        raise TimeoutError
+    Uses a thread instead of SIGALRM to avoid corrupting asyncio event loops.
+    """
+    import concurrent.futures
 
-    old = signal.signal(signal.SIGALRM, _timeout_handler)
-    signal.alarm(2)
-    try:
-        return bool(re.search(pattern, line, re.IGNORECASE))
-    except TimeoutError:
-        return False
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(re.search, pattern, line, re.IGNORECASE)
+        try:
+            return bool(future.result(timeout=2))
+        except (concurrent.futures.TimeoutError, Exception):
+            return False
 
 
 def make_tools(repo_root: str) -> dict[str, callable]:
