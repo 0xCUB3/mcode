@@ -174,22 +174,14 @@ class LLMSession:
     ) -> str:
         import asyncio
 
-        from mellea.backends import ModelOption
         from mellea.backends.tools import tool
-        from mellea.core.base import CBlock
-        from mellea.stdlib import functional as mfuncs
         from mellea.stdlib.context import ChatContext
+        from mellea.stdlib.frameworks.react import react
 
         from mcode.agent.tools import get_diff, make_tools
 
         tool_fns = make_tools(repo_root)
         tools = [tool(fn, name=name) for name, fn in tool_fns.items()]
-
-        def _final_answer(answer: str) -> str:
-            """Signal that you are done and provide your final answer."""
-            return answer
-
-        tools.append(tool(_final_answer, name="final_answer"))
 
         file_hint = ""
         if file_paths:
@@ -209,46 +201,32 @@ class LLMSession:
             f"Fix this bug in {repo} by editing the existing source code.\n\n"
             f"Issue:\n{problem_statement.strip()}"
             f"{file_hint}{hints_block}\n\n"
-            "Only edit existing files. Do not create new files or test scripts.\n"
-            "Call the final_answer tool when you are done."
+            "Only edit existing files. Do not create new files or test scripts."
         )
 
         budget = max(1, self.loop_budget) * 5
         model_opts = self._model_options(system_prompt=system_prompt)
-        model_opts[ModelOption.TOOLS] = tools
 
         timeout_s = int(os.environ.get("MCODE_REACT_TIMEOUT", str(budget * 30)))
 
         async def _run():
-            ctx = ChatContext()
-            ctx = ctx.add(CBlock(goal))
-
             try:
-                for turn in range(budget):
-                    print(f"  [loop] turn {turn + 1}/{budget}", flush=True)
-                    step, ctx = await asyncio.wait_for(
-                        mfuncs.aact(
-                            action=CBlock(""),
-                            context=ctx,
-                            backend=self._m.backend,
-                            strategy=None,
-                            model_options=model_opts,
-                            tool_calls=True,
-                        ),
-                        timeout=timeout_s,
-                    )
-
-                    if step.tool_calls:
-                        tool_msgs = mfuncs._call_tools(step, backend=self._m.backend)
-                        for msg in tool_msgs:
-                            ctx = ctx.add(msg)
-                            if msg.name == "final_answer":
-                                print(f"  [loop] final_answer: {msg.content[:120]}", flush=True)
-                                return get_diff(repo_root)
-
-                print("  [loop] budget exhausted without final_answer", flush=True)
+                result, _ = await asyncio.wait_for(
+                    react(
+                        goal=goal,
+                        context=ChatContext(),
+                        backend=self._m.backend,
+                        tools=tools,
+                        loop_budget=budget,
+                        model_options=model_opts,
+                    ),
+                    timeout=timeout_s,
+                )
+                print(f"  [react] final_answer: {result.value[:120]}", flush=True)
             except TimeoutError:
-                print(f"  [loop] timed out after {timeout_s}s", flush=True)
+                print(f"  [react] timed out after {timeout_s}s", flush=True)
+            except RuntimeError:
+                print("  [react] budget exhausted without final_answer", flush=True)
             return get_diff(repo_root)
 
         return asyncio.run(_run())
