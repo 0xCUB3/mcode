@@ -10,6 +10,8 @@ Environment:
     MODEL          - model name (required)
     LOOP_BUDGET    - react loop budget multiplier (default 5)
     CONTEXT_WINDOW - context window override (default 32768)
+    N_SAMPLES      - majority voting samples per instance (default 1)
+    LLM_LOCALIZE   - use LLM to narrow file candidates (default 1)
 """
 
 from __future__ import annotations
@@ -41,6 +43,8 @@ def main():
     model = os.environ.get("MODEL")
     loop_budget = int(os.environ.get("LOOP_BUDGET", "5"))
     context_window = int(os.environ.get("CONTEXT_WINDOW", "32768"))
+    n_samples = int(os.environ.get("N_SAMPLES", "1"))
+    llm_localize = os.environ.get("LLM_LOCALIZE", "1") == "1"
 
     if not model:
         print("MODEL env var required", file=sys.stderr)
@@ -54,7 +58,7 @@ def main():
     from mcode.llm.session import LLMSession
 
     tasks = load_swebench_lite(Path("/tmp"), instance_ids=INSTANCES)
-    print(f"loaded {len(tasks)} tasks")
+    print(f"loaded {len(tasks)}  n_samples={n_samples}  llm_localize={llm_localize}")
 
     sandbox = SWEbenchSandbox(namespace="swebench", arch="x86_64")
     session = LLMSession(
@@ -73,7 +77,12 @@ def main():
 
             try:
                 with sandbox.repo_context(task.raw_instance) as repo_root:
-                    loc_files, _ = localize_files(str(repo_root), task.problem_statement)
+                    loc_session = session if llm_localize else None
+                    loc_files, file_contents = localize_files(
+                        str(repo_root),
+                        task.problem_statement,
+                        session=loc_session,
+                    )
                     print(f"  localized {len(loc_files)} files in {time.time() - t0:.1f}s")
                     for f in loc_files[:5]:
                         print(f"    {f}")
@@ -83,7 +92,9 @@ def main():
                         problem_statement=task.problem_statement,
                         hints_text=task.hints_text or "",
                         file_paths=loc_files[:10],
+                        file_contents=file_contents,
                         repo_root=str(repo_root),
+                        n_samples=n_samples,
                     )
                     gen_time = time.time() - t0
 

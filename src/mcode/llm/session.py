@@ -13,6 +13,12 @@ class CodeOutput(BaseModel):
     code: str = Field(..., description="Python code only, no markdown.")
 
 
+class FileLocalization(BaseModel):
+    files: list[str] = Field(
+        ..., description="File paths most likely to need editing, from the candidate list"
+    )
+
+
 @dataclass
 class LLMSession:
     model_id: str
@@ -163,6 +169,41 @@ class LLMSession:
             model_options=self._model_options(system_prompt=system_prompt),
         )
 
+    def localize_files(
+        self,
+        *,
+        candidates: list[str],
+        problem_statement: str,
+        max_files: int = 5,
+    ) -> list[str]:
+        system_prompt = (
+            "You are an expert at localizing bugs in code repositories. "
+            "Given a ranked list of candidate files and an issue description, "
+            "pick 1 to 5 files most likely to need editing. "
+            "Choose ONLY from the candidate list."
+        )
+        candidate_list = "\n".join(f"  {i + 1}. {f}" for i, f in enumerate(candidates))
+        prompt = (
+            f"Issue:\n{problem_statement.strip()}\n\n"
+            f"Candidate files (BM25-ranked):\n{candidate_list}\n\n"
+            f"Pick 1-{max_files} files from the list above that need editing to fix this issue."
+        )
+        try:
+            result = self._m.instruct(
+                prompt,
+                format=FileLocalization,
+                strategy=None,
+                model_options=self._model_options(system_prompt=system_prompt),
+            )
+            parsed = FileLocalization.model_validate_json(result.value)
+            valid = [f for f in parsed.files if f in candidates]
+            if valid:
+                print(f"  llm localized: {valid}", flush=True)
+                return valid[:max_files]
+        except Exception as e:
+            print(f"  llm localization failed: {e}", flush=True)
+        return candidates[:max_files]
+
     def generate_patch(
         self,
         *,
@@ -170,9 +211,12 @@ class LLMSession:
         problem_statement: str,
         hints_text: str = "",
         file_paths: list[str] | None = None,
+        file_contents: str = "",
         repo_root: str,
+        n_samples: int = 1,
     ) -> str:
         import asyncio
+        import subprocess
 
         from mellea.backends.tools import tool
         from mellea.stdlib.context import ChatContext
@@ -183,11 +227,14 @@ class LLMSession:
         tool_fns = make_tools(repo_root)
         tools = [tool(fn, name=name) for name, fn in tool_fns.items()]
 
-        file_hint = ""
-        if file_paths:
+        if file_contents:
+            file_hint = f"\n\nRelevant source files:\n{file_contents}"
+        elif file_paths:
             file_hint = "\n\nFiles likely relevant (from BM25 ranking):\n" + "\n".join(
                 f"  - {f}" for f in file_paths
             )
+        else:
+            file_hint = ""
         hints_block = f"\n\nAdditional context:\n{hints_text.strip()}" if hints_text.strip() else ""
 
         system_prompt = (
@@ -209,7 +256,7 @@ class LLMSession:
 
         timeout_s = int(os.environ.get("MCODE_REACT_TIMEOUT", str(budget * 30)))
 
-        async def _run():
+        async def _one_attempt():
             try:
                 result, _ = await asyncio.wait_for(
                     react(
@@ -229,7 +276,51 @@ class LLMSession:
                 print("  [react] budget exhausted without final_answer", flush=True)
             return get_diff(repo_root)
 
-        return asyncio.run(_run())
+        def _reset_repo():
+            subprocess.run(["git", "checkout", "."], cwd=repo_root, capture_output=True)
+
+        if n_samples <= 1:
+            return asyncio.run(_one_attempt())
+
+        # Multiple samples: run react() n_samples times, pick most common diff
+        from collections import Counter
+
+        diffs: list[str] = []
+        for i in range(n_samples):
+            print(f"\n  [sample {i + 1}/{n_samples}]", flush=True)
+            diff = asyncio.run(_one_attempt())
+            diffs.append(diff)
+            if i < n_samples - 1:
+                _reset_repo()
+
+        non_empty = [d for d in diffs if d and d.strip()]
+        if not non_empty:
+            return ""
+
+        # Vote: most common diff wins
+        counts = Counter(non_empty)
+        best_diff, best_count = counts.most_common(1)[0]
+        print(
+            f"  [voting] {len(non_empty)}/{n_samples} produced patches, "
+            f"best has {best_count} votes",
+            flush=True,
+        )
+
+        # Apply the winning diff
+        _reset_repo()
+        proc = subprocess.run(
+            ["git", "apply", "--allow-empty"],
+            input=best_diff,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            print(f"  [voting] git apply failed: {proc.stderr[:200]}", flush=True)
+            # Fall back to longest diff
+            non_empty.sort(key=len, reverse=True)
+            return non_empty[0]
+        return get_diff(repo_root)
 
 
 def _code_system_prompt(task: Task) -> str:

@@ -130,17 +130,57 @@ def rank_bm25(
     return [p for _, p in scores[:top_n]]
 
 
+def _read_files_content(
+    repo_root: str, file_paths: list[str], *, max_total_chars: int = 40000
+) -> str:
+    root = Path(repo_root)
+    parts: list[str] = []
+    total = 0
+    for fp in file_paths:
+        try:
+            text = (root / fp).read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        if total + len(text) > max_total_chars:
+            remaining = max_total_chars - total
+            if remaining > 500:
+                text = text[:remaining] + "\n... (truncated)"
+            else:
+                break
+        numbered = "\n".join(f"{i + 1}: {line}" for i, line in enumerate(text.splitlines()))
+        parts.append(f"--- {fp} ---\n{numbered}")
+        total += len(text)
+    return "\n\n".join(parts)
+
+
 def localize(
     repo_root: str,
     problem_statement: str,
     *,
     bm25_top_n: int = 30,
+    session=None,
 ) -> tuple[list[str], str]:
-    """BM25 file localization. Returns (ranked_file_paths, "")."""
+    """File localization. Returns (ranked_file_paths, file_contents_text).
+
+    If session (LLMSession) is provided, uses LLM to narrow BM25 candidates
+    and reads the selected files in full.
+    """
     all_files = collect_source_files(repo_root)
     if not all_files:
         return [], ""
 
     ranked = rank_bm25(all_files, problem_statement, repo_root, top_n=bm25_top_n)
     print(f"bm25 top-10: {ranked[:10]}", flush=True)
+
+    if session is not None:
+        try:
+            narrowed = session.localize_files(
+                candidates=ranked,
+                problem_statement=problem_statement,
+            )
+            contents = _read_files_content(repo_root, narrowed)
+            return narrowed, contents
+        except Exception as e:
+            print(f"  llm localization error, falling back to bm25: {e}", flush=True)
+
     return ranked, ""
