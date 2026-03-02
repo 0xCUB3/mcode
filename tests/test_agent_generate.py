@@ -5,7 +5,7 @@ import subprocess
 from unittest.mock import MagicMock, patch
 
 
-def test_generate_patch_uses_react(tmp_path):
+def test_generate_patch_uses_lean_loop(tmp_path):
     env = {
         **os.environ,
         "GIT_AUTHOR_NAME": "t",
@@ -30,14 +30,18 @@ def test_generate_patch_uses_react(tmp_path):
     mock_mellea = MagicMock()
     session._m = mock_mellea
 
-    mock_result = MagicMock()
-    mock_result.value = "done"
+    # Mock aact to return a step with a final_answer tool call
+    mock_step = MagicMock()
+    mock_tool_call = MagicMock()
+    mock_tool_call.call_func.return_value = "done"
+    mock_step.tool_calls = {"final_answer": mock_tool_call}
+
     mock_ctx = MagicMock()
 
-    async def mock_react(*args, **kwargs):
-        return (mock_result, mock_ctx)
+    async def mock_aact(*args, **kwargs):
+        return (mock_step, mock_ctx)
 
-    with patch("mellea.stdlib.frameworks.react.react", mock_react):
+    with patch("mellea.stdlib.functional.aact", mock_aact):
         result = session.generate_patch(
             repo="test/repo",
             problem_statement="Fix the bug",
