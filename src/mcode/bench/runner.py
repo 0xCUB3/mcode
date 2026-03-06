@@ -261,53 +261,69 @@ class BenchmarkRunner:
         def _truncate(s: str, max_chars: int = 8000) -> str:
             return s if len(s) <= max_chars else s[-max_chars:]
 
-        with live_sandbox.repo_context(task) as repo_root:
-            try:
-                with self.llm.open():
-                    loc_files, _ = localize_files(
-                        str(repo_root),
-                        task.problem_statement,
-                    )
-                    patch = self.llm.generate_patch(
-                        repo=task.repo,
-                        problem_statement=task.problem_statement,
-                        hints_text=task.hints_text or "",
-                        file_paths=loc_files,
-                        repo_root=str(repo_root),
-                    )
-            except Exception as e:
+        try:
+            with live_sandbox.repo_context(task) as repo_root:
+                try:
+                    with self.llm.open():
+                        loc_files, _ = localize_files(
+                            str(repo_root),
+                            task.problem_statement,
+                        )
+                        patch = self.llm.generate_patch(
+                            repo=task.repo,
+                            problem_statement=task.problem_statement,
+                            hints_text=task.hints_text or "",
+                            file_paths=loc_files,
+                            repo_root=str(repo_root),
+                        )
+                except Exception as e:
+                    elapsed_ms = int((time.time() - start) * 1000)
+                    tb = traceback.format_exc()
+                    return {
+                        "task_id": task.instance_id,
+                        "passed": False,
+                        "attempts_used": 0,
+                        "time_ms": elapsed_ms,
+                        "exit_code": None,
+                        "timed_out": False,
+                        "stdout": None,
+                        "stderr": (_truncate(tb, max_chars=8000) if tb else None),
+                        "error": f"{type(e).__name__}: {e}",
+                        "code_sha256": None,
+                    }
                 elapsed_ms = int((time.time() - start) * 1000)
-                tb = traceback.format_exc()
-                return {
-                    "task_id": task.instance_id,
-                    "passed": False,
-                    "attempts_used": 0,
-                    "time_ms": elapsed_ms,
-                    "exit_code": None,
-                    "timed_out": False,
-                    "stdout": None,
-                    "stderr": (_truncate(tb, max_chars=8000) if tb else None),
-                    "error": f"{type(e).__name__}: {e}",
-                    "code_sha256": None,
-                }
-            elapsed_ms = int((time.time() - start) * 1000)
 
-            has_patch = bool(patch and patch.strip())
-            last_detail: dict = {}
-            if has_patch:
-                run = live_sandbox.evaluate_patch(
-                    task=task,
-                    patch=patch,
-                    run_id=f"mcode-{run_id}",
-                    timeout_s=self.config.timeout_s,
-                )
-                last_detail = {
-                    "exit_code": None,
-                    "timed_out": run.timed_out,
-                    "stdout": _truncate(run.test_output),
-                    "stderr": json.dumps(run.report, sort_keys=True),
-                    "error": None if run.resolved else "Not resolved",
-                }
+                has_patch = bool(patch and patch.strip())
+                last_detail: dict = {}
+                if has_patch:
+                    run = live_sandbox.evaluate_patch(
+                        task=task,
+                        patch=patch,
+                        run_id=f"mcode-{run_id}",
+                        timeout_s=self.config.timeout_s,
+                    )
+                    last_detail = {
+                        "exit_code": None,
+                        "timed_out": run.timed_out,
+                        "stdout": _truncate(run.test_output),
+                        "stderr": json.dumps(run.report, sort_keys=True),
+                        "error": None if run.resolved else "Not resolved",
+                    }
+        except Exception as e:
+            elapsed_ms = int((time.time() - start) * 1000)
+            tb = traceback.format_exc()
+            return {
+                "task_id": task.instance_id,
+                "passed": False,
+                "attempts_used": 0,
+                "time_ms": elapsed_ms,
+                "exit_code": None,
+                "timed_out": False,
+                "stdout": None,
+                "stderr": (_truncate(tb, max_chars=8000) if tb else None),
+                "error": f"{type(e).__name__}: {e}",
+                "code_sha256": None,
+            }
 
         sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest() if patch else None
 
