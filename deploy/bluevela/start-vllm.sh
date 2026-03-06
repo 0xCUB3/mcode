@@ -29,12 +29,10 @@ bsub -q "${BV_QUEUE}" \
     nvidia-smi -L
 
     podman run --rm \
-      --hooks-dir=/usr/share/containers/oci/hooks.d \
+      --device nvidia.com/gpu=all \
       --security-opt=label=disable \
       --ipc=host \
       --net=host \
-      -e NVIDIA_VISIBLE_DEVICES=all \
-      -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
       -v ${HOME}/.cache/huggingface:/root/.cache/huggingface \
       '"${VLLM_IMAGE}"' \
       --model '"${MODEL}"' \
