@@ -7,6 +7,7 @@ BV_HOME=/u/skula
 BV_MCODE_DIR=${BV_HOME}/mcode
 BV_RESULTS_DIR=${BV_MCODE_DIR}/results
 BV_QUEUE=normal
+BV_GROUP=grp_runtime
 
 # Model
 MODEL=Qwen/Qwen3.5-35B-A3B

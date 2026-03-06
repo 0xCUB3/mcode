@@ -24,6 +24,7 @@ LOG_DIR="${BV_MCODE_DIR}/results/logs"
 mkdir -p "${LOG_DIR}"
 
 bsub -q "${BV_QUEUE}" \
+  -G "${BV_GROUP}" \
   -J "bench[0-${LAST_INDEX}]" \
   -n 4 \
   -R "span[hosts=1]" \

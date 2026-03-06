@@ -11,6 +11,7 @@ mkdir -p "$(dirname "${VLLM_LOG}")"
 
 echo "Submitting vLLM server job..."
 bsub -q "${BV_QUEUE}" \
+  -G "${BV_GROUP}" \
   -J "vllm-server" \
   -gpu "num=${VLLM_GPU_COUNT}:mode=shared:j_exclusive=yes" \
   -n 8 \
