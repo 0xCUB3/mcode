@@ -14,6 +14,7 @@ MODEL=Qwen/Qwen3.5-35B-A3B
 VLLM_PORT=8000
 VLLM_IMAGE=docker.io/vllm/vllm-openai:nightly
 VLLM_GPU_COUNT=1
+VLLM_MAX_MODEL_LEN=16384
 
 # Benchmark
 BENCHMARK=humaneval

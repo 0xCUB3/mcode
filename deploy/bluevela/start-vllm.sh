@@ -37,7 +37,9 @@ bsub -q "${BV_QUEUE}" \
       '"${VLLM_IMAGE}"' \
       --model '"${MODEL}"' \
       --port '"${VLLM_PORT}"' \
-      --trust-remote-code
+      --max-model-len '"${VLLM_MAX_MODEL_LEN}"' \
+      --trust-remote-code \
+      --enforce-eager
   '
 
 echo "Job submitted. Waiting for it to start..."
