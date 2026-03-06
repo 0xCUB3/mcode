@@ -127,6 +127,14 @@ class SWEbenchLiveSandbox:
 
         return _ctx()
 
+    def remove_image(self, task) -> None:
+        try:
+            client = self._get_client()
+            image_name = _ms_image_name(task.instance_id)
+            client.images.remove(image_name, force=True)
+        except Exception:
+            pass
+
     def evaluate_patch(
         self,
         *,
