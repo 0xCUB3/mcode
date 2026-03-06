@@ -19,7 +19,6 @@ echo "Benchmark:   ${BENCHMARK}"
 echo "Model:       ${MODEL}"
 echo "Shards:      ${SHARD_COUNT}"
 
-LAST_INDEX=$((SHARD_COUNT - 1))
 LOG_DIR="${BV_MCODE_DIR}/results/logs"
 mkdir -p "${LOG_DIR}"
 
@@ -30,24 +29,24 @@ bsub -q "${BV_QUEUE}" \
   -R "span[hosts=1]" \
   -o "${LOG_DIR}/bench-%I.log" \
   -e "${LOG_DIR}/bench-%I.log" \
-  bash -c "
-    source ${BV_MCODE_DIR}/venv/bin/activate
-    export OPENAI_BASE_URL='${OPENAI_BASE_URL}'
-    export OPENAI_API_KEY='${OPENAI_API_KEY}'
-    export MCODE_MAX_NEW_TOKENS='${MCODE_MAX_NEW_TOKENS}'
+  bash -c '
+    source '"${BV_MCODE_DIR}"'/venv/bin/activate
+    export OPENAI_BASE_URL='"'${OPENAI_BASE_URL}'"'
+    export OPENAI_API_KEY='"'${OPENAI_API_KEY}'"'
+    export MCODE_MAX_NEW_TOKENS='"'${MCODE_MAX_NEW_TOKENS}'"'
 
-    SHARD_INDEX=\$((LSB_JOBINDEX - 1))
+    SHARD_INDEX=$((LSB_JOBINDEX - 1))
 
-    mcode bench ${BENCHMARK} \
-      --model '${MODEL}' \
-      --backend '${BACKEND}' \
-      --loop-budget ${LOOP_BUDGET} \
-      --timeout ${TIMEOUT_S} \
-      --strategy ${STRATEGY} \
-      --sandbox ${SANDBOX} \
-      --shard-count ${SHARD_COUNT} \
-      --shard-index \${SHARD_INDEX} \
-      --db '${BV_RESULTS_DIR}/${BENCHMARK}-shard-\${SHARD_INDEX}.db'
-  "
+    mcode bench '"${BENCHMARK}"' \
+      --model '"'${MODEL}'"' \
+      --backend '"'${BACKEND}'"' \
+      --loop-budget '"${LOOP_BUDGET}"' \
+      --timeout '"${TIMEOUT_S}"' \
+      --strategy '"${STRATEGY}"' \
+      --sandbox '"${SANDBOX}"' \
+      --shard-count '"${SHARD_COUNT}"' \
+      --shard-index ${SHARD_INDEX} \
+      --db '"${BV_RESULTS_DIR}/${BENCHMARK}"'-shard-${SHARD_INDEX}.db
+  '
 
 echo "Array job submitted. Monitor with: bjobs -J bench"
