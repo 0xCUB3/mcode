@@ -39,7 +39,10 @@ bsub -q "${BV_QUEUE}" \
       --port '"${VLLM_PORT}"' \
       --max-model-len '"${VLLM_MAX_MODEL_LEN}"' \
       --trust-remote-code \
-      --tensor-parallel-size '"${VLLM_GPU_COUNT}"'
+      --tensor-parallel-size '"${VLLM_GPU_COUNT}"' \
+      --enable-auto-tool-choice \
+      --tool-call-parser qwen3_xml \
+      --reasoning-parser deepseek_r1
   '
 
 echo "Job submitted. Waiting for it to start..."
