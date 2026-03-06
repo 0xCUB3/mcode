@@ -33,7 +33,6 @@ bsub -q "${BV_QUEUE}" \
       --security-opt=label=disable \
       --ipc=host \
       --net=host \
-      -e VLLM_LOGGING_LEVEL=DEBUG \
       -v ${HOME}/.cache/huggingface:/root/.cache/huggingface \
       '"${VLLM_IMAGE}"' \
       --model '"${MODEL}"' \
