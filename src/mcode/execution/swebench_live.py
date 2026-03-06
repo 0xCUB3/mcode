@@ -85,7 +85,7 @@ class SWEbenchLiveSandbox:
         try:
             import docker
 
-            self._client = docker.from_env()
+            self._client = docker.from_env(timeout=600)
             return self._client
         except Exception as e:
             raise RuntimeError(
