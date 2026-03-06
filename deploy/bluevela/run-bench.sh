@@ -25,7 +25,7 @@ mkdir -p "${LOG_DIR}"
 
 bsub -q "${BV_QUEUE}" \
   -G "${BV_GROUP}" \
-  -J "bench[0-${LAST_INDEX}]" \
+  -J "bench[1-${SHARD_COUNT}]" \
   -n 4 \
   -R "span[hosts=1]" \
   -o "${LOG_DIR}/bench-%I.log" \
@@ -36,7 +36,7 @@ bsub -q "${BV_QUEUE}" \
     export OPENAI_API_KEY='${OPENAI_API_KEY}'
     export MCODE_MAX_NEW_TOKENS='${MCODE_MAX_NEW_TOKENS}'
 
-    SHARD_INDEX=\$((LSB_JOBINDEX))
+    SHARD_INDEX=\$((LSB_JOBINDEX - 1))
 
     mcode bench ${BENCHMARK} \
       --model '${MODEL}' \
