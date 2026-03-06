@@ -40,7 +40,8 @@ bsub -q "${BV_QUEUE}" \
       --port '"${VLLM_PORT}"' \
       --max-model-len '"${VLLM_MAX_MODEL_LEN}"' \
       --trust-remote-code \
-      --enforce-eager
+      --enforce-eager \
+      --tensor-parallel-size '"${VLLM_GPU_COUNT}"'
   '
 
 echo "Job submitted. Waiting for it to start..."
