@@ -2,7 +2,7 @@
 set -euo pipefail
 
 MCODE_DIR="${BV_MCODE_DIR:-/u/skula/mcode}"
-REPO_URL="${MCODE_REPO:-https://github.com/skula/mcode.git}"
+REPO_URL="${MCODE_REPO:-https://github.com/0xCUB3/mcode.git}"
 
 echo "=== Installing uv ==="
 if ! command -v uv >/dev/null 2>&1; then
