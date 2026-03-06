@@ -9,6 +9,7 @@ VLLM_LOG="${BV_MCODE_DIR}/results/vllm.log"
 
 rm -f "${VLLM_HOST_FILE}"
 mkdir -p "$(dirname "${VLLM_LOG}")"
+: > "${VLLM_LOG}"
 
 echo "Submitting vLLM server job..."
 bsub -q "${BV_QUEUE}" \
@@ -20,21 +21,14 @@ bsub -q "${BV_QUEUE}" \
   -o "${VLLM_LOG}" \
   -e "${VLLM_LOG}" \
   bash -c '
-    # Fix rootless podman on compute nodes: /run/user/<uid> does not exist
     export XDG_RUNTIME_DIR=/tmp/podman-run-$(id -u)
     mkdir -p ${XDG_RUNTIME_DIR}
 
-    # Override podman runroot and tmpdir to writable locations
-    export TMPDIR=/tmp/podman-tmp-$(id -u)
-    mkdir -p ${TMPDIR}
-
     hostname > '"${VLLM_HOST_FILE}"'
     echo "vLLM starting on $(hostname):'"${VLLM_PORT}"'"
-    nvidia-smi -L 2>/dev/null || echo "nvidia-smi not available"
+    nvidia-smi -L
 
-    podman --runroot ${XDG_RUNTIME_DIR}/runroot \
-      --tmpdir ${TMPDIR} \
-      run --rm \
+    podman run --rm \
       --hooks-dir=/usr/share/containers/oci/hooks.d \
       --security-opt=label=disable \
       --ipc=host \
