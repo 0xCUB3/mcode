@@ -19,28 +19,30 @@ bsub -q "${BV_QUEUE}" \
   -R "span[hosts=1]" \
   -o "${VLLM_LOG}" \
   -e "${VLLM_LOG}" \
-  bash -c "
-    # Fix rootless podman on compute nodes
-    export XDG_RUNTIME_DIR=\${XDG_RUNTIME_DIR:-/tmp/run-\$(id -u)}
-    mkdir -p \${XDG_RUNTIME_DIR}
+  bash -c '
+    # Fix rootless podman: force XDG_RUNTIME_DIR to a writable location
+    export XDG_RUNTIME_DIR=/tmp/podman-run-$(id -u)
+    mkdir -p ${XDG_RUNTIME_DIR}
 
-    hostname > ${VLLM_HOST_FILE}
-    echo \"vLLM starting on \$(hostname):${VLLM_PORT}\"
+    hostname > '"${VLLM_HOST_FILE}"'
+    echo "vLLM starting on $(hostname):'"${VLLM_PORT}"'"
 
-    # Use nvidia-ctk CDI for GPU passthrough
-    nvidia-ctk cdi generate --output=/tmp/nvidia-cdi.yaml 2>/dev/null || true
+    # List available GPUs for debugging
+    nvidia-smi -L 2>/dev/null || echo "nvidia-smi not available"
 
     podman run --rm \
-      --device nvidia.com/gpu=all \
+      --hooks-dir=/usr/share/containers/oci/hooks.d \
       --security-opt=label=disable \
       --ipc=host \
       --net=host \
-      -v \${HOME}/.cache/huggingface:/root/.cache/huggingface \
-      ${VLLM_IMAGE} \
-      --model ${MODEL} \
-      --port ${VLLM_PORT} \
+      -e NVIDIA_VISIBLE_DEVICES=all \
+      -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+      -v ${HOME}/.cache/huggingface:/root/.cache/huggingface \
+      '"${VLLM_IMAGE}"' \
+      --model '"${MODEL}"' \
+      --port '"${VLLM_PORT}"' \
       --trust-remote-code
-  "
+  '
 
 echo "Job submitted. Waiting for it to start..."
 for i in $(seq 1 60); do
