@@ -20,17 +20,21 @@ bsub -q "${BV_QUEUE}" \
   -o "${VLLM_LOG}" \
   -e "${VLLM_LOG}" \
   bash -c '
-    # Fix rootless podman: force XDG_RUNTIME_DIR to a writable location
+    # Fix rootless podman on compute nodes: /run/user/<uid> does not exist
     export XDG_RUNTIME_DIR=/tmp/podman-run-$(id -u)
     mkdir -p ${XDG_RUNTIME_DIR}
 
+    # Override podman runroot and tmpdir to writable locations
+    export TMPDIR=/tmp/podman-tmp-$(id -u)
+    mkdir -p ${TMPDIR}
+
     hostname > '"${VLLM_HOST_FILE}"'
     echo "vLLM starting on $(hostname):'"${VLLM_PORT}"'"
-
-    # List available GPUs for debugging
     nvidia-smi -L 2>/dev/null || echo "nvidia-smi not available"
 
-    podman run --rm \
+    podman --runroot ${XDG_RUNTIME_DIR}/runroot \
+      --tmpdir ${TMPDIR} \
+      run --rm \
       --hooks-dir=/usr/share/containers/oci/hooks.d \
       --security-opt=label=disable \
       --ipc=host \
