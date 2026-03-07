@@ -251,7 +251,7 @@ class LLMSession:
             "Only edit existing files. Do not create new files or test scripts."
         )
 
-        budget = max(1, self.loop_budget) * 5
+        budget = max(1, self.loop_budget)
         model_opts = self._model_options(system_prompt=system_prompt)
 
         timeout_s = int(os.environ.get("MCODE_REACT_TIMEOUT", str(budget * 30)))
