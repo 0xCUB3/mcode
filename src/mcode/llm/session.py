@@ -210,31 +210,28 @@ class LLMSession:
         repo: str,
         problem_statement: str,
         hints_text: str = "",
-        file_paths: list[str] | None = None,
-        file_contents: str = "",
         repo_root: str,
         n_samples: int = 1,
     ) -> str:
         import asyncio
         import subprocess
 
-        from mellea.backends.tools import tool
+        from mellea.agent.tools import make_agent_tools
         from mellea.stdlib.context import ChatContext
         from mellea.stdlib.frameworks.react import react
 
-        from mcode.agent.tools import get_diff, make_tools
+        tools = make_agent_tools(repo_root)
 
-        tool_fns = make_tools(repo_root)
-        tools = [tool(fn, name=name) for name, fn in tool_fns.items()]
+        # Build repo map for initial context.
+        repo_map_text = ""
+        try:
+            from mellea.agent.repomap import build_repo_map
 
-        if file_contents:
-            file_hint = f"\n\nRelevant source files:\n{file_contents}"
-        elif file_paths:
-            file_hint = "\n\nFiles likely relevant (from BM25 ranking):\n" + "\n".join(
-                f"  - {f}" for f in file_paths
-            )
-        else:
-            file_hint = ""
+            repo_map_text = build_repo_map(repo_root, problem_statement, max_tokens=4096)
+        except Exception as e:
+            print(f"  [repo_map] failed: {e}", flush=True)
+
+        repo_map_block = f"\n\nRepository structure:\n{repo_map_text}" if repo_map_text else ""
         hints_block = f"\n\nAdditional context:\n{hints_text.strip()}" if hints_text.strip() else ""
 
         system_prompt = (
@@ -247,7 +244,7 @@ class LLMSession:
         goal = (
             f"Fix this bug in {repo} by editing the existing source code.\n\n"
             f"Issue:\n{problem_statement.strip()}"
-            f"{file_hint}{hints_block}\n\n"
+            f"{repo_map_block}{hints_block}\n\n"
             "Only edit existing files. Do not create new files or test scripts."
         )
 
@@ -274,7 +271,7 @@ class LLMSession:
                 print(f"  [react] timed out after {timeout_s}s", flush=True)
             except RuntimeError:
                 print("  [react] budget exhausted without final_answer", flush=True)
-            return get_diff(repo_root)
+            return _get_diff(repo_root)
 
         def _reset_repo():
             subprocess.run(["git", "checkout", "."], cwd=repo_root, capture_output=True)
@@ -320,7 +317,19 @@ class LLMSession:
             # Fall back to longest diff
             non_empty.sort(key=len, reverse=True)
             return non_empty[0]
-        return get_diff(repo_root)
+        return _get_diff(repo_root)
+
+
+def _get_diff(repo_root: str) -> str:
+    import subprocess
+
+    result = subprocess.run(
+        ["git", "diff", "HEAD"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout
 
 
 def _code_system_prompt(task: Task) -> str:

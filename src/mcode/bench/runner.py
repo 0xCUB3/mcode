@@ -12,7 +12,6 @@ from rich.progress import Progress
 
 from mcode.bench.results import ResultsDB, RunSummary
 from mcode.bench.tasks import Task, load_benchmark
-from mcode.context.localize import localize as localize_files
 from mcode.execution.sandbox import DockerSandbox
 from mcode.llm.session import LLMSession
 
@@ -266,15 +265,10 @@ class BenchmarkRunner:
             with live_sandbox.repo_context(task) as repo_root:
                 try:
                     with self.llm.open():
-                        loc_files, _ = localize_files(
-                            str(repo_root),
-                            task.problem_statement,
-                        )
                         patch = self.llm.generate_patch(
                             repo=task.repo,
                             problem_statement=task.problem_statement,
                             hints_text=task.hints_text or "",
-                            file_paths=loc_files,
                             repo_root=str(repo_root),
                         )
                 except Exception as e:
@@ -346,15 +340,10 @@ class BenchmarkRunner:
         with swe_sandbox.repo_context(task.raw_instance) as repo_root:
             try:
                 with self.llm.open():
-                    loc_files, _ = localize_files(
-                        str(repo_root),
-                        task.problem_statement,
-                    )
                     patch = self.llm.generate_patch(
                         repo=task.repo,
                         problem_statement=task.problem_statement,
                         hints_text=task.hints_text or "",
-                        file_paths=loc_files,
                         repo_root=str(repo_root),
                     )
             except Exception as e:

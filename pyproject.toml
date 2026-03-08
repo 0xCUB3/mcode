@@ -7,12 +7,10 @@ requires-python = ">=3.11"
 dependencies = [
   "typer>=0.12.0",
   "rich>=13.0.0",
-  "mellea>=0.3.2",
+  "mellea[agent] @ git+https://github.com/0xCUB3/mellea",
   "docker>=7.0.0",
   "pydantic>=2.0.0",
   "requests>=2.31.0",
-  "tree-sitter>=0.21.0",
-  "tree-sitter-python>=0.21.0",
 ]
 
 [project.optional-dependencies]
@@ -36,6 +34,9 @@ mcode = "mcode.cli:app"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.ruff]
 line-length = 100
