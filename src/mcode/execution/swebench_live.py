@@ -120,7 +120,20 @@ class SWEbenchLiveSandbox:
                 buf.seek(0)
                 with tarfile.open(fileobj=buf) as tar:
                     tar.extractall(dest)
-                yield Path(dest) / "testbed"
+                testbed = Path(dest) / "testbed"
+                # Normalize permissions: Docker images may have root-only files.
+                import stat
+
+                for p in testbed.rglob("*"):
+                    try:
+                        mode = p.stat().st_mode
+                        if p.is_dir():
+                            p.chmod(mode | stat.S_IRWXU)
+                        else:
+                            p.chmod(mode | stat.S_IRUSR | stat.S_IWUSR)
+                    except OSError:
+                        pass
+                yield testbed
             finally:
                 container.remove(force=True)
                 shutil.rmtree(dest, ignore_errors=True)
