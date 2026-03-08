@@ -51,12 +51,7 @@ def _load_runs_csv(path: Path) -> list[RunRow]:
 
 
 def _esc(s: str) -> str:
-    return (
-        s.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
 def _bar_chart_svg(
@@ -76,7 +71,7 @@ def _bar_chart_svg(
     if not rows:
         lines = [
             f'<text x="{x0}" y="{y0}" font-size="18" font-weight="700">{_esc(title)}</text>',
-            f'<text x="{x0}" y="{y0+26}" font-size="14" fill="#666">No data.</text>',
+            f'<text x="{x0}" y="{y0 + 26}" font-size="14" fill="#666">No data.</text>',
         ]
         return lines, 52
 
@@ -115,13 +110,13 @@ def _bar_chart_svg(
             f'stroke="{grid}" stroke-width="1" />'
         )
         lines.append(
-            f'<text x="{gx}" y="{axis_top-6}" font-size="12" fill="{subtext}" '
+            f'<text x="{gx}" y="{axis_top - 6}" font-size="12" fill="{subtext}" '
             f'text-anchor="middle">{pct}%</text>'
         )
 
     # Y label
     lines.append(
-        f'<text x="{x0}" y="{axis_top-6}" font-size="12" fill="{subtext}">{_esc(y_label)}</text>'
+        f'<text x="{x0}" y="{axis_top - 6}" font-size="12" fill="{subtext}">{_esc(y_label)}</text>'
     )
 
     # Rows
@@ -131,7 +126,7 @@ def _bar_chart_svg(
         bar_len = max(0, min(bar_w, int(bar_w * (rr.pass_rate))))
         # left label
         lines.append(
-            f'<text x="{x0}" y="{y+bar_h}" font-size="13" fill="{text}">{_esc(label)}</text>'
+            f'<text x="{x0}" y="{y + bar_h}" font-size="13" fill="{text}">{_esc(label)}</text>'
         )
         # background bar
         lines.append(
@@ -143,10 +138,10 @@ def _bar_chart_svg(
             f'fill="{bar_fill}" rx="4" />'
         )
         # right text: passed/total + pct
-        pct_txt = f"{rr.pass_rate*100:.1f}%"
+        pct_txt = f"{rr.pass_rate * 100:.1f}%"
         right = f"{rr.passed}/{rr.total}  ({pct_txt})"
         lines.append(
-            f'<text x="{axis_x + bar_w + 12}" y="{y+bar_h}" font-size="13" fill="{text}">'
+            f'<text x="{axis_x + bar_w + 12}" y="{y + bar_h}" font-size="13" fill="{text}">'
             f"{_esc(right)}</text>"
         )
         y += row_h

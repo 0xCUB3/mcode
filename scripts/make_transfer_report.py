@@ -162,9 +162,7 @@ def _score_configs(
             speed_loss = _normalize(metric.sec_per_solve, min_speed, max_speed)
             timeout_loss = _normalize(metric.timeout_rate, min_timeout, max_timeout)
             regrets[benchmark] = (
-                (w_pass * pass_loss)
-                + (w_speed * speed_loss)
-                + (w_timeout * timeout_loss)
+                (w_pass * pass_loss) + (w_speed * speed_loss) + (w_timeout * timeout_loss)
             )
 
         worst_benchmark, max_regret = max(regrets.items(), key=lambda item: item[1])
@@ -264,16 +262,13 @@ def _write_markdown(
     lines.append("# Transfer report")
     lines.append("")
     lines.append(
-        "Ranking config robustness across benchmarks using minimax regret "
-        "(lower is better)."
+        "Ranking config robustness across benchmarks using minimax regret (lower is better)."
     )
     lines.append("")
     lines.append("## Inputs")
     lines.append("")
     lines.append(f"- Benchmarks: {', '.join(benchmarks)}")
-    lines.append(
-        f"- Weights: pass={w_pass:.2f}, speed={w_speed:.2f}, timeout={w_timeout:.2f}"
-    )
+    lines.append(f"- Weights: pass={w_pass:.2f}, speed={w_speed:.2f}, timeout={w_timeout:.2f}")
     for db_dir in db_dirs:
         lines.append(f"- DB dir: `{db_dir}`")
     lines.append("")
@@ -306,8 +301,7 @@ def _write_markdown(
     lines.append("## Findings")
     lines.append("")
     lines.append(
-        f"- Most robust config is `{top.config.label()}` "
-        f"(lowest max regret: {top.max_regret:.3f})."
+        f"- Most robust config is `{top.config.label()}` (lowest max regret: {top.max_regret:.3f})."
     )
     lines.append(
         f"- Fastest config by mean sec/solve is `{fastest.config.label()}` "
