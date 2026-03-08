@@ -10,6 +10,27 @@
 - **Split:** SWE-bench Live Lite (300 instances)
 - **Evaluation:** Docker containers via podman Docker-compat API
 
+## Commands
+
+Start vLLM server:
+
+```bash
+cd /u/skula/mcode
+bash deploy/bluevela/start-vllm.sh
+```
+
+Run 1 (budget=3):
+
+```bash
+SWB_SPLIT=lite LOOP_BUDGET=3 bash deploy/bluevela/run-swebench-live.sh
+```
+
+Run 2 (budget=15):
+
+```bash
+SWB_SPLIT=lite LOOP_BUDGET=15 bash deploy/bluevela/run-swebench-live.sh
+```
+
 ## Results
 
 | Metric | Run 1 (budget=3) | Run 2 (budget=15) |
