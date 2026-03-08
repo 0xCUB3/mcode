@@ -176,7 +176,10 @@ class BenchmarkRunner:
         }
 
     def _run_swebench_lite(
-        self, *, limit: int | None, task_ids: list[str] | None = None,
+        self,
+        *,
+        limit: int | None,
+        task_ids: list[str] | None = None,
     ) -> RunSummary:
         from mcode.bench.swebench_lite import load_swebench_lite
         from mcode.execution.swebench import SWEbenchSandbox
@@ -224,7 +227,10 @@ class BenchmarkRunner:
         return RunSummary(run_id=run_id, total=total, passed=passed)
 
     def _run_swebench_live(
-        self, *, limit: int | None, task_ids: list[str] | None = None,
+        self,
+        *,
+        limit: int | None,
+        task_ids: list[str] | None = None,
     ) -> RunSummary:
         from mcode.bench.swebench_live import load_swebench_live
         from mcode.execution.swebench_live import SWEbenchLiveSandbox

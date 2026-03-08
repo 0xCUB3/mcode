@@ -203,7 +203,7 @@ class ResultsDB:
                 SUM(tr.passed) AS passed
               FROM runs r
               JOIN task_results tr ON tr.run_id = r.id
-              WHERE {' AND '.join(where)}
+              WHERE {" AND ".join(where)}
               GROUP BY r.id
               ORDER BY r.timestamp DESC
             """
@@ -252,8 +252,8 @@ class ResultsDB:
             SUM(tr.passed) AS passed
           FROM runs r
           JOIN task_results tr ON tr.run_id = r.id
-          WHERE {' AND '.join(where)}
-          GROUP BY {', '.join(group_cols)}
+          WHERE {" AND ".join(where)}
+          GROUP BY {", ".join(group_cols)}
           ORDER BY
             r.benchmark,
             r.model_id,
@@ -339,7 +339,7 @@ class ResultsDB:
                 SUM(tr.time_ms) AS time_ms_total
               FROM runs r
               JOIN task_results tr ON tr.run_id = r.id
-              WHERE {' AND '.join(where)}
+              WHERE {" AND ".join(where)}
               GROUP BY r.id
               ORDER BY r.timestamp DESC
             """
@@ -429,8 +429,8 @@ class ResultsDB:
             SUM(tr.time_ms) AS time_ms_total
           FROM runs r
           JOIN task_results tr ON tr.run_id = r.id
-          WHERE {' AND '.join(where)}
-          GROUP BY {', '.join(group_cols)}
+          WHERE {" AND ".join(where)}
+          GROUP BY {", ".join(group_cols)}
           ORDER BY
             r.benchmark,
             r.model_id,
@@ -453,7 +453,7 @@ class ResultsDB:
                 tr.time_ms AS time_ms
               FROM runs r
               JOIN task_results tr ON tr.run_id = r.id
-              WHERE {' AND '.join(where)}
+              WHERE {" AND ".join(where)}
             """
             detail_rows = self.conn.execute(detail_sql, params).fetchall()
             times_by_key: dict[tuple, list[int]] = {}
@@ -852,9 +852,10 @@ def export_csv(
     run_rows = 0
     task_rows = 0
 
-    with runs_csv.open("w", newline="", encoding="utf-8") as rf, tasks_csv.open(
-        "w", newline="", encoding="utf-8"
-    ) as tf:
+    with (
+        runs_csv.open("w", newline="", encoding="utf-8") as rf,
+        tasks_csv.open("w", newline="", encoding="utf-8") as tf,
+    ):
         runs_writer = csv.DictWriter(rf, fieldnames=runs_fields)
         tasks_writer = csv.DictWriter(tf, fieldnames=task_fields)
         runs_writer.writeheader()

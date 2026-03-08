@@ -17,4 +17,3 @@ def test_backend_kwargs_for_openai(monkeypatch):
         "base_url": "http://vllm:8000/v1",
         "api_key": "dummy",
     }
-

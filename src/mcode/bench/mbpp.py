@@ -9,7 +9,9 @@ import requests
 
 from mcode.bench.tasks import Task
 
-MBPP_URL = "https://raw.githubusercontent.com/google-research/google-research/master/mbpp/mbpp.jsonl"
+MBPP_URL = (
+    "https://raw.githubusercontent.com/google-research/google-research/master/mbpp/mbpp.jsonl"
+)
 
 
 def load_mbpp(cache_dir: Path) -> Iterable[Task]:
