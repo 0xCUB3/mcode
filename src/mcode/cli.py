@@ -69,6 +69,27 @@ def _validate_shards(
     return shard_count, shard_index
 
 
+def _parse_task_ids(raw: str | None) -> list[str] | None:
+    """Parse --task-ids: comma-separated string or path to JSON file."""
+    if not raw:
+        return None
+    p = Path(raw)
+    if p.exists():
+        import json
+
+        data = json.loads(p.read_text())
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict) and "tasks" in data:
+            ids: list[str] = []
+            for v in data["tasks"].values():
+                if isinstance(v, list):
+                    ids.extend(v)
+            return ids
+        raise typer.BadParameter(f"Cannot parse task IDs from {raw}")
+    return [t.strip() for t in raw.split(",") if t.strip()]
+
+
 @contextmanager
 def _open_results_view(db_paths: tuple[Path, ...] | list[Path]):
     if not db_paths:
@@ -2175,6 +2196,10 @@ def bench_swebench_live(
         str,
         typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
     ] = "best_attempt",
+    task_ids: Annotated[
+        str | None,
+        typer.Option("--task-ids", help="Comma-separated task IDs to run (or path to JSON file)"),
+    ] = None,
 ) -> None:
     """Run Microsoft SWE-bench-Live benchmark."""
     strategy_name = strategy.strip().lower()
@@ -2209,8 +2234,9 @@ def bench_swebench_live(
         task_shard_count=shard_count,
         task_shard_index=shard_index,
     )
+    parsed_task_ids = _parse_task_ids(task_ids)
     runner = BenchmarkRunner(config=config, results_db=ResultsDB(db))
-    summary = runner.run_benchmark("swebench-live", limit=limit)
+    summary = runner.run_benchmark("swebench-live", limit=limit, task_ids=parsed_task_ids)
     _print_run_summary(
         summary=summary,
         benchmark="swebench-live",

@@ -70,14 +70,20 @@ class BenchmarkRunner:
         )
         self.sandbox = _make_sandbox(config)
 
-    def run_benchmark(self, benchmark: str, *, limit: int | None = None) -> RunSummary:
+    def run_benchmark(
+        self,
+        benchmark: str,
+        *,
+        limit: int | None = None,
+        task_ids: list[str] | None = None,
+    ) -> RunSummary:
         name = benchmark.lower().strip()
         if name in {"swebench-lite", "swebench_lite"}:
             self.llm.check_available()
-            return self._run_swebench_lite(limit=limit)
+            return self._run_swebench_lite(limit=limit, task_ids=task_ids)
         if name in {"swebench-live", "swebench_live"}:
             self.llm.check_available()
-            return self._run_swebench_live(limit=limit)
+            return self._run_swebench_live(limit=limit, task_ids=task_ids)
 
         self.sandbox.check_available()
         self.sandbox.ensure_image()
@@ -169,7 +175,9 @@ class BenchmarkRunner:
             **last_run_detail,
         }
 
-    def _run_swebench_lite(self, *, limit: int | None) -> RunSummary:
+    def _run_swebench_lite(
+        self, *, limit: int | None, task_ids: list[str] | None = None,
+    ) -> RunSummary:
         from mcode.bench.swebench_lite import load_swebench_lite
         from mcode.execution.swebench import SWEbenchSandbox
 
@@ -178,6 +186,9 @@ class BenchmarkRunner:
             split=self.config.swebench_split,
             limit=limit,
         )
+        if task_ids:
+            id_set = set(task_ids)
+            tasks = [t for t in tasks if t.instance_id in id_set]
         tasks = _apply_task_shard(tasks, self.config.task_shard_count, self.config.task_shard_index)
         config = _augment_run_config(asdict(self.config))
         config["planned_task_count"] = len(tasks)
@@ -212,7 +223,9 @@ class BenchmarkRunner:
 
         return RunSummary(run_id=run_id, total=total, passed=passed)
 
-    def _run_swebench_live(self, *, limit: int | None) -> RunSummary:
+    def _run_swebench_live(
+        self, *, limit: int | None, task_ids: list[str] | None = None,
+    ) -> RunSummary:
         from mcode.bench.swebench_live import load_swebench_live
         from mcode.execution.swebench_live import SWEbenchLiveSandbox
 
@@ -221,6 +234,9 @@ class BenchmarkRunner:
             split=self.config.swebench_split,
             limit=limit,
         )
+        if task_ids:
+            id_set = set(task_ids)
+            tasks = [t for t in tasks if t.instance_id in id_set]
         tasks = _apply_task_shard(tasks, self.config.task_shard_count, self.config.task_shard_index)
         config = _augment_run_config(asdict(self.config))
         config["planned_task_count"] = len(tasks)
