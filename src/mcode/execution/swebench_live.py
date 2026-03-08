@@ -92,6 +92,45 @@ class SWEbenchLiveSandbox:
                 "Docker is required for SWE-bench Live evaluation; start Docker and retry."
             ) from e
 
+    def prepare_images(self, tasks, *, max_workers: int = 4) -> None:
+        """Pre-pull Docker images for all tasks in parallel."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        import docker
+
+        client = self._get_client()
+        image_names: list[str] = []
+        for task in tasks:
+            name = _ms_image_name(task.instance_id)
+            try:
+                client.images.get(name)
+            except docker.errors.ImageNotFound:
+                image_names.append(name)
+
+        if not image_names:
+            print(f"  [images] all {len(tasks)} images already cached", flush=True)
+            return
+
+        print(
+            f"  [images] pulling {len(image_names)}/{len(tasks)} images ({max_workers} workers)...",
+            flush=True,
+        )
+
+        def _pull(name: str) -> str:
+            try:
+                client.images.pull(name)
+                return f"ok: {name}"
+            except Exception as e:
+                return f"fail: {name}: {e}"
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(_pull, n): n for n in image_names}
+            done = 0
+            for fut in as_completed(futures):
+                done += 1
+                result = fut.result()
+                print(f"  [images] ({done}/{len(image_names)}) {result}", flush=True)
+
     def repo_context(self, task):
         """Context manager yielding a temp dir with the repo from the task's Docker image."""
         import shutil

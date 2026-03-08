@@ -257,6 +257,7 @@ class BenchmarkRunner:
             mem_limit=self.config.swebench_mem_limit,
             pids_limit=self.config.swebench_pids_limit,
         )
+        live_sandbox.prepare_images(tasks)
 
         passed = 0
         total = 0
