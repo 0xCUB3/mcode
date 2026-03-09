@@ -2196,6 +2196,10 @@ def bench_swebench_live(
         str,
         typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
     ] = "best_attempt",
+    n_samples: Annotated[
+        int,
+        typer.Option("--n-samples", min=1, help="Samples per task for majority voting"),
+    ] = 1,
     task_ids: Annotated[
         str | None,
         typer.Option("--task-ids", help="Comma-separated task IDs to run (or path to JSON file)"),
@@ -2233,6 +2237,7 @@ def bench_swebench_live(
         swebench_pids_limit=pids_limit,
         task_shard_count=shard_count,
         task_shard_index=shard_index,
+        n_samples=n_samples,
     )
     parsed_task_ids = _parse_task_ids(task_ids)
     runner = BenchmarkRunner(config=config, results_db=ResultsDB(db))

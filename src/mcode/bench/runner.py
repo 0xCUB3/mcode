@@ -51,6 +51,7 @@ class BenchConfig:
     swebench_mem_limit: str = "4g"
     swebench_pids_limit: int = 512
     lcb_cutoff: str | None = None
+    n_samples: int = 1
 
 
 class BenchmarkRunner:
@@ -293,6 +294,7 @@ class BenchmarkRunner:
                             problem_statement=task.problem_statement,
                             hints_text=task.hints_text or "",
                             repo_root=str(repo_root),
+                            n_samples=self.config.n_samples,
                             test_cmds=[],  # tests need Docker env, can't run in bare testbed
                         )
                 except Exception as e:
