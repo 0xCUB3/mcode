@@ -195,37 +195,21 @@ class LLMSession:
         repo_map_block = f"\n\nRepository structure:\n{repo_map_text}" if repo_map_text else ""
         hints_block = f"\n\nAdditional context:\n{hints_text.strip()}" if hints_text.strip() else ""
 
-        has_tests = test_fn is not None or bool(test_cmds)
-        if has_tests:
-            strategy_steps = (
-                "Strategy:\n"
-                "1. Read the issue carefully\n"
-                "2. Search the codebase to find the relevant code\n"
-                "3. Identify the root cause\n"
-                "4. Make the minimal edit to fix it\n"
-                "5. Run tests with run_tests('default') to verify your fix\n"
-                "6. If tests fail, read the output and iterate\n"
-                "7. Call final_answer when tests pass"
-            )
-        else:
-            strategy_steps = (
-                "Strategy:\n"
-                "1. Read the issue carefully\n"
-                "2. Search the codebase to find the relevant code\n"
-                "3. Identify the root cause\n"
-                "4. Make the minimal edit to fix it\n"
-                "5. Call final_answer when done"
-            )
-
         system_prompt = (
             "You are an expert software engineer fixing a bug in an "
             "open-source repository. You MUST edit existing source files "
             "to fix the bug. Do NOT create new files. Do NOT write test "
-            "scripts. Only modify the existing code that contains the bug.\n\n" + strategy_steps
+            "scripts. Only modify the existing code that contains the bug.\n\n"
+            "Strategy:\n"
+            "1. Read the issue carefully\n"
+            "2. Search the codebase to find the relevant code\n"
+            "3. Identify the root cause\n"
+            "4. Make the minimal edit to fix it\n"
+            "5. Call final_answer when done"
         )
 
         test_block = ""
-        if has_tests:
+        if test_fn is not None or test_cmds:
             test_block = (
                 "\n\nYou have a run_tests tool. Use it after editing to verify "
                 "your fix. Pass 'default' to run the task's test suite."
