@@ -13,12 +13,6 @@ class CodeOutput(BaseModel):
     code: str = Field(..., description="Python code only, no markdown.")
 
 
-class FileLocalization(BaseModel):
-    files: list[str] = Field(
-        ..., description="File paths most likely to need editing, from the candidate list"
-    )
-
-
 @dataclass
 class LLMSession:
     model_id: str
@@ -169,48 +163,6 @@ class LLMSession:
             model_options=self._model_options(system_prompt=system_prompt),
         )
 
-    def localize_files(
-        self,
-        *,
-        candidates: list[str],
-        problem_statement: str,
-        max_files: int = 5,
-    ) -> list[str]:
-        system_prompt = (
-            "You are an expert at localizing bugs in code repositories. "
-            "Given a ranked list of candidate files and an issue description, "
-            "pick 1 to 5 files most likely to need editing. "
-            "Choose ONLY from the candidate list. "
-            "Reply with ONLY the file paths, one per line, nothing else."
-        )
-        candidate_list = "\n".join(f"  {i + 1}. {f}" for i, f in enumerate(candidates))
-        prompt = (
-            f"Issue:\n{problem_statement.strip()}\n\n"
-            f"Candidate files (BM25-ranked):\n{candidate_list}\n\n"
-            f"Pick 1-{max_files} files from the list above that need editing to fix this issue.\n"
-            "Reply with ONLY the file paths, one per line."
-        )
-        try:
-            result = self._m.instruct(
-                prompt,
-                strategy=None,
-                model_options=self._model_options(system_prompt=system_prompt),
-            )
-            # Parse plain text response: extract candidate paths from output
-            candidate_set = set(candidates)
-            raw_lines = (result.value or "").strip().splitlines()
-            valid = []
-            for line in raw_lines:
-                line = line.strip().lstrip("0123456789.-) ")
-                if line in candidate_set and line not in valid:
-                    valid.append(line)
-            if valid:
-                print(f"  llm localized: {valid}", flush=True)
-                return valid[:max_files]
-        except Exception as e:
-            print(f"  llm localization failed: {e}", flush=True)
-        return candidates[:max_files]
-
     def generate_patch(
         self,
         *,
@@ -232,49 +184,15 @@ class LLMSession:
 
         # Build repo map for initial context.
         repo_map_text = ""
-        localized_files: list[str] = []
         try:
-            from pathlib import Path
-
-            from mellea.agent.repomap import _SKIP_DIRS, _SOURCE_EXTS, build_repo_map
-            from mellea.agent.repomap._bm25 import rank_bm25
+            from mellea.agent.repomap import build_repo_map
 
             repo_map_text = build_repo_map(repo_root, problem_statement, max_tokens=2048)
-
-            # Localization phase: BM25 rank -> LLM pick top files
-            root = Path(repo_root)
-            source_files: list[str] = []
-            try:
-                for p in root.rglob("*"):
-                    if (
-                        p.is_file()
-                        and p.suffix.lower() in _SOURCE_EXTS
-                        and not any(s in p.parts for s in _SKIP_DIRS)
-                    ):
-                        source_files.append(str(p))
-            except OSError:
-                pass
-            if source_files:
-                bm25_top = rank_bm25(source_files, problem_statement, repo_root, top_n=20)
-                candidates = [str(Path(f).relative_to(repo_root)) for f in bm25_top]
-                localized_files = self.localize_files(
-                    candidates=candidates,
-                    problem_statement=problem_statement,
-                    max_files=5,
-                )
         except Exception as e:
-            print(f"  [repo_map/localize] failed: {e}", flush=True)
+            print(f"  [repo_map] failed: {e}", flush=True)
 
         repo_map_block = f"\n\nRepository structure:\n{repo_map_text}" if repo_map_text else ""
         hints_block = f"\n\nAdditional context:\n{hints_text.strip()}" if hints_text.strip() else ""
-
-        localized_block = ""
-        if localized_files:
-            file_list = ", ".join(localized_files)
-            localized_block = (
-                f"\n\nFiles most likely to need editing: {file_list}\n"
-                "Use read_file to examine these files."
-            )
 
         system_prompt = (
             "You are an expert software engineer fixing a bug in an "
@@ -282,10 +200,10 @@ class LLMSession:
             "to fix the bug. Do NOT create new files. Do NOT write test "
             "scripts. Only modify the existing code that contains the bug.\n\n"
             "Strategy:\n"
-            "1. Read the issue and localized files carefully\n"
-            "2. Identify the root cause\n"
-            "3. Make the minimal edit to fix it\n"
-            "4. Run tests to verify your fix works\n"
+            "1. Read the issue carefully\n"
+            "2. Search the codebase to find the relevant code\n"
+            "3. Identify the root cause\n"
+            "4. Make the minimal edit to fix it\n"
             "5. Call final_answer when done"
         )
 
@@ -299,7 +217,7 @@ class LLMSession:
         goal = (
             f"Fix this bug in {repo} by editing the existing source code.\n\n"
             f"Issue:\n{problem_statement.strip()}"
-            f"{repo_map_block}{localized_block}{hints_block}{test_block}\n\n"
+            f"{repo_map_block}{hints_block}{test_block}\n\n"
             "Only edit existing files. Do not create new files or test scripts."
         )
 
