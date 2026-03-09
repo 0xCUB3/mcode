@@ -288,15 +288,23 @@ class BenchmarkRunner:
         try:
             with live_sandbox.repo_context(task) as repo_root:
                 try:
-                    with self.llm.open():
-                        patch = self.llm.generate_patch(
-                            repo=task.repo,
-                            problem_statement=task.problem_statement,
-                            hints_text=task.hints_text or "",
-                            repo_root=str(repo_root),
-                            n_samples=self.config.n_samples,
-                            test_cmds=[],  # tests need Docker env, can't run in bare testbed
-                        )
+                    test_fn, test_cleanup = _make_docker_test_fn(
+                        live_sandbox,
+                        task,
+                        str(repo_root),
+                    )
+                    try:
+                        with self.llm.open():
+                            patch = self.llm.generate_patch(
+                                repo=task.repo,
+                                problem_statement=task.problem_statement,
+                                hints_text=task.hints_text or "",
+                                repo_root=str(repo_root),
+                                n_samples=self.config.n_samples,
+                                test_fn=test_fn,
+                            )
+                    finally:
+                        test_cleanup()
                 except Exception as e:
                     elapsed_ms = int((time.time() - start) * 1000)
                     tb = traceback.format_exc()
@@ -629,3 +637,90 @@ def _dataset_metadata(benchmark: str, *, cache_dir: Path) -> dict[str, str | Non
             "variant": name.replace("bigcodebench-", ""),
         }
     return None
+
+
+def _make_docker_test_fn(live_sandbox, task, testbed_path: str):
+    """Create a test runner that execs commands inside a Docker container.
+
+    The container bind-mounts *testbed_path* at ``/testbed`` so host edits
+    made by the agent are immediately visible.  If the container cannot be
+    created (e.g. Docker unavailable), returns ``None`` so the agent simply
+    runs without test feedback.
+    """
+    from mcode.execution.swebench_live import _exec_in_container
+
+    container = None
+
+    def _ensure_container():
+        nonlocal container
+        if container is not None:
+            return container
+        try:
+            client = live_sandbox._get_client()
+            from mcode.execution.swebench_live import _ms_image_name
+
+            image_name = _ms_image_name(task.instance_id)
+            import docker as _docker
+
+            try:
+                client.images.get(image_name)
+            except _docker.errors.ImageNotFound:
+                client.images.pull(image_name)
+
+            container = client.containers.run(
+                image=image_name,
+                command="tail -f /dev/null",
+                detach=True,
+                volumes={testbed_path: {"bind": "/testbed", "mode": "rw"}},
+                cap_drop=["ALL"],
+                security_opt=["no-new-privileges"],
+                network_disabled=True,
+                mem_limit=live_sandbox.mem_limit,
+                pids_limit=live_sandbox.pids_limit,
+            )
+            # Apply test patch inside container if available.
+            if task.test_patch:
+                from mcode.execution.swebench_live import _copy_to_container
+
+                _copy_to_container(container, "/tmp/test_patch.diff", task.test_patch)
+                _exec_in_container(
+                    container,
+                    "git apply --verbose /tmp/test_patch.diff || "
+                    "git apply --verbose --reject /tmp/test_patch.diff",
+                    workdir="/testbed",
+                    timeout_s=60,
+                )
+            return container
+        except Exception as e:
+            print(f"  [test_fn] failed to create container: {e}", flush=True)
+            return None
+
+    def test_fn(test_cmd: str) -> str:
+        c = _ensure_container()
+        if c is None:
+            return "Error: test container unavailable"
+        if test_cmd.strip().lower() == "default":
+            cmds = task.test_cmds
+        else:
+            cmds = [test_cmd]
+        outputs: list[str] = []
+        for cmd in cmds:
+            if not cmd.strip():
+                continue
+            out, exit_code = _exec_in_container(c, cmd, workdir="/testbed", timeout_s=120)
+            if len(out) > 4000:
+                out = out[-4000:]
+            status = "PASSED" if exit_code == 0 else f"FAILED (exit {exit_code})"
+            outputs.append(f"$ {cmd}\n{status}\n{out}")
+        return "\n---\n".join(outputs) if outputs else "No test commands available."
+
+    def _cleanup():
+        nonlocal container
+        if container is not None:
+            try:
+                container.remove(force=True)
+            except Exception:
+                pass
+            container = None
+
+    return test_fn, _cleanup

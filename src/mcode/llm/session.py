@@ -172,6 +172,7 @@ class LLMSession:
         repo_root: str,
         n_samples: int = 1,
         test_cmds: list[str] | None = None,
+        test_fn: object | None = None,
     ) -> str:
         import asyncio
         import subprocess
@@ -180,7 +181,7 @@ class LLMSession:
         from mellea.stdlib.context import ChatContext
         from mellea.stdlib.frameworks.react import react
 
-        tools = make_agent_tools(repo_root, test_cmds=test_cmds)
+        tools = make_agent_tools(repo_root, test_cmds=test_cmds, test_fn=test_fn)
 
         # Build repo map for initial context.
         repo_map_text = ""
@@ -194,21 +195,37 @@ class LLMSession:
         repo_map_block = f"\n\nRepository structure:\n{repo_map_text}" if repo_map_text else ""
         hints_block = f"\n\nAdditional context:\n{hints_text.strip()}" if hints_text.strip() else ""
 
+        has_tests = test_fn is not None or bool(test_cmds)
+        if has_tests:
+            strategy_steps = (
+                "Strategy:\n"
+                "1. Read the issue carefully\n"
+                "2. Search the codebase to find the relevant code\n"
+                "3. Identify the root cause\n"
+                "4. Make the minimal edit to fix it\n"
+                "5. Run tests with run_tests('default') to verify your fix\n"
+                "6. If tests fail, read the output and iterate\n"
+                "7. Call final_answer when tests pass"
+            )
+        else:
+            strategy_steps = (
+                "Strategy:\n"
+                "1. Read the issue carefully\n"
+                "2. Search the codebase to find the relevant code\n"
+                "3. Identify the root cause\n"
+                "4. Make the minimal edit to fix it\n"
+                "5. Call final_answer when done"
+            )
+
         system_prompt = (
             "You are an expert software engineer fixing a bug in an "
             "open-source repository. You MUST edit existing source files "
             "to fix the bug. Do NOT create new files. Do NOT write test "
-            "scripts. Only modify the existing code that contains the bug.\n\n"
-            "Strategy:\n"
-            "1. Read the issue carefully\n"
-            "2. Search the codebase to find the relevant code\n"
-            "3. Identify the root cause\n"
-            "4. Make the minimal edit to fix it\n"
-            "5. Call final_answer when done"
+            "scripts. Only modify the existing code that contains the bug.\n\n" + strategy_steps
         )
 
         test_block = ""
-        if test_cmds:
+        if has_tests:
             test_block = (
                 "\n\nYou have a run_tests tool. Use it after editing to verify "
                 "your fix. Pass 'default' to run the task's test suite."
