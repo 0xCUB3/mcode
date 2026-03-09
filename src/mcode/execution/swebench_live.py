@@ -172,6 +172,38 @@ class SWEbenchLiveSandbox:
                             p.chmod(mode | stat.S_IRUSR | stat.S_IWUSR)
                     except OSError:
                         pass
+
+                # Ensure .git exists so git diff HEAD can produce patches.
+                import subprocess
+
+                git_dir = testbed / ".git"
+                if not git_dir.exists():
+                    print(
+                        "  [testbed] .git missing, initializing repo",
+                        flush=True,
+                    )
+                    subprocess.run(
+                        ["git", "init"],
+                        cwd=str(testbed),
+                        capture_output=True,
+                    )
+                    subprocess.run(
+                        ["git", "add", "-A"],
+                        cwd=str(testbed),
+                        capture_output=True,
+                    )
+                    subprocess.run(
+                        ["git", "commit", "-m", "baseline", "--allow-empty"],
+                        cwd=str(testbed),
+                        capture_output=True,
+                        env={
+                            **__import__("os").environ,
+                            "GIT_AUTHOR_NAME": "mcode",
+                            "GIT_AUTHOR_EMAIL": "mcode@test",
+                            "GIT_COMMITTER_NAME": "mcode",
+                            "GIT_COMMITTER_EMAIL": "mcode@test",
+                        },
+                    )
                 yield testbed
             finally:
                 container.remove(force=True)

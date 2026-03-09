@@ -1452,7 +1452,7 @@ wheels = [
 [[package]]
 name = "mellea"
 version = "0.3.2"
-source = { git = "https://github.com/0xCUB3/mellea#3e371e20652a76ad940391fb073cec30fad8d7fd" }
+source = { git = "https://github.com/0xCUB3/mellea#d797cb3632456256a5b941e4170b41b593b0178b" }
 dependencies = [
     { name = "click" },
     { name = "jinja2" },
@@ -1462,6 +1462,7 @@ dependencies = [
     { name = "openai" },
     { name = "pillow" },
     { name = "pydantic" },
+    { name = "pyyaml" },
     { name = "requests" },
     { name = "rouge-score" },
     { name = "typer" },

@@ -293,6 +293,7 @@ class BenchmarkRunner:
                             problem_statement=task.problem_statement,
                             hints_text=task.hints_text or "",
                             repo_root=str(repo_root),
+                            test_cmds=[],
                         )
                 except Exception as e:
                     elapsed_ms = int((time.time() - start) * 1000)
