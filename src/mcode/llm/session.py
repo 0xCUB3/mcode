@@ -195,18 +195,41 @@ class LLMSession:
         repo_map_block = f"\n\nRepository structure:\n{repo_map_text}" if repo_map_text else ""
         hints_block = f"\n\nAdditional context:\n{hints_text.strip()}" if hints_text.strip() else ""
 
-        system_prompt = (
-            "You are an expert software engineer fixing a bug in an "
-            "open-source repository. You MUST edit existing source files "
-            "to fix the bug. Do NOT create new files. Do NOT write test "
-            "scripts. Only modify the existing code that contains the bug.\n\n"
-            "Strategy:\n"
-            "1. Read the issue carefully\n"
-            "2. Search the codebase to find the relevant code\n"
-            "3. Identify the root cause\n"
-            "4. Make the minimal edit to fix it\n"
-            "5. Call final_answer when done"
-        )
+        if os.environ.get("MCODE_EXPLORE_PROMPT", "1") == "1":
+            system_prompt = (
+                "You are an expert software engineer fixing a bug in an "
+                "open-source repository. You MUST edit existing source files "
+                "to fix the bug. Do NOT create new files. Do NOT write test "
+                "scripts. Only modify the existing code that contains the bug.\n\n"
+                "Strategy:\n"
+                "1. EXPLORE: Read the issue carefully. Search the codebase to "
+                "find the relevant code. Read multiple files to understand "
+                "the context. Do NOT edit anything yet.\n"
+                "2. DIAGNOSE: Before making any edit, explain the root cause "
+                "in your reasoning. If you cannot explain exactly why the "
+                "current code is wrong, keep reading.\n"
+                "3. EDIT: Make the minimal fix. Change the fewest lines "
+                "possible. Prefer fixing the root cause over adding "
+                "workarounds.\n"
+                "4. VERIFY: Review your edit by reading the changed file. "
+                "Make sure you didn't break anything.\n"
+                "5. Call final_answer when done.\n\n"
+                "Do NOT jump to editing after reading just one file. "
+                "Understand the problem fully first."
+            )
+        else:
+            system_prompt = (
+                "You are an expert software engineer fixing a bug in an "
+                "open-source repository. You MUST edit existing source files "
+                "to fix the bug. Do NOT create new files. Do NOT write test "
+                "scripts. Only modify the existing code that contains the bug.\n\n"
+                "Strategy:\n"
+                "1. Read the issue carefully\n"
+                "2. Search the codebase to find the relevant code\n"
+                "3. Identify the root cause\n"
+                "4. Make the minimal edit to fix it\n"
+                "5. Call final_answer when done"
+            )
 
         test_block = ""
         if test_fn is not None or test_cmds:
@@ -227,6 +250,24 @@ class LLMSession:
 
         timeout_s = int(os.environ.get("MCODE_REACT_TIMEOUT", str(budget * 30)))
 
+        use_budget_warning = os.environ.get("MCODE_BUDGET_WARNING", "1") == "1"
+
+        def _budget_warning(turn, total, ctx):
+            if total > 3 and turn == total - 2:
+                from mellea.stdlib.components.chat import Message
+
+                ctx = ctx.add(
+                    Message(
+                        role="user",
+                        content=(
+                            "WARNING: You have 2 turns left. If you have already "
+                            "made your edit, call final_answer now. If not, make "
+                            "your best fix and call final_answer immediately."
+                        ),
+                    )
+                )
+            return ctx
+
         async def _one_attempt():
             try:
                 result, _ = await asyncio.wait_for(
@@ -237,6 +278,7 @@ class LLMSession:
                         tools=tools,
                         loop_budget=budget,
                         model_options=model_opts,
+                        on_turn=_budget_warning if use_budget_warning else None,
                     ),
                     timeout=timeout_s,
                 )
