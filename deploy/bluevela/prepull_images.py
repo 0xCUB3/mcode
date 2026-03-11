@@ -7,6 +7,7 @@ import sys
 def main(namespace: str, limit: int) -> None:
     import docker
     from datasets import load_dataset
+    from swebench.harness.test_spec.test_spec import make_test_spec
 
     ds = load_dataset("SWE-bench/SWE-bench_Lite", split="test")
     tasks = list(ds)[:limit]
@@ -18,15 +19,8 @@ def main(namespace: str, limit: int) -> None:
     cached = 0
 
     for i, task in enumerate(tasks):
-        iid = task["instance_id"]
-        # Build image name matching SWEBenchLiteSandbox convention
-        parts = iid.split("__")
-        if len(parts) == 2:
-            repo = parts[0].replace("/", "_").lower()
-            issue = parts[1]
-            name = f"{namespace}/sweb.eval.x86_64.{repo}_{issue}:latest"
-        else:
-            name = f"{namespace}/sweb.eval.x86_64.{iid.replace('/', '_').replace('__', '_').lower()}:latest"
+        spec = make_test_spec(task, namespace=namespace)
+        name = spec.instance_image_key
 
         try:
             client.images.get(name)
