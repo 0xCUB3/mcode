@@ -274,7 +274,8 @@ class BenchmarkRunner:
                 if result["passed"]:
                     passed += 1
                 self.results_db.save_task_result(run_id, result)
-                live_sandbox.remove_image(task)
+                if not os.environ.get("MCODE_KEEP_IMAGES"):
+                    live_sandbox.remove_image(task)
                 progress.advance(t, 1)
 
         return RunSummary(run_id=run_id, total=total, passed=passed)
