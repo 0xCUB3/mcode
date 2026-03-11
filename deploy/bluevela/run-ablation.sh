@@ -93,7 +93,7 @@ for i in $(seq 0 $((SHARD_COUNT - 1))); do
         --shard-count ${SHARD_COUNT} \
         --shard-index ${i} \
         --db /tmp/ablation-baseline-shard${i}.db \
-        > /tmp/ablation-baseline-shard${i}.log 2>&1 &
+        > '"${LOG_DIR}"'/ablation-baseline-shard${i}.log 2>&1 &
     sleep 30
 done
 
@@ -128,7 +128,7 @@ run_experiment() {
                 --shard-count ${SHARD_COUNT} \
                 --shard-index ${i} \
                 --db /tmp/ablation-${EXP_NAME}-shard${i}.db \
-                > /tmp/ablation-${EXP_NAME}-shard${i}.log 2>&1
+                > '"${LOG_DIR}"'/ablation-${EXP_NAME}-shard${i}.log 2>&1
             echo "[${EXP_NAME}-s${i}] done (exit=$?)"
         ) &
     done
