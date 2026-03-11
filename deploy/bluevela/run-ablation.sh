@@ -29,29 +29,26 @@ LOG_DIR="${BV_RESULTS_DIR}/logs"
 mkdir -p "${LOG_DIR}"
 
 # Clean old ablation results
-rm -f "${BV_RESULTS_DIR}"/ablation-*.db "${BV_RESULTS_DIR}"/ablation-*.log
+rm -f "${BV_RESULTS_DIR}"/ablation-*.db "${LOG_DIR}"/ablation-*.log
 
-# Submit a single mega job that:
-# 1. Starts one shared podman service on local /tmp
-# 2. Runs all 5 experiments x N shards in parallel, sharing images
-# 3. Merges and summarizes
+# Single mega job: one podman service, sequential image pull, then parallel experiments
 bsub -G "${BV_GROUP}" \
     -J "ablation-mega" \
     -q "${BV_QUEUE}" \
     -n 1 \
     -R "span[hosts=1]" \
-    -W 12:00 \
+    -W 24:00 \
     -o "${LOG_DIR}/ablation-mega.log" \
     -e "${LOG_DIR}/ablation-mega.log" \
     bash -c '
 set -e
 
-# Single shared podman service on local /tmp (no NFS contention)
+# Single podman service on local /tmp
 PD=/tmp/podman-ablation-$(id -u)
+rm -rf ${PD}
 mkdir -p ${PD}/graphroot ${PD}/runroot
 export XDG_RUNTIME_DIR=${PD}
 SOCK=${PD}/podman.sock
-rm -f ${SOCK}
 podman --cgroup-manager=cgroupfs --storage-driver=overlay \
     --root=${PD}/graphroot --runroot=${PD}/runroot \
     system service --time=0 unix://${SOCK} &
@@ -71,92 +68,100 @@ export MCODE_KEEP_IMAGES=1
 
 SHARD_COUNT='"${SHARD_COUNT}"'
 LIMIT='"${LIMIT}"'
+LOG_DIR='"${LOG_DIR}"'
+RESULTS_DIR='"${BV_RESULTS_DIR}"'
 
-echo "=== Phase 1: Baseline (pulls images into local cache) ==="
+echo "=== Phase 0: Pre-pull all SWE-bench Lite images ==="
+date
+python3 -c "
+from mcode.execution.swebench import SWEBenchLiteSandbox
+sandbox = SWEBenchLiteSandbox(namespace=\"'"${NAMESPACE}"'\")
+from datasets import load_dataset
+ds = load_dataset(\"SWE-bench/SWE-bench_Lite\", split=\"test\")
+tasks = list(ds)[:${LIMIT}]
+print(f\"Pre-pulling images for {len(tasks)} tasks...\")
+
+import docker
+client = docker.from_env()
+pulled = 0
+failed = 0
+for i, task in enumerate(tasks):
+    iid = task[\"instance_id\"]
+    name = f\"'"${NAMESPACE}"'/sweb.eval.x86_64.{iid.replace(\"/\", \"_\").replace(\"__\", \"_\").lower()}:latest\"
+    # Normalize: the actual image name format
+    parts = iid.split(\"__\")
+    if len(parts) == 2:
+        repo_name = parts[0].replace(\"/\", \"_\")
+        name = f\"'"${NAMESPACE}"'/sweb.eval.x86_64.{repo_name}_{parts[1]}:latest\"
+    try:
+        client.images.get(name)
+    except docker.errors.ImageNotFound:
+        try:
+            print(f\"  [{i+1}/{len(tasks)}] pulling {name}...\", flush=True)
+            client.images.pull(name)
+            pulled += 1
+        except Exception as e:
+            print(f\"  [{i+1}/{len(tasks)}] FAILED {name}: {e}\", flush=True)
+            failed += 1
+print(f\"Pre-pull done: {pulled} pulled, {failed} failed, {len(tasks)-pulled-failed} cached\")
+"
+echo "=== Phase 0 complete ==="
 date
 
-# Run baseline shards staggered to avoid pull storms
-export MCODE_EXPLORE_PROMPT=0
-export MCODE_BUDGET_WARNING=0
-export MCODE_READ_NUDGE=0
-export LOOP_BUDGET=15
+run_shard() {
+    local EXP_NAME=$1
+    local SHARD_IDX=$2
+    shift 2
 
-for i in $(seq 0 $((SHARD_COUNT - 1))); do
-    echo "[baseline-s${i}] starting"
+    for var in "$@"; do
+        export "${var}"
+    done
+
+    local LOCAL_DB=/tmp/ablation-${EXP_NAME}-shard${SHARD_IDX}.db
+    echo "[${EXP_NAME}-s${SHARD_IDX}] starting on $(hostname)" >> ${LOG_DIR}/ablation-${EXP_NAME}-shard${SHARD_IDX}.log
+    date >> ${LOG_DIR}/ablation-${EXP_NAME}-shard${SHARD_IDX}.log
+
     python -m mcode bench swebench-lite \
         --backend '"'${BACKEND}'"' \
         --model '"'${MODEL}'"' \
-        --loop-budget 15 \
+        --loop-budget ${LOOP_BUDGET} \
         --timeout '"${TIMEOUT_S}"' \
         --namespace '"${NAMESPACE}"' \
         --limit ${LIMIT} \
         --shard-count ${SHARD_COUNT} \
-        --shard-index ${i} \
-        --db /tmp/ablation-baseline-shard${i}.db \
-        > '"${LOG_DIR}"'/ablation-baseline-shard${i}.log 2>&1 &
-    sleep 30
-done
+        --shard-index ${SHARD_IDX} \
+        --db ${LOCAL_DB} \
+        >> ${LOG_DIR}/ablation-${EXP_NAME}-shard${SHARD_IDX}.log 2>&1
+    local RC=$?
 
-echo "[baseline] All shards launched (staggered), waiting..."
-wait
-echo "=== Phase 1 complete (baseline done + images cached) ==="
-date
-
-# Copy baseline DBs to results
-for i in $(seq 0 $((SHARD_COUNT - 1))); do
-    cp /tmp/ablation-baseline-shard${i}.db '"${BV_RESULTS_DIR}"'/ablation-baseline-shard${i}.db 2>/dev/null || true
-done
-
-echo "=== Phase 2: Remaining experiments (images cached) ==="
-
-run_experiment() {
-    local EXP_NAME=$1
-    shift
-    for var in "$@"; do
-        export "${var}"
-    done
-    for i in $(seq 0 $((SHARD_COUNT - 1))); do
-        (
-            echo "[${EXP_NAME}-s${i}] starting"
-            python -m mcode bench swebench-lite \
-                --backend '"'${BACKEND}'"' \
-                --model '"'${MODEL}'"' \
-                --loop-budget ${LOOP_BUDGET} \
-                --timeout '"${TIMEOUT_S}"' \
-                --namespace '"${NAMESPACE}"' \
-                --limit ${LIMIT} \
-                --shard-count ${SHARD_COUNT} \
-                --shard-index ${i} \
-                --db /tmp/ablation-${EXP_NAME}-shard${i}.db \
-                > '"${LOG_DIR}"'/ablation-${EXP_NAME}-shard${i}.log 2>&1
-            echo "[${EXP_NAME}-s${i}] done (exit=$?)"
-        ) &
-    done
+    cp ${LOCAL_DB} ${RESULTS_DIR}/ablation-${EXP_NAME}-shard${SHARD_IDX}.db 2>/dev/null || true
+    echo "[${EXP_NAME}-s${SHARD_IDX}] done (exit=${RC})" >> ${LOG_DIR}/ablation-${EXP_NAME}-shard${SHARD_IDX}.log
+    date >> ${LOG_DIR}/ablation-${EXP_NAME}-shard${SHARD_IDX}.log
 }
 
-run_experiment "A-prompt" "MCODE_EXPLORE_PROMPT=1" "MCODE_BUDGET_WARNING=0" "MCODE_READ_NUDGE=0" "LOOP_BUDGET=15"
-run_experiment "B-warning" "MCODE_EXPLORE_PROMPT=0" "MCODE_BUDGET_WARNING=1" "MCODE_READ_NUDGE=0" "LOOP_BUDGET=15"
-run_experiment "C-budget25" "MCODE_EXPLORE_PROMPT=0" "MCODE_BUDGET_WARNING=0" "MCODE_READ_NUDGE=0" "LOOP_BUDGET=25"
-run_experiment "D-nudge" "MCODE_EXPLORE_PROMPT=0" "MCODE_BUDGET_WARNING=0" "MCODE_READ_NUDGE=1" "LOOP_BUDGET=15"
+echo "=== Phase 1: All 5 experiments in parallel (images cached) ==="
+date
 
-echo "=== Phase 2: All experiments launched, waiting ==="
+# Launch all experiments, all shards
+for i in $(seq 0 $((SHARD_COUNT - 1))); do
+    run_shard "baseline" $i "MCODE_EXPLORE_PROMPT=0" "MCODE_BUDGET_WARNING=0" "MCODE_READ_NUDGE=0" "LOOP_BUDGET=15" &
+    run_shard "A-prompt" $i "MCODE_EXPLORE_PROMPT=1" "MCODE_BUDGET_WARNING=0" "MCODE_READ_NUDGE=0" "LOOP_BUDGET=15" &
+    run_shard "B-warning" $i "MCODE_EXPLORE_PROMPT=0" "MCODE_BUDGET_WARNING=1" "MCODE_READ_NUDGE=0" "LOOP_BUDGET=15" &
+    run_shard "C-budget25" $i "MCODE_EXPLORE_PROMPT=0" "MCODE_BUDGET_WARNING=0" "MCODE_READ_NUDGE=0" "LOOP_BUDGET=25" &
+    run_shard "D-nudge" $i "MCODE_EXPLORE_PROMPT=0" "MCODE_BUDGET_WARNING=0" "MCODE_READ_NUDGE=1" "LOOP_BUDGET=15" &
+done
+
+echo "All 35 shards launched, waiting..."
 wait
 echo "=== All experiments complete ==="
 date
-
-# Copy all DBs to results
-for EXP in A-prompt B-warning C-budget25 D-nudge; do
-    for i in $(seq 0 $((SHARD_COUNT - 1))); do
-        cp /tmp/ablation-${EXP}-shard${i}.db '"${BV_RESULTS_DIR}"'/ablation-${EXP}-shard${i}.db 2>/dev/null || true
-    done
-done
 
 # Merge shards per experiment
 for EXP in baseline A-prompt B-warning C-budget25 D-nudge; do
     echo "Merging ${EXP}..."
     python -m mcode merge-shards --force \
-        --out '"${BV_RESULTS_DIR}"'/ablation-${EXP}.db \
-        '"${BV_RESULTS_DIR}"'/ablation-${EXP}-shard*.db 2>&1 || echo "  MERGE FAILED for ${EXP}"
+        --out ${RESULTS_DIR}/ablation-${EXP}.db \
+        ${RESULTS_DIR}/ablation-${EXP}-shard*.db 2>&1 || echo "  MERGE FAILED for ${EXP}"
 done
 
 # Print summary
@@ -185,9 +190,9 @@ PYEOF
 
 echo ""
 echo "=== Ablation mega job submitted ==="
-echo "Phase 1: baseline (${SHARD_COUNT} shards, staggered 30s, pulls images)"
-echo "Phase 2: 4 experiments x ${SHARD_COUNT} shards = $((4 * SHARD_COUNT)) parallel (images cached)"
+echo "Phase 0: Sequential pre-pull of all ~300 Docker images"
+echo "Phase 1: 5 experiments x ${SHARD_COUNT} shards = $((5 * SHARD_COUNT)) parallel (images cached)"
 echo ""
 echo "Monitor:  bjobs -w | grep ablation"
-echo "Progress: ssh \$(cat ${VLLM_HOST_FILE}) 'tail -f /tmp/ablation-baseline-shard0.log'"
-echo "Results:  cat ${LOG_DIR}/ablation-mega.log | tail -20"
+echo "Logs:     ls ${LOG_DIR}/ablation-*.log"
+echo "Results:  tail -20 ${LOG_DIR}/ablation-mega.log"
