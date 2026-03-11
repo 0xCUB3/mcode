@@ -55,6 +55,7 @@ podman --cgroup-manager=cgroupfs --storage-driver=overlay \
 PODMAN_PID=$!
 sleep 3
 export DOCKER_HOST=unix://${SOCK}
+export REGISTRY_AUTH_FILE=${HOME}/.config/containers/auth.json
 
 trap "kill ${PODMAN_PID} 2>/dev/null; wait ${PODMAN_PID} 2>/dev/null" EXIT
 
