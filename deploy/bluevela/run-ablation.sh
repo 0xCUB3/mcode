@@ -73,38 +73,7 @@ RESULTS_DIR='"${BV_RESULTS_DIR}"'
 
 echo "=== Phase 0: Pre-pull all SWE-bench Lite images ==="
 date
-python3 -c "
-from mcode.execution.swebench import SWEBenchLiteSandbox
-sandbox = SWEBenchLiteSandbox(namespace=\"'"${NAMESPACE}"'\")
-from datasets import load_dataset
-ds = load_dataset(\"SWE-bench/SWE-bench_Lite\", split=\"test\")
-tasks = list(ds)[:${LIMIT}]
-print(f\"Pre-pulling images for {len(tasks)} tasks...\")
-
-import docker
-client = docker.from_env()
-pulled = 0
-failed = 0
-for i, task in enumerate(tasks):
-    iid = task[\"instance_id\"]
-    name = f\"'"${NAMESPACE}"'/sweb.eval.x86_64.{iid.replace(\"/\", \"_\").replace(\"__\", \"_\").lower()}:latest\"
-    # Normalize: the actual image name format
-    parts = iid.split(\"__\")
-    if len(parts) == 2:
-        repo_name = parts[0].replace(\"/\", \"_\")
-        name = f\"'"${NAMESPACE}"'/sweb.eval.x86_64.{repo_name}_{parts[1]}:latest\"
-    try:
-        client.images.get(name)
-    except docker.errors.ImageNotFound:
-        try:
-            print(f\"  [{i+1}/{len(tasks)}] pulling {name}...\", flush=True)
-            client.images.pull(name)
-            pulled += 1
-        except Exception as e:
-            print(f\"  [{i+1}/{len(tasks)}] FAILED {name}: {e}\", flush=True)
-            failed += 1
-print(f\"Pre-pull done: {pulled} pulled, {failed} failed, {len(tasks)-pulled-failed} cached\")
-"
+python3 '"${BV_MCODE_DIR}"'/deploy/bluevela/prepull_images.py '"${NAMESPACE}"' ${LIMIT}
 echo "=== Phase 0 complete ==="
 date
 
