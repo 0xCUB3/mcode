@@ -23,7 +23,6 @@ echo "vLLM server: ${OPENAI_BASE_URL}"
 echo "Model:       ${MODEL}"
 echo "Shards:      ${SHARD_COUNT}"
 echo "Tasks:       ${LIMIT}"
-echo "Podman root: ${BV_PODMAN_ROOT}"
 echo ""
 
 LOG_DIR="${BV_RESULTS_DIR}/logs"
@@ -32,138 +31,142 @@ mkdir -p "${LOG_DIR}"
 # Clean old ablation results
 rm -f "${BV_RESULTS_DIR}"/ablation-*.db "${BV_RESULTS_DIR}"/ablation-*.log
 
-ALL_MERGE_JOBS=""
+# Submit a single mega job that:
+# 1. Starts one shared podman service on local /tmp
+# 2. Runs all 5 experiments x N shards in parallel, sharing images
+# 3. Merges and summarizes
+bsub -G "${BV_GROUP}" \
+    -J "ablation-mega" \
+    -q "${BV_QUEUE}" \
+    -n 1 \
+    -R "span[hosts=1]" \
+    -W 12:00 \
+    -o "${LOG_DIR}/ablation-mega.log" \
+    -e "${LOG_DIR}/ablation-mega.log" \
+    bash -c '
+set -e
 
-# Experiment definitions: "name|env_vars"
-EXPERIMENTS=(
-    "baseline|MCODE_EXPLORE_PROMPT=0,MCODE_BUDGET_WARNING=0,MCODE_READ_NUDGE=0,LOOP_BUDGET=15"
-    "A-prompt|MCODE_EXPLORE_PROMPT=1,MCODE_BUDGET_WARNING=0,MCODE_READ_NUDGE=0,LOOP_BUDGET=15"
-    "B-warning|MCODE_EXPLORE_PROMPT=0,MCODE_BUDGET_WARNING=1,MCODE_READ_NUDGE=0,LOOP_BUDGET=15"
-    "C-budget25|MCODE_EXPLORE_PROMPT=0,MCODE_BUDGET_WARNING=0,MCODE_READ_NUDGE=0,LOOP_BUDGET=25"
-    "D-nudge|MCODE_EXPLORE_PROMPT=0,MCODE_BUDGET_WARNING=0,MCODE_READ_NUDGE=1,LOOP_BUDGET=15"
-)
+# Single shared podman service on local /tmp (no NFS contention)
+PD=/tmp/podman-ablation-$(id -u)
+mkdir -p ${PD}/graphroot ${PD}/runroot
+export XDG_RUNTIME_DIR=${PD}
+SOCK=${PD}/podman.sock
+rm -f ${SOCK}
+podman --cgroup-manager=cgroupfs --storage-driver=overlay \
+    --root=${PD}/graphroot --runroot=${PD}/runroot \
+    system service --time=0 unix://${SOCK} &
+PODMAN_PID=$!
+sleep 3
+export DOCKER_HOST=unix://${SOCK}
 
-for EXPDEF in "${EXPERIMENTS[@]}"; do
-    IFS='|' read -r EXP_NAME ENV_STR <<< "${EXPDEF}"
-    echo "--- Experiment: ${EXP_NAME} ---"
+trap "kill ${PODMAN_PID} 2>/dev/null; wait ${PODMAN_PID} 2>/dev/null" EXIT
 
-    # Build export statements from comma-separated env vars
-    ENV_EXPORTS=""
-    IFS=',' read -ra ENVPAIRS <<< "${ENV_STR}"
-    for pair in "${ENVPAIRS[@]}"; do
-        ENV_EXPORTS="export ${pair}; ${ENV_EXPORTS}"
+source '"${BV_MCODE_DIR}"'/venv/bin/activate
+export OPENAI_BASE_URL='"'${OPENAI_BASE_URL}'"'
+export OPENAI_API_KEY='"'${OPENAI_API_KEY}'"'
+export MCODE_MAX_NEW_TOKENS='"'${MCODE_MAX_NEW_TOKENS}'"'
+export MCODE_CONTEXT_WINDOW='"'${VLLM_MAX_MODEL_LEN}'"'
+export MCODE_REACT_TIMEOUT=450
+export MCODE_KEEP_IMAGES=1
+
+SHARD_COUNT='"${SHARD_COUNT}"'
+LIMIT='"${LIMIT}"'
+
+echo "=== Phase 1: Baseline (pulls images into local cache) ==="
+date
+
+# Run baseline shards staggered to avoid pull storms
+export MCODE_EXPLORE_PROMPT=0
+export MCODE_BUDGET_WARNING=0
+export MCODE_READ_NUDGE=0
+export LOOP_BUDGET=15
+
+for i in $(seq 0 $((SHARD_COUNT - 1))); do
+    echo "[baseline-s${i}] starting"
+    python -m mcode bench swebench-lite \
+        --backend '"'${BACKEND}'"' \
+        --model '"'${MODEL}'"' \
+        --loop-budget 15 \
+        --timeout '"${TIMEOUT_S}"' \
+        --namespace '"${NAMESPACE}"' \
+        --limit ${LIMIT} \
+        --shard-count ${SHARD_COUNT} \
+        --shard-index ${i} \
+        --db /tmp/ablation-baseline-shard${i}.db \
+        > /tmp/ablation-baseline-shard${i}.log 2>&1 &
+    sleep 30
+done
+
+echo "[baseline] All shards launched (staggered), waiting..."
+wait
+echo "=== Phase 1 complete (baseline done + images cached) ==="
+date
+
+# Copy baseline DBs to results
+for i in $(seq 0 $((SHARD_COUNT - 1))); do
+    cp /tmp/ablation-baseline-shard${i}.db '"${BV_RESULTS_DIR}"'/ablation-baseline-shard${i}.db 2>/dev/null || true
+done
+
+echo "=== Phase 2: Remaining experiments (images cached) ==="
+
+run_experiment() {
+    local EXP_NAME=$1
+    shift
+    for var in "$@"; do
+        export "${var}"
     done
-
-    # Submit shard array job (1-based LSF index, 0-based shard index)
-    SHARD_JOBS=""
-    JOB_PREFIX="abl-${EXP_NAME}"
-
-    bsub -G "${BV_GROUP}" \
-        -J "${JOB_PREFIX}[1-${SHARD_COUNT}]" \
-        -q "${BV_QUEUE}" \
-        -n 1 \
-        -R "span[hosts=1]" \
-        -W 8:00 \
-        -o "${LOG_DIR}/ablation-${EXP_NAME}-%I.log" \
-        -e "${LOG_DIR}/ablation-${EXP_NAME}-%I.log" \
-        bash -c '
-            '"${ENV_EXPORTS}"'
-
-            # Shared podman storage (NFS, images pulled once)
-            PD='"${BV_PODMAN_ROOT}"'
-            mkdir -p ${PD}/graphroot ${PD}/runroot
-
-            # Per-shard podman socket (avoid conflicts)
-            export XDG_RUNTIME_DIR=/tmp/podman-$(id -u)-'"${EXP_NAME}"'-${LSB_JOBINDEX}
-            mkdir -p ${XDG_RUNTIME_DIR}
-            SOCK=${XDG_RUNTIME_DIR}/podman.sock
-            rm -f ${SOCK}
-            podman --cgroup-manager=cgroupfs --storage-driver=overlay \
-                --root=${PD}/graphroot --runroot=${PD}/runroot \
-                system service --time=0 unix://${SOCK} &
-            PODMAN_PID=$!
-            sleep 3
-
-            source '"${BV_MCODE_DIR}"'/venv/bin/activate
-            export OPENAI_BASE_URL='"'${OPENAI_BASE_URL}'"'
-            export OPENAI_API_KEY='"'${OPENAI_API_KEY}'"'
-            export MCODE_MAX_NEW_TOKENS='"'${MCODE_MAX_NEW_TOKENS}'"'
-            export MCODE_CONTEXT_WINDOW='"'${VLLM_MAX_MODEL_LEN}'"'
-            export MCODE_REACT_TIMEOUT=450
-            export MCODE_KEEP_IMAGES=1
-            export DOCKER_HOST=unix://${SOCK}
-
-            SHARD_INDEX=$((LSB_JOBINDEX - 1))
-            LOCAL_DB=/tmp/ablation-'"${EXP_NAME}"'-shard${SHARD_INDEX}.db
-            REMOTE_DB='"${BV_RESULTS_DIR}"'/ablation-'"${EXP_NAME}"'-shard${SHARD_INDEX}.db
-
-            echo "['"${EXP_NAME}"'-s${SHARD_INDEX}] starting on $(hostname)"
-            date
-
+    for i in $(seq 0 $((SHARD_COUNT - 1))); do
+        (
+            echo "[${EXP_NAME}-s${i}] starting"
             python -m mcode bench swebench-lite \
                 --backend '"'${BACKEND}'"' \
                 --model '"'${MODEL}'"' \
                 --loop-budget ${LOOP_BUDGET} \
                 --timeout '"${TIMEOUT_S}"' \
                 --namespace '"${NAMESPACE}"' \
-                --limit '"${LIMIT}"' \
-                --shard-count '"${SHARD_COUNT}"' \
-                --shard-index ${SHARD_INDEX} \
-                --db ${LOCAL_DB}
-            EXIT_CODE=$?
+                --limit ${LIMIT} \
+                --shard-count ${SHARD_COUNT} \
+                --shard-index ${i} \
+                --db /tmp/ablation-${EXP_NAME}-shard${i}.db \
+                > /tmp/ablation-${EXP_NAME}-shard${i}.log 2>&1
+            echo "[${EXP_NAME}-s${i}] done (exit=$?)"
+        ) &
+    done
+}
 
-            cp ${LOCAL_DB} ${REMOTE_DB} 2>/dev/null || true
-            echo "['"${EXP_NAME}"'-s${SHARD_INDEX}] done (exit=${EXIT_CODE})"
-            date
-            kill ${PODMAN_PID} 2>/dev/null || true
-        '
+run_experiment "A-prompt" "MCODE_EXPLORE_PROMPT=1" "MCODE_BUDGET_WARNING=0" "MCODE_READ_NUDGE=0" "LOOP_BUDGET=15"
+run_experiment "B-warning" "MCODE_EXPLORE_PROMPT=0" "MCODE_BUDGET_WARNING=1" "MCODE_READ_NUDGE=0" "LOOP_BUDGET=15"
+run_experiment "C-budget25" "MCODE_EXPLORE_PROMPT=0" "MCODE_BUDGET_WARNING=0" "MCODE_READ_NUDGE=0" "LOOP_BUDGET=25"
+run_experiment "D-nudge" "MCODE_EXPLORE_PROMPT=0" "MCODE_BUDGET_WARNING=0" "MCODE_READ_NUDGE=1" "LOOP_BUDGET=15"
 
-    echo "  -> ${SHARD_COUNT} shards submitted"
+echo "=== Phase 2: All experiments launched, waiting ==="
+wait
+echo "=== All experiments complete ==="
+date
 
-    # Merge job: runs after all shards finish
-    MERGE_NAME="abl-merge-${EXP_NAME}"
-    bsub -G "${BV_GROUP}" \
-        -J "${MERGE_NAME}" \
-        -q "${BV_QUEUE}" \
-        -n 1 \
-        -W 0:10 \
-        -w "done(\"${JOB_PREFIX}\")" \
-        -o "${LOG_DIR}/ablation-${EXP_NAME}-merge.log" \
-        -e "${LOG_DIR}/ablation-${EXP_NAME}-merge.log" \
-        bash -c '
-            source '"${BV_MCODE_DIR}"'/venv/bin/activate
-            cd '"${BV_MCODE_DIR}"'
-            python -m mcode merge-shards --force \
-                --out '"${BV_RESULTS_DIR}"'/ablation-'"${EXP_NAME}"'.db \
-                '"${BV_RESULTS_DIR}"'/ablation-'"${EXP_NAME}"'-shard*.db
-            echo "MERGE_DONE: '"${EXP_NAME}"'"
-        '
-
-    if [[ -z "${ALL_MERGE_JOBS}" ]]; then
-        ALL_MERGE_JOBS="done(\"${MERGE_NAME}\")"
-    else
-        ALL_MERGE_JOBS="${ALL_MERGE_JOBS} && done(\"${MERGE_NAME}\")"
-    fi
+# Copy all DBs to results
+for EXP in A-prompt B-warning C-budget25 D-nudge; do
+    for i in $(seq 0 $((SHARD_COUNT - 1))); do
+        cp /tmp/ablation-${EXP}-shard${i}.db '"${BV_RESULTS_DIR}"'/ablation-${EXP}-shard${i}.db 2>/dev/null || true
+    done
 done
 
-# Summary job: runs after all merges
-bsub -G "${BV_GROUP}" \
-    -J "abl-summary" \
-    -q "${BV_QUEUE}" \
-    -n 1 \
-    -W 0:10 \
-    -w "${ALL_MERGE_JOBS}" \
-    -o "${LOG_DIR}/ablation-summary.log" \
-    -e "${LOG_DIR}/ablation-summary.log" \
-    bash -c '
-        source '"${BV_MCODE_DIR}"'/venv/bin/activate
-        cd '"${BV_MCODE_DIR}"'
-        python3 << PYEOF
+# Merge shards per experiment
+for EXP in baseline A-prompt B-warning C-budget25 D-nudge; do
+    echo "Merging ${EXP}..."
+    python -m mcode merge-shards --force \
+        --out '"${BV_RESULTS_DIR}"'/ablation-${EXP}.db \
+        '"${BV_RESULTS_DIR}"'/ablation-${EXP}-shard*.db 2>&1 || echo "  MERGE FAILED for ${EXP}"
+done
+
+# Print summary
+echo ""
+echo "=== ABLATION RESULTS ==="
+echo "Model: '"${MODEL}"'"
+echo ""
+python3 << PYEOF
 import sqlite3, glob
-print("=== ABLATION RESULTS ===")
-print(f"Model: '"${MODEL}"'")
-print()
-for db in sorted(glob.glob("results/ablation-*.db")):
+for db in sorted(glob.glob("'"${BV_RESULTS_DIR}"'/ablation-*.db")):
     if "shard" in db:
         continue
     conn = sqlite3.connect(db)
@@ -178,12 +181,13 @@ for db in sorted(glob.glob("results/ablation-*.db")):
     print(f"{db}: {passed}/{total} = {pct:.1f}%")
     conn.close()
 PYEOF
-    '
+'
 
 echo ""
-echo "=== Ablation suite submitted ==="
-echo "5 experiments x ${SHARD_COUNT} shards = $((5 * SHARD_COUNT)) shard jobs"
-echo "+ 5 merge jobs + 1 summary job = $((5 * SHARD_COUNT + 6)) total"
+echo "=== Ablation mega job submitted ==="
+echo "Phase 1: baseline (${SHARD_COUNT} shards, staggered 30s, pulls images)"
+echo "Phase 2: 4 experiments x ${SHARD_COUNT} shards = $((4 * SHARD_COUNT)) parallel (images cached)"
 echo ""
-echo "Monitor:  bjobs -w | grep abl"
-echo "Results:  cat ${LOG_DIR}/ablation-summary.log"
+echo "Monitor:  bjobs -w | grep ablation"
+echo "Progress: ssh \$(cat ${VLLM_HOST_FILE}) 'tail -f /tmp/ablation-baseline-shard0.log'"
+echo "Results:  cat ${LOG_DIR}/ablation-mega.log | tail -20"
