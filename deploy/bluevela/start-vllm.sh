@@ -41,8 +41,8 @@ bsub -q "${BV_QUEUE}" \
       --trust-remote-code \
       --tensor-parallel-size '"${VLLM_GPU_COUNT}"' \
       --enable-auto-tool-choice \
-      --tool-call-parser qwen3_xml \
-      --reasoning-parser deepseek_r1
+      --tool-call-parser qwen3_coder \
+      --reasoning-parser qwen3
   '
 
 echo "Job submitted. Waiting for it to start..."

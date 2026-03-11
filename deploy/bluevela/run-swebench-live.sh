@@ -43,11 +43,16 @@ bsub -q "${BV_QUEUE}" \
   -o "${LOG_DIR}/swb-live-%I.log" \
   -e "${LOG_DIR}/swb-live-%I.log" \
   bash -c '
-    export XDG_RUNTIME_DIR=/tmp/podman-run-$(id -u)
-    mkdir -p ${XDG_RUNTIME_DIR}
+    PD='"${BV_PODMAN_ROOT}"'
+    mkdir -p ${PD}/graphroot ${PD}/runroot
 
-    SOCK="${XDG_RUNTIME_DIR}/podman-${LSB_JOBINDEX}.sock"
-    podman system service --time=0 "unix://${SOCK}" &
+    export XDG_RUNTIME_DIR=/tmp/podman-$(id -u)-swb-${LSB_JOBINDEX}
+    mkdir -p ${XDG_RUNTIME_DIR}
+    SOCK=${XDG_RUNTIME_DIR}/podman.sock
+    rm -f ${SOCK}
+    podman --cgroup-manager=cgroupfs --storage-driver=overlay \
+        --root=${PD}/graphroot --runroot=${PD}/runroot \
+        system service --time=0 unix://${SOCK} &
     PODMAN_PID=$!
     sleep 2
 

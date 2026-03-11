@@ -102,7 +102,66 @@ Failure analysis on 20 failed tasks:
 
 **Commits:** `8959272` add Docker test execution, `c89ef47` revert Docker test execution
 
-## Summary
+## Round 2: Isolated A/B Tests
+
+After researching SOTA approaches (OpenHands, SWE-agent, Moatless, Agentless), implemented 4 prompt/budget changes with env var toggles for isolated testing. Each experiment enables only one change vs the baseline.
+
+Only 15/25 tasks had Docker images available (down from 24 in run9b). Baseline on this 15-task subset: 4/15 = 26.7%.
+
+### Experiment A: Explore-First Prompt (`MCODE_EXPLORE_PROMPT=1`)
+
+**Hypothesis:** A structured EXPLORE→DIAGNOSE→EDIT→VERIFY prompt (inspired by OpenHands) would reduce premature editing.
+
+**Implementation:** Replaced the simple system prompt with a phased strategy prompt in `session.py`. Toggleable via `MCODE_EXPLORE_PROMPT` env var.
+
+**Result:** 3/15 = 20% (-1 vs baseline, lost kubernetes-2303)
+
+**Verdict: NEUTRAL/NEGATIVE.** No improvement. The structured prompt didn't help the small model.
+
+### Experiment B: Budget Warning (`MCODE_BUDGET_WARNING=1`)
+
+**Hypothesis:** Warning the agent 2 turns before budget exhaustion would reduce "budget_exhausted" failures.
+
+**Implementation:** `on_turn` callback in mellea's `react()` that injects a user message at turn N-2. Added to mellea fork and wired in `session.py`.
+
+**Result:** 3/15 = 20% (-1 vs baseline, lost kubernetes-2303)
+
+**Verdict: NEUTRAL/NEGATIVE.** No improvement. The warning didn't change agent behavior.
+
+### Experiment C: Larger Budget (`loop_budget=25`)
+
+**Hypothesis:** Increasing budget from 15 to 25 turns would let the agent complete more tasks.
+
+**Implementation:** Set `loop_budget=25` via env var.
+
+**Result:** 3/15 = 20% (-1 vs baseline, lost kubernetes-2303)
+
+**Verdict: NEUTRAL/NEGATIVE.** Extra turns didn't help. The agent either finds the fix quickly or goes in circles.
+
+### Experiment D: Read History Nudge (`MCODE_READ_NUDGE=1`)
+
+**Hypothesis:** Nudging (not blocking) the agent when it re-reads files 3+ times would reduce read loops.
+
+**Implementation:** Counter in `make_agent_tools()` that prepends a note after 3 reads of the same path.
+
+**Result:** 4/15 = 26.7% (matches baseline exactly, same 4 tasks pass)
+
+**Verdict: NEUTRAL.** No improvement. The nudge didn't change behavior.
+
+### Round 2 Summary
+
+| Exp | Feature | Result (15 tasks) | vs Baseline (4/15) |
+|-|-|-|-|
+| A | Explore-first prompt | 3/15 = 20% | -1 |
+| B | Budget warning | 3/15 = 20% | -1 |
+| C | Budget=25 | 3/15 = 20% | -1 |
+| D | Read nudge | 4/15 = 26.7% | 0 |
+
+D matched baseline exactly. A/B/C lost kubernetes-2303, likely voting variance. None of these prompt/budget tweaks moved the needle for this model.
+
+**Takeaway:** Small prompt changes and budget increases don't help. The 29.2% ceiling with majority voting appears to be a model capability limit. Significant improvement likely requires either a larger model or architectural changes (agentless pipeline, AST-based localization, or multi-agent decomposition).
+
+## Overall Summary
 
 | Experiment | Score | vs Baseline | Kept? |
 |-|-|-|-|
@@ -111,6 +170,10 @@ Failure analysis on 20 failed tasks:
 | Read loop detection | 0/25 | -20% (+ infra) | No |
 | Majority voting (n=3) | 7/24 = 29.2% | +9.2% | Yes |
 | Docker test execution | 1/8 = 12.5% | -16.7% | No |
+| Explore-first prompt | 3/15 = 20% | -6.7% (vs 15-task baseline) | No |
+| Budget warning | 3/15 = 20% | -6.7% (vs 15-task baseline) | No |
+| Budget=25 | 3/15 = 20% | -6.7% (vs 15-task baseline) | No |
+| Read nudge | 4/15 = 26.7% | 0 (vs 15-task baseline) | No |
 
 **Final best: 7/24 = 29.2%** with majority voting (n_samples=3).
 
