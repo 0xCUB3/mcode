@@ -17,8 +17,8 @@ BV_PODMAN_ROOT=${BV_PODMAN_ROOT:-${BV_SHARED_DIR}/podman}
 # Model
 MODEL=${MODEL:-Qwen/Qwen3.5-27B}
 VLLM_PORT=${VLLM_PORT:-8321}
-VLLM_IMAGE=${VLLM_IMAGE:-docker.io/vllm/vllm-openai:nightly}
-VLLM_GPU_COUNT=${VLLM_GPU_COUNT:-2}
+VLLM_IMAGE=${VLLM_IMAGE:-docker.io/vllm/vllm-openai:v0.17.0}
+VLLM_GPU_COUNT=${VLLM_GPU_COUNT:-1}
 VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN:-32768}
 
 # Benchmark

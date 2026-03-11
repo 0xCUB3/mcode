@@ -6,17 +6,18 @@ source "${SCRIPT_DIR}/env.sh"
 
 VLLM_HOST_FILE="${BV_MCODE_DIR}/vllm_host.txt"
 VLLM_LOG="${BV_MCODE_DIR}/results/vllm.log"
+HF_CACHE="${BV_SHARED_DIR}/hf-cache"
 
 rm -f "${VLLM_HOST_FILE}"
-mkdir -p "$(dirname "${VLLM_LOG}")"
+mkdir -p "$(dirname "${VLLM_LOG}")" "${HF_CACHE}"
 : > "${VLLM_LOG}"
 
 echo "Submitting vLLM server job..."
 bsub -q "${BV_QUEUE}" \
   -G "${BV_GROUP}" \
   -J "vllm-server" \
-  -gpu "num=${VLLM_GPU_COUNT}" \
-  -n 8 \
+  -gpu "num=${VLLM_GPU_COUNT}:mode=shared" \
+  -n 1 \
   -R "span[hosts=1]" \
   -o "${VLLM_LOG}" \
   -e "${VLLM_LOG}" \
@@ -33,13 +34,15 @@ bsub -q "${BV_QUEUE}" \
       --security-opt=label=disable \
       --ipc=host \
       --net=host \
-      -v ${HOME}/.cache/huggingface:/root/.cache/huggingface \
+      --storage-opt ignore_chown_errors=true \
+      -v '"${HF_CACHE}"':/root/.cache/huggingface \
       '"${VLLM_IMAGE}"' \
       --model '"${MODEL}"' \
       --port '"${VLLM_PORT}"' \
       --max-model-len '"${VLLM_MAX_MODEL_LEN}"' \
       --trust-remote-code \
       --tensor-parallel-size '"${VLLM_GPU_COUNT}"' \
+      --enforce-eager \
       --enable-auto-tool-choice \
       --tool-call-parser qwen3_coder \
       --reasoning-parser qwen3
