@@ -61,9 +61,8 @@ for EXPDEF in "${EXPERIMENTS[@]}"; do
     bsub -G "${BV_GROUP}" \
         -J "${JOB_PREFIX}[1-${SHARD_COUNT}]" \
         -q "${BV_QUEUE}" \
-        -n 4 \
+        -n 1 \
         -R "span[hosts=1]" \
-        -R "rusage[mem=16000]" \
         -W 8:00 \
         -o "${LOG_DIR}/ablation-${EXP_NAME}-%I.log" \
         -e "${LOG_DIR}/ablation-${EXP_NAME}-%I.log" \
@@ -95,6 +94,8 @@ for EXPDEF in "${EXPERIMENTS[@]}"; do
             export DOCKER_HOST=unix://${SOCK}
 
             SHARD_INDEX=$((LSB_JOBINDEX - 1))
+            LOCAL_DB=/tmp/ablation-'"${EXP_NAME}"'-shard${SHARD_INDEX}.db
+            REMOTE_DB='"${BV_RESULTS_DIR}"'/ablation-'"${EXP_NAME}"'-shard${SHARD_INDEX}.db
 
             echo "['"${EXP_NAME}"'-s${SHARD_INDEX}] starting on $(hostname)"
             date
@@ -108,9 +109,11 @@ for EXPDEF in "${EXPERIMENTS[@]}"; do
                 --limit '"${LIMIT}"' \
                 --shard-count '"${SHARD_COUNT}"' \
                 --shard-index ${SHARD_INDEX} \
-                --db '"${BV_RESULTS_DIR}"'/ablation-'"${EXP_NAME}"'-shard${SHARD_INDEX}.db
+                --db ${LOCAL_DB}
+            EXIT_CODE=$?
 
-            echo "['"${EXP_NAME}"'-s${SHARD_INDEX}] done (exit=$?)"
+            cp ${LOCAL_DB} ${REMOTE_DB} 2>/dev/null || true
+            echo "['"${EXP_NAME}"'-s${SHARD_INDEX}] done (exit=${EXIT_CODE})"
             date
             kill ${PODMAN_PID} 2>/dev/null || true
         '
