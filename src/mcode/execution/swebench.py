@@ -312,8 +312,13 @@ class SWEbenchSandbox:
         container = None
         start = time.time()
         try:
-            # Prevent name collisions across retries.
-            container_name = f"{test_spec.get_instance_container_name(run_id)}.{patch_sha[:8]}"
+            # Prevent name collisions across concurrent experiments.
+            import uuid
+
+            uid = uuid.uuid4().hex[:8]
+            container_name = (
+                f"{test_spec.get_instance_container_name(run_id)}.{patch_sha[:8]}.{uid}"
+            )
             container = client.containers.create(
                 image=_fq_image(test_spec.instance_image_key),
                 name=container_name,
