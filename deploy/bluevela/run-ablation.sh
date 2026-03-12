@@ -50,6 +50,7 @@ mkdir -p ${PD}/graphroot ${PD}/runroot
 export XDG_RUNTIME_DIR=${PD}
 SOCK=${PD}/podman.sock
 podman --cgroup-manager=cgroupfs --storage-driver=overlay \
+    --storage-opt ignore_chown_errors=true \
     --root=${PD}/graphroot --runroot=${PD}/runroot \
     system service --time=0 unix://${SOCK} &
 PODMAN_PID=$!
