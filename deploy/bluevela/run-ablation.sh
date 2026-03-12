@@ -45,7 +45,8 @@ set -e
 
 # Single podman service on local /tmp
 PD=/tmp/podman-ablation-$(id -u)
-rm -rf ${PD}
+# Old graphroot may contain root-owned files from containers; ignore errors.
+rm -rf ${PD} 2>/dev/null || true
 mkdir -p ${PD}/graphroot ${PD}/runroot
 export XDG_RUNTIME_DIR=${PD}
 SOCK=${PD}/podman.sock
