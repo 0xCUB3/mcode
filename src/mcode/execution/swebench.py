@@ -15,6 +15,28 @@ def _fq_image(name: str) -> str:
     return f"docker.io/{name}"
 
 
+def _ensure_image(client: object, name: str) -> None:
+    """Pull *name* if not already present, tolerating podman quirks."""
+    import docker
+
+    fq = _fq_image(name)
+    try:
+        client.images.get(name)
+        return
+    except docker.errors.ImageNotFound:
+        pass
+    try:
+        client.images.get(fq)
+        return
+    except docker.errors.ImageNotFound:
+        pass
+    # Use low-level API; high-level .pull() does a post-pull images.get()
+    # that fails on podman due to name normalization differences.
+    for line in client.api.pull(fq, stream=True, decode=True):
+        if "error" in line:
+            raise RuntimeError(line["error"])
+
+
 @dataclass(frozen=True)
 class SWEbenchRun:
     resolved: bool
@@ -142,7 +164,6 @@ class SWEbenchSandbox:
         import tarfile
         from contextlib import contextmanager
 
-        import docker
         from swebench.harness.test_spec.test_spec import make_test_spec
 
         @contextmanager
@@ -156,14 +177,13 @@ class SWEbenchSandbox:
                 instance_image_tag=self.instance_image_tag,
                 arch=self._effective_arch(),
             )
-            try:
-                client.images.get(_fq_image(test_spec.instance_image_key))
-            except docker.errors.ImageNotFound:
-                client.images.pull(_fq_image(test_spec.instance_image_key))
+            _ensure_image(client, test_spec.instance_image_key)
 
             dest = tempfile.mkdtemp(prefix="mcode-testbed-")
-            img = _fq_image(test_spec.instance_image_key)
-            container = client.containers.create(image=img, command="true")
+            container = client.containers.create(
+                image=_fq_image(test_spec.instance_image_key),
+                command="true",
+            )
             try:
                 bits, _ = container.get_archive("/testbed")
                 buf = io.BytesIO()
@@ -194,7 +214,6 @@ class SWEbenchSandbox:
         Uses Docker with network disabled during evaluation.
         """
         try:
-            import docker
             from swebench.harness.constants import (
                 DOCKER_PATCH,
                 DOCKER_USER,
@@ -230,37 +249,36 @@ class SWEbenchSandbox:
         # Ensure the instance image exists (build locally or pull if namespace provided).
         if test_spec.is_remote_image:
             try:
-                client.images.get(_fq_image(test_spec.instance_image_key))
-            except docker.errors.ImageNotFound:  # pragma: no cover
-                try:
-                    client.images.pull(_fq_image(test_spec.instance_image_key))
-                except Exception as e:  # pragma: no cover
-                    if test_spec.arch == "arm64":
-                        alt_spec = make_test_spec(
-                            instance,
-                            namespace=self.namespace,
-                            base_image_tag=self.base_image_tag,
-                            env_image_tag=self.env_image_tag,
-                            instance_image_tag=self.instance_image_tag,
-                            arch="x86_64",
-                        )
-                        try:
-                            client.images.pull(_fq_image(alt_spec.instance_image_key))
-                            test_spec = alt_spec
-                        except Exception:
-                            raise RuntimeError(
-                                "Could not pull the SWE-bench prebuilt image "
-                                f"{test_spec.instance_image_key!r}. "
-                                "Try `--arch x86_64` (recommended) or `--namespace none` "
-                                "to build locally."
-                            ) from e
-                    else:
+                _ensure_image(client, test_spec.instance_image_key)
+            except Exception as e:  # pragma: no cover
+                if test_spec.arch == "arm64":
+                    alt_spec = make_test_spec(
+                        instance,
+                        namespace=self.namespace,
+                        base_image_tag=self.base_image_tag,
+                        env_image_tag=self.env_image_tag,
+                        instance_image_tag=self.instance_image_tag,
+                        arch="x86_64",
+                    )
+                    try:
+                        _ensure_image(client, alt_spec.instance_image_key)
+                        test_spec = alt_spec
+                    except Exception:
                         raise RuntimeError(
                             "Could not pull the SWE-bench prebuilt image "
                             f"{test_spec.instance_image_key!r}. "
-                            "The namespace may not contain images for this instance.\n"
-                            'Try `--namespace none` (or `--namespace ""`) to build locally.'
+                            "Try `--arch x86_64` (recommended) or "
+                            "`--namespace none` to build locally."
                         ) from e
+                else:
+                    raise RuntimeError(
+                        "Could not pull the SWE-bench prebuilt image "
+                        f"{test_spec.instance_image_key!r}. "
+                        "The namespace may not contain images for "
+                        "this instance.\n"
+                        'Try `--namespace none` (or `--namespace ""`) '
+                        "to build locally."
+                    ) from e
         else:
             # Build locally (relies on env images produced by `prepare_images`).
             # Keep `nocache=False` for speed; swebench uses this flag name.

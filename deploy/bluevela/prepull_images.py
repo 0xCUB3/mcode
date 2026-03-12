@@ -19,23 +19,36 @@ def main(namespace: str, limit: int) -> None:
     failed = 0
     cached = 0
 
+    # Build set of all local image tags for fast cache lookup.
+    # images.get() fails on podman with name mismatches, so list all.
+    local_tags: set[str] = set()
+    for img in client.images.list():
+        for tag in img.tags or []:
+            local_tags.add(tag)
+            # Also add without docker.io/ prefix and with it
+            if tag.startswith("docker.io/"):
+                local_tags.add(tag[len("docker.io/") :])
+            else:
+                local_tags.add(f"docker.io/{tag}")
+
     for i, task in enumerate(tasks):
         spec = make_test_spec(task, namespace=namespace)
         name = spec.instance_image_key
 
-        # Podman needs fully qualified names for Docker-compat API
+        # Check cache using both short and FQ names
+        if name in local_tags:
+            cached += 1
+            continue
+
         fq_name = name if "/" in name and "." in name.split("/")[0] else f"docker.io/{name}"
 
         try:
-            client.images.get(fq_name)
-            cached += 1
-            continue
-        except docker.errors.ImageNotFound:
-            pass
-
-        try:
             print(f"  [{i + 1}/{len(tasks)}] pulling {fq_name}...", flush=True)
-            client.images.pull(fq_name)
+            # Use low-level API to avoid post-pull image lookup that
+            # fails on podman's Docker-compat API due to name mismatch.
+            for line in client.api.pull(fq_name, stream=True, decode=True):
+                if "error" in line:
+                    raise RuntimeError(line["error"])
             pulled += 1
         except Exception as e:
             print(f"  [{i + 1}/{len(tasks)}] FAILED {fq_name}: {e}", flush=True)
