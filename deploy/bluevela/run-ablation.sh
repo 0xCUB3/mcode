@@ -81,11 +81,16 @@ LIMIT='"${LIMIT}"'
 LOG_DIR='"${LOG_DIR}"'
 RESULTS_DIR='"${BV_RESULTS_DIR}"'
 
-echo "=== Phase 0: Pre-pull all SWE-bench Lite images ==="
-date
-python3 '"${BV_MCODE_DIR}"'/deploy/bluevela/prepull_images.py '"${NAMESPACE}"' ${LIMIT}
-echo "=== Phase 0 complete ==="
-date
+SKIP_PREPULL='"${SKIP_PREPULL:-0}"'
+if [[ "${SKIP_PREPULL}" != "1" ]]; then
+    echo "=== Phase 0: Pre-pull all SWE-bench Lite images ==="
+    date
+    python3 '"${BV_MCODE_DIR}"'/deploy/bluevela/prepull_images.py '"${NAMESPACE}"' ${LIMIT}
+    echo "=== Phase 0 complete ==="
+    date
+else
+    echo "=== Phase 0: SKIPPED (SKIP_PREPULL=1) ==="
+fi
 
 run_shard() {
     local EXP_NAME=$1
