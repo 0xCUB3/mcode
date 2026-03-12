@@ -5,7 +5,7 @@ import platform
 import tempfile
 import time
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 
 def _fq_image(name: str) -> str:
@@ -13,6 +13,31 @@ def _fq_image(name: str) -> str:
     if "/" in name and "." in name.split("/")[0]:
         return name
     return f"docker.io/{name}"
+
+
+def _copy_to_container_safe(container: object, content: str, dest: str) -> None:
+    """Copy content into a container without triggering lchown.
+
+    Rootless podman without subuid ranges fails on the standard
+    ``put_archive`` / ``copy_to_container`` because it cannot lchown
+    the extracted file.  We build a tar with uid/gid 0 so no ownership
+    change is needed.
+    """
+    import io
+    import os
+    import tarfile as _tarfile
+
+    data = content.encode("utf-8")
+    buf = io.BytesIO()
+    with _tarfile.open(fileobj=buf, mode="w") as tar:
+        info = _tarfile.TarInfo(name=os.path.basename(dest))
+        info.size = len(data)
+        info.uid = 0
+        info.gid = 0
+        info.mode = 0o644
+        tar.addfile(info, io.BytesIO(data))
+    buf.seek(0)
+    container.put_archive(os.path.dirname(dest) or "/", buf)
 
 
 def _ensure_image(client: object, name: str) -> None:
@@ -223,7 +248,7 @@ class SWEbenchSandbox:
                 KEY_PREDICTION,
             )
             from swebench.harness.docker_build import build_instance_image
-            from swebench.harness.docker_utils import copy_to_container, exec_run_with_timeout
+            from swebench.harness.docker_utils import exec_run_with_timeout
             from swebench.harness.grading import get_eval_report
             from swebench.harness.test_spec.test_spec import make_test_spec
         except Exception as e:  # pragma: no cover
@@ -304,12 +329,9 @@ class SWEbenchSandbox:
             )
             container.start()
 
-            # Copy patch to container.
-            with tempfile.TemporaryDirectory(prefix="mcode-swebench-") as td:
-                td_path = Path(td)
-                patch_path = td_path / "patch.diff"
-                patch_path.write_text(patch or "", encoding="utf-8", errors="replace")
-                copy_to_container(container, patch_path, PurePosixPath(str(DOCKER_PATCH)))
+            # Copy patch to container via exec (avoids put_archive lchown
+            # failures in rootless podman without subuid ranges).
+            _copy_to_container_safe(container, patch or "", str(DOCKER_PATCH))
 
             # Apply patch (mirror swebench harness behavior).
             apply_cmds = [
@@ -351,11 +373,7 @@ class SWEbenchSandbox:
 
             # Copy eval script and run.
             eval_script = test_spec.eval_script
-            with tempfile.TemporaryDirectory(prefix="mcode-swebench-eval-") as td:
-                td_path = Path(td)
-                eval_path = td_path / "eval.sh"
-                eval_path.write_text(eval_script, encoding="utf-8", errors="replace")
-                copy_to_container(container, eval_path, PurePosixPath("/eval.sh"))
+            _copy_to_container_safe(container, eval_script, "/eval.sh")
             test_output, timed_out, runtime_s = exec_run_with_timeout(
                 container, "/bin/bash /eval.sh", timeout_s
             )
