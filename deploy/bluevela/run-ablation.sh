@@ -32,10 +32,16 @@ mkdir -p "${LOG_DIR}"
 rm -f "${BV_RESULTS_DIR}"/ablation-*.db "${LOG_DIR}"/ablation-*.log
 
 # Single mega job: one podman service, sequential image pull, then parallel experiments
+# Pin to a specific host if BV_EXEC_HOST is set (reuses cached images in /tmp).
+EXEC_HOST_FLAG=""
+if [[ -n "${BV_EXEC_HOST:-}" ]]; then
+    EXEC_HOST_FLAG="-m ${BV_EXEC_HOST}"
+fi
 bsub -G "${BV_GROUP}" \
     -J "ablation-mega" \
     -q "${BV_QUEUE}" \
     -n 1 \
+    ${EXEC_HOST_FLAG} \
     -R "span[hosts=1]" \
     -W 24:00 \
     -o "${LOG_DIR}/ablation-mega.log" \
