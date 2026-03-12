@@ -8,6 +8,13 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 
+def _fq_image(name: str) -> str:
+    """Fully qualify an image name for podman Docker-compat API."""
+    if "/" in name and "." in name.split("/")[0]:
+        return name
+    return f"docker.io/{name}"
+
+
 @dataclass(frozen=True)
 class SWEbenchRun:
     resolved: bool
@@ -150,12 +157,13 @@ class SWEbenchSandbox:
                 arch=self._effective_arch(),
             )
             try:
-                client.images.get(test_spec.instance_image_key)
+                client.images.get(_fq_image(test_spec.instance_image_key))
             except docker.errors.ImageNotFound:
-                client.images.pull(test_spec.instance_image_key)
+                client.images.pull(_fq_image(test_spec.instance_image_key))
 
             dest = tempfile.mkdtemp(prefix="mcode-testbed-")
-            container = client.containers.create(image=test_spec.instance_image_key, command="true")
+            img = _fq_image(test_spec.instance_image_key)
+            container = client.containers.create(image=img, command="true")
             try:
                 bits, _ = container.get_archive("/testbed")
                 buf = io.BytesIO()
@@ -222,10 +230,10 @@ class SWEbenchSandbox:
         # Ensure the instance image exists (build locally or pull if namespace provided).
         if test_spec.is_remote_image:
             try:
-                client.images.get(test_spec.instance_image_key)
+                client.images.get(_fq_image(test_spec.instance_image_key))
             except docker.errors.ImageNotFound:  # pragma: no cover
                 try:
-                    client.images.pull(test_spec.instance_image_key)
+                    client.images.pull(_fq_image(test_spec.instance_image_key))
                 except Exception as e:  # pragma: no cover
                     if test_spec.arch == "arm64":
                         alt_spec = make_test_spec(
@@ -237,7 +245,7 @@ class SWEbenchSandbox:
                             arch="x86_64",
                         )
                         try:
-                            client.images.pull(alt_spec.instance_image_key)
+                            client.images.pull(_fq_image(alt_spec.instance_image_key))
                             test_spec = alt_spec
                         except Exception:
                             raise RuntimeError(
@@ -264,7 +272,7 @@ class SWEbenchSandbox:
             # Prevent name collisions across retries.
             container_name = f"{test_spec.get_instance_container_name(run_id)}.{patch_sha[:8]}"
             container = client.containers.create(
-                image=test_spec.instance_image_key,
+                image=_fq_image(test_spec.instance_image_key),
                 name=container_name,
                 user=DOCKER_USER,
                 detach=True,

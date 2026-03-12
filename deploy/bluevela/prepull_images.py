@@ -1,4 +1,5 @@
 """Pre-pull all SWE-bench Lite Docker images sequentially."""
+
 from __future__ import annotations
 
 import sys
@@ -22,19 +23,22 @@ def main(namespace: str, limit: int) -> None:
         spec = make_test_spec(task, namespace=namespace)
         name = spec.instance_image_key
 
+        # Podman needs fully qualified names for Docker-compat API
+        fq_name = name if "/" in name and "." in name.split("/")[0] else f"docker.io/{name}"
+
         try:
-            client.images.get(name)
+            client.images.get(fq_name)
             cached += 1
             continue
         except docker.errors.ImageNotFound:
             pass
 
         try:
-            print(f"  [{i+1}/{len(tasks)}] pulling {name}...", flush=True)
-            client.images.pull(name)
+            print(f"  [{i + 1}/{len(tasks)}] pulling {fq_name}...", flush=True)
+            client.images.pull(fq_name)
             pulled += 1
         except Exception as e:
-            print(f"  [{i+1}/{len(tasks)}] FAILED {name}: {e}", flush=True)
+            print(f"  [{i + 1}/{len(tasks)}] FAILED {fq_name}: {e}", flush=True)
             failed += 1
 
     print(f"Pre-pull done: {pulled} pulled, {failed} failed, {cached} cached")
