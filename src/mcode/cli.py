@@ -2330,6 +2330,10 @@ def bench_swebench_lite(
         str,
         typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
     ] = "best_attempt",
+    task_ids: Annotated[
+        str | None,
+        typer.Option("--task-ids", help="Comma-separated task IDs to run (or path to JSON file)"),
+    ] = None,
 ) -> None:
     strategy_name = strategy.strip().lower()
     if strategy_name not in {"repair", "sofai"}:
@@ -2367,8 +2371,9 @@ def bench_swebench_lite(
         task_shard_count=shard_count,
         task_shard_index=shard_index,
     )
+    parsed_task_ids = _parse_task_ids(task_ids)
     runner = BenchmarkRunner(config=config, results_db=ResultsDB(db))
-    summary = runner.run_benchmark("swebench-lite", limit=limit)
+    summary = runner.run_benchmark("swebench-lite", limit=limit, task_ids=parsed_task_ids)
     _print_run_summary(
         summary=summary,
         benchmark="swebench-lite",

@@ -20,7 +20,7 @@ class SWEbenchLiveRun:
 
 def _ms_image_name(instance_id: str) -> str:
     sanitized = instance_id.replace("__", "_1776_").lower()
-    return f"starryzhang/sweb.eval.x86_64.{sanitized}"
+    return f"docker.io/starryzhang/sweb.eval.x86_64.{sanitized}"
 
 
 def _parse_pytest_output(output: str) -> dict[str, str]:
@@ -93,43 +93,48 @@ class SWEbenchLiveSandbox:
             ) from e
 
     def prepare_images(self, tasks, *, max_workers: int = 4) -> None:
-        """Pre-pull Docker images for all tasks in parallel."""
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
-        import docker
-
+        """Pre-pull Docker images for all tasks sequentially."""
         client = self._get_client()
-        image_names: list[str] = []
+
+        # Build local tag cache for fast lookup (avoids images.get failures on podman).
+        local_tags: set[str] = set()
+        for img in client.images.list():
+            for tag in img.tags or []:
+                local_tags.add(tag)
+                if tag.startswith("docker.io/"):
+                    local_tags.add(tag[len("docker.io/") :])
+                else:
+                    local_tags.add(f"docker.io/{tag}")
+
+        to_pull: list[str] = []
         for task in tasks:
             name = _ms_image_name(task.instance_id)
-            try:
-                client.images.get(name)
-            except docker.errors.ImageNotFound:
-                image_names.append(name)
+            if name not in local_tags:
+                to_pull.append(name)
 
-        if not image_names:
+        if not to_pull:
             print(f"  [images] all {len(tasks)} images already cached", flush=True)
             return
 
         print(
-            f"  [images] pulling {len(image_names)}/{len(tasks)} images ({max_workers} workers)...",
+            f"  [images] pulling {len(to_pull)}/{len(tasks)} images...",
             flush=True,
         )
 
-        def _pull(name: str) -> str:
+        pulled = 0
+        failed = 0
+        for i, name in enumerate(to_pull):
             try:
-                client.images.pull(name)
-                return f"ok: {name}"
+                print(f"  [{i + 1}/{len(to_pull)}] pulling {name}...", flush=True)
+                for line in client.api.pull(name, stream=True, decode=True):
+                    if "error" in line:
+                        raise RuntimeError(line["error"])
+                pulled += 1
             except Exception as e:
-                return f"fail: {name}: {e}"
+                print(f"  [{i + 1}/{len(to_pull)}] FAILED {name}: {e}", flush=True)
+                failed += 1
 
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {pool.submit(_pull, n): n for n in image_names}
-            done = 0
-            for fut in as_completed(futures):
-                done += 1
-                result = fut.result()
-                print(f"  [images] ({done}/{len(image_names)}) {result}", flush=True)
+        print(f"  [images] done: {pulled} pulled, {failed} failed", flush=True)
 
     def repo_context(self, task):
         """Context manager yielding a temp dir with the repo from the task's Docker image."""
@@ -138,16 +143,16 @@ class SWEbenchLiveSandbox:
         from contextlib import contextmanager
         from pathlib import Path
 
-        import docker
-
         @contextmanager
         def _ctx():
             client = self._get_client()
             image_name = _ms_image_name(task.instance_id)
             try:
                 client.images.get(image_name)
-            except docker.errors.ImageNotFound:
-                client.images.pull(image_name)
+            except Exception:
+                for line in client.api.pull(image_name, stream=True, decode=True):
+                    if "error" in line:
+                        raise RuntimeError(line["error"])
 
             dest = tempfile.mkdtemp(prefix="mcode-testbed-")
             container = client.containers.create(image=image_name, command="true")
@@ -227,25 +232,30 @@ class SWEbenchLiveSandbox:
         run_id: str,
         timeout_s: int,
     ) -> SWEbenchLiveRun:
-        import docker
+        import uuid
 
         client = self._get_client()
         image_name = _ms_image_name(task.instance_id)
         patch_sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest()
 
-        # Pull image if not present.
+        # Ensure image is present (use low-level API for podman compat).
         try:
             client.images.get(image_name)
-        except docker.errors.ImageNotFound:
-            client.images.pull(image_name)
+        except Exception:
+            for line in client.api.pull(image_name, stream=True, decode=True):
+                if "error" in line:
+                    raise RuntimeError(line["error"])
 
         container = None
         start = time.time()
         timed_out = False
         test_output = ""
         try:
+            uid = uuid.uuid4().hex[:8]
             container_name = (
-                f"mcode-sweb-live-{run_id}.{task.instance_id}.{patch_sha[:8]}".replace("__", "-")
+                f"mcode-sweb-live-{run_id}.{task.instance_id}.{patch_sha[:8]}.{uid}".replace(
+                    "__", "-"
+                )
                 .replace("/", "-")
                 .lower()[:63]
             )
@@ -379,6 +389,9 @@ def _copy_to_container(container, dest_path: str, content: str) -> None:
     with tarfile.open(fileobj=buf, mode="w") as tar:
         info = tarfile.TarInfo(name=dest_path.split("/")[-1])
         info.size = len(data)
+        info.uid = 0
+        info.gid = 0
+        info.mode = 0o644
         tar.addfile(info, io.BytesIO(data))
     buf.seek(0)
     dest_dir = "/".join(dest_path.split("/")[:-1]) or "/"

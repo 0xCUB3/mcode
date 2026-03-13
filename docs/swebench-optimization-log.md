@@ -1,6 +1,6 @@
-# SWE-bench Live Optimization Log
+# SWE-bench Optimization Log
 
-Iterative experiments to improve SWE-bench Live resolution rate on a 25-task smoke suite, using Qwen3.5-35B-A3B on Blue Vela.
+Iterative experiments to improve SWE-bench Lite resolution rate. Started with Qwen3.5-35B-A3B on a 25-task smoke suite, then scaled to Qwen3.5-27B on the full 300-task SWE-bench Lite.
 
 ## Setup
 
@@ -177,9 +177,94 @@ D matched baseline exactly. A/B/C lost kubernetes-2303, likely voting variance. 
 
 **Final best: 7/24 = 29.2%** with majority voting (n_samples=3).
 
+---
+
+## Round 3: Full SWE-bench Lite (300 tasks) with Qwen3.5-27B
+
+Scaled from 25-task smoke suite to full 300-task SWE-bench Lite, and upgraded from Qwen3.5-35B-A3B (MoE, 3B active) to Qwen3.5-27B (dense, 27B active).
+
+### Setup
+
+- **Model:** Qwen/Qwen3.5-27B (dense 27B, 1x H100 80GB)
+- **Serving:** vLLM v0.17.0 on 1x H100, `--enforce-eager --tool-call-parser qwen3_coder --reasoning-parser deepseek_r1`
+- **Cluster:** IBM Blue Vela (p2-r24-n2), podman rootless Docker-compat API
+- **Budget:** 15 ReACT turns per sample (25 for C-budget25)
+- **Eval:** Full SWE-bench Lite (300 tasks), `swebench` namespace prebuilt images
+- **Parallelism:** 7 shards per experiment, 5 experiments x 7 shards = 35 parallel processes
+- **Timeout:** 450s per task (`MCODE_REACT_TIMEOUT=450`)
+
+### Results
+
+Initial run had 24/300 tasks fail with disk quota errors (/tmp too small for podman graphroot). Moved graphroot to `/proj/dmfexp/skula/podman/graphroot` and reran the 24 failed tasks. Combined results:
+
+| Exp | Feature | Resolved | Rate | vs Baseline |
+|-|-|-|-|-|
+| baseline | all toggles off, budget=15 | 81/300 | 27.0% | -- |
+| A-prompt | explore-first prompt | 64/300 | 21.3% | -5.7pp |
+| B-warning | budget warning at turn N-2 | 84/300 | 28.0% | +1.0pp |
+| C-budget25 | budget=25 turns | 79/300 | 26.3% | -0.7pp |
+| D-nudge | read history nudge | 83/300 | 27.7% | +0.7pp |
+
+4 tasks across experiments hit the 32k context window limit (BadRequestError), counted as not-resolved.
+
+### Analysis
+
+**Explore-first prompt (A) is actively harmful at scale.** Lost 5.7pp vs baseline. The structured EXPLORE/DIAGNOSE/EDIT/VERIFY prompt constrains the model's natural problem-solving. Confirmed across both model sizes and task counts.
+
+**Budget warning (B) is the best single intervention.** +1.0pp over baseline, resolving 3 more tasks. The warning at turn N-2 gives the model enough signal to wrap up with a patch instead of continuing to explore.
+
+**Read nudge (D) is slightly helpful.** +0.7pp, resolving 2 more tasks. Gentle reminders about re-reading files nudge the model toward new exploration.
+
+**Larger budget (C) doesn't help.** -0.7pp vs baseline with budget=15. Extra turns lead to more exploration without convergence, consistent with Round 2 finding. The model either finds the fix early or loops.
+
+**Model upgrade matters.** Qwen3.5-27B (dense 27B) at 27.0% baseline on 300 tasks vs Qwen3.5-35B-A3B (MoE, 3B active) at 20% on 25 tasks. The dense model is meaningfully more capable despite the smaller parameter count, because all 27B parameters are active per token vs only 3B.
+
+### Infrastructure
+
+- **Podman rootless + Docker SDK:** Required `_fq_image()` helper for fully-qualified image names, `_copy_to_container_safe()` with uid=0/gid=0 tars to avoid lchown failures, `_ensure_image()` using low-level `client.api.pull()` to bypass podman name normalization
+- **Container name collisions:** Added UUID suffix to container names for parallel experiments
+- **Docker Hub rate limits:** Switched to anonymous pulls (commented out `REGISTRY_AUTH_FILE`) after exhausting authenticated 200/6hr limit
+- **Node pinning:** Used `BV_EXEC_HOST` / `-m <hostname>` to keep all shards on the same node (cached images in /tmp are node-local)
+- **Disk quota on /tmp:** 49G /tmp fills up with 35 parallel container processes. Moved graphroot to `/proj/dmfexp/skula/podman/graphroot` (NFS, 2.6TB free). Runroot stays on /tmp (small, fast).
+- **Job stuck on `wait`:** Podman container cleanup (SIGTERM timeouts, pasta process errors) kept background processes alive after shards completed. Killed job and merged manually.
+
+## Overall Summary
+
+### Phase 1: Qwen3.5-35B-A3B (MoE, 3B active) on 25-task smoke suite
+
+| Experiment | Score | vs Baseline | Kept? |
+|-|-|-|-|
+| Baseline | 5/25 = 20% | -- | -- |
+| File localization | 2/25 = 8% | -12% | No |
+| Read loop detection | 0/25 | -20% (+ infra) | No |
+| Majority voting (n=3) | 7/24 = 29.2% | +9.2% | Yes |
+| Docker test execution | 1/8 = 12.5% | -16.7% | No |
+| Explore-first prompt | 3/15 = 20% | -6.7% (vs 15-task) | No |
+| Budget warning | 3/15 = 20% | -6.7% (vs 15-task) | No |
+| Budget=25 | 3/15 = 20% | -6.7% (vs 15-task) | No |
+| Read nudge | 4/15 = 26.7% | 0 (vs 15-task) | No |
+
+### Phase 2: Qwen3.5-27B (dense 27B) on full SWE-bench Lite (300 tasks)
+
+| Experiment | Score | vs Baseline | Kept? |
+|-|-|-|-|
+| Baseline | 81/300 = 27.0% | -- | -- |
+| Explore-first prompt | 64/300 = 21.3% | -5.7pp | No |
+| Budget warning | 84/300 = 28.0% | +1.0pp | Maybe |
+| Budget=25 | 79/300 = 26.3% | -0.7pp | No |
+| Read nudge | 83/300 = 27.7% | +0.7pp | Maybe |
+
+**Best Phase 2 result: 84/300 = 28.0%** with budget warning enabled.
+
+**Takeaway:** Scaling from MoE 3B-active to dense 27B improved baseline from ~20% to 27%. Prompt/budget tweaks produce small effects (+/-1pp). The explore-first prompt is consistently harmful across both model sizes and task counts. Budget warning and read nudge show modest but consistent gains at scale. Further improvement likely needs architectural changes or larger models.
+
 ## Infrastructure Notes
 
 - **Podman rootless netns:** Stale `/tmp/podman-run-$UID/networks/rootless-netns/rootless-netns: file exists` error blocks all Docker operations. Fix: `podman system reset --force` before starting service.
 - **Cross-rack connectivity:** Blue Vela compute nodes can't always reach other racks. Jobs must target the same rack as vLLM (p1).
 - **Shell variable interpolation:** `OPENAI_BASE_URL` must be hardcoded in bsub scripts, not interpolated from env vars inside heredocs.
 - **uv run vs pip:** `uv run` resolves from lockfile and can override manually installed packages. Use `uv lock --upgrade-package mellea` after pushing fork changes.
+- **Podman `ignore_chown_errors`:** Required `--storage-opt ignore_chown_errors=true` on podman service to avoid lchown failures during layer unpacking.
+- **Docker SDK `.pull()` vs `.api.pull()`:** High-level `client.images.pull()` fails on podman because post-pull `images.get()` can't find images under normalized names. Use `client.api.pull(fq_name, stream=True, decode=True)` instead.
+- **Container cleanup stuck:** Podman SIGTERM -> SIGKILL escalation on containers + pasta process errors can keep `wait` stuck indefinitely. Kill the job and merge manually.
+- **Docker Hub anonymous pulls:** Comment out `REGISTRY_AUTH_FILE` to use anonymous rate limit (100/6hr per-IP) instead of authenticated (200/6hr per-user, shared across all jobs).
