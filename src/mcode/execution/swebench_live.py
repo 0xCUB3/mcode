@@ -94,6 +94,15 @@ class SWEbenchLiveSandbox:
 
     def prepare_images(self, tasks, *, max_workers: int = 4) -> None:
         """Pre-pull Docker images for all tasks sequentially."""
+        import os
+
+        if os.environ.get("MCODE_SKIP_IMAGE_PULL"):
+            print(
+                f"  [images] skipping pull (MCODE_SKIP_IMAGE_PULL set, {len(tasks)} tasks)",
+                flush=True,
+            )
+            return
+
         client = self._get_client()
 
         # Build local tag cache for fast lookup (avoids images.get failures on podman).
