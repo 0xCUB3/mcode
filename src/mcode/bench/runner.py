@@ -282,10 +282,6 @@ class BenchmarkRunner:
 
     def _run_swebench_live_task(self, task, *, live_sandbox, run_id: int) -> dict:
         start = time.time()
-
-        def _truncate(s: str, max_chars: int = 8000) -> str:
-            return s if len(s) <= max_chars else s[-max_chars:]
-
         try:
             with live_sandbox.repo_context(task) as repo_root:
                 try:
@@ -360,10 +356,6 @@ class BenchmarkRunner:
 
     def _run_swebench_task(self, task, *, swe_sandbox, run_id: int) -> dict:
         start = time.time()
-
-        def _truncate(s: str, max_chars: int = 8000) -> str:
-            return s if len(s) <= max_chars else s[-max_chars:]
-
         with swe_sandbox.repo_context(task.raw_instance) as repo_root:
             try:
                 with self.llm.open():
@@ -419,6 +411,10 @@ class BenchmarkRunner:
             "code_sha256": sha,
             **last_detail,
         }
+
+
+def _truncate(s: str, max_chars: int = 8000) -> str:
+    return s if len(s) <= max_chars else s[-max_chars:]
 
 
 def _truncate_text(value: str | None, *, max_chars: int = 8000) -> str | None:
