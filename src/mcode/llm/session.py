@@ -85,6 +85,17 @@ class LLMSession:
         return RepairTemplateStrategy(loop_budget=budget)
 
     def check_available(self) -> None:
+        if self.strategy_name == "raw":
+            # Raw mode uses OpenAI API directly, skip mellea check
+            from openai import OpenAI
+
+            client = OpenAI(
+                base_url=os.environ.get("OPENAI_BASE_URL"),
+                api_key=os.environ.get("OPENAI_API_KEY", "unused"),
+            )
+            client.models.list()
+            return
+
         try:
             import mellea
         except Exception as e:  # pragma: no cover
@@ -109,6 +120,10 @@ class LLMSession:
 
     @contextmanager
     def open(self):
+        if self.strategy_name == "raw":
+            yield self
+            return
+
         if self._m is not None:
             yield self
             return
@@ -174,6 +189,14 @@ class LLMSession:
         test_cmds: list[str] | None = None,
         test_fn: object | None = None,
     ) -> str:
+        if self.strategy_name == "raw":
+            return self._generate_patch_raw(
+                repo=repo,
+                problem_statement=problem_statement,
+                hints_text=hints_text,
+                repo_root=repo_root,
+            )
+
         import asyncio
         import subprocess
 
@@ -334,6 +357,110 @@ class LLMSession:
             non_empty.sort(key=len, reverse=True)
             return non_empty[0]
         return _get_diff(repo_root)
+
+    def _generate_patch_raw(
+        self,
+        *,
+        repo: str,
+        problem_statement: str,
+        hints_text: str = "",
+        repo_root: str,
+    ) -> str:
+        """Single-shot patch generation: no tools, no ReAct loop.
+
+        Uses the OpenAI-compatible API directly instead of mellea's agent
+        framework, to measure the raw model's patch generation ability.
+        """
+        import subprocess
+
+        from openai import OpenAI
+
+        repo_map_text = ""
+        try:
+            from mellea.agent.repomap import build_repo_map
+
+            repo_map_text = build_repo_map(repo_root, problem_statement, max_tokens=4096)
+        except Exception as e:
+            print(f"  [repo_map] failed: {e}", flush=True)
+
+        repo_map_block = f"\n\nRepository structure:\n{repo_map_text}" if repo_map_text else ""
+        hints_block = f"\n\nAdditional context:\n{hints_text.strip()}" if hints_text.strip() else ""
+
+        system_prompt = (
+            "You are an expert software engineer. Given a bug report and "
+            "repository structure, output a unified diff (git diff format) "
+            "that fixes the bug. Output ONLY the diff, nothing else. "
+            "No explanation, no markdown fences, just the raw diff."
+        )
+
+        user_prompt = (
+            f"Repository: {repo}\n\n"
+            f"Bug report:\n{problem_statement.strip()}"
+            f"{repo_map_block}{hints_block}\n\n"
+            "Output the unified diff to fix this bug:"
+        )
+
+        timeout_s = int(os.environ.get("MCODE_REACT_TIMEOUT", "120"))
+        max_tokens = int(os.environ.get("MCODE_MAX_NEW_TOKENS", "4096"))
+
+        try:
+            client = OpenAI(
+                base_url=os.environ.get("OPENAI_BASE_URL"),
+                api_key=os.environ.get("OPENAI_API_KEY", "unused"),
+            )
+            response = client.chat.completions.create(
+                model=self.model_id,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=max_tokens,
+                temperature=self.temperature or 0.0,
+                timeout=timeout_s,
+            )
+            diff_text = response.choices[0].message.content or ""
+
+            # Strip markdown fences if the model wrapped it
+            if diff_text.startswith("```"):
+                lines = diff_text.split("\n")
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                diff_text = "\n".join(lines)
+
+            print(f"  [raw] got {len(diff_text)} char diff", flush=True)
+
+            if not diff_text.strip():
+                return ""
+
+            # Apply the diff
+            proc = subprocess.run(
+                ["git", "apply", "--allow-empty"],
+                input=diff_text,
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+            )
+            if proc.returncode != 0:
+                print(f"  [raw] git apply failed: {proc.stderr[:200]}", flush=True)
+                # Try with --3way
+                proc2 = subprocess.run(
+                    ["git", "apply", "--3way", "--allow-empty"],
+                    input=diff_text,
+                    cwd=repo_root,
+                    capture_output=True,
+                    text=True,
+                )
+                if proc2.returncode != 0:
+                    print("  [raw] git apply --3way also failed", flush=True)
+                    return ""
+
+            return _get_diff(repo_root)
+
+        except Exception as e:
+            print(f"  [raw] error: {e}", flush=True)
+            return ""
 
 
 def _get_diff(repo_root: str) -> str:

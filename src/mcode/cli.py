@@ -2182,7 +2182,7 @@ def bench_swebench_live(
     limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
     strategy: Annotated[
         str,
-        typer.Option("--strategy", help="Sampling strategy: repair or sofai"),
+        typer.Option("--strategy", help="Sampling strategy: repair, sofai, or raw"),
     ] = "repair",
     s2_model: Annotated[
         str | None,
@@ -2207,8 +2207,8 @@ def bench_swebench_live(
 ) -> None:
     """Run Microsoft SWE-bench-Live benchmark."""
     strategy_name = strategy.strip().lower()
-    if strategy_name not in {"repair", "sofai"}:
-        raise typer.BadParameter("Unknown --strategy. Use repair or sofai.")
+    if strategy_name not in {"repair", "sofai", "raw"}:
+        raise typer.BadParameter("Unknown --strategy. Use repair, sofai, or raw.")
     if strategy_name == "sofai" and not s2_model:
         raise typer.BadParameter("--s2-model is required when --strategy=sofai.")
 

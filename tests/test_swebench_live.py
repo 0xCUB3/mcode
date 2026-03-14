@@ -146,25 +146,25 @@ def test_check_resolution_empty_fail_to_pass():
 
 def test_ms_image_name():
     assert _ms_image_name("django__django__4.0") == (
-        "starryzhang/sweb.eval.x86_64.django_1776_django_1776_4.0"
+        "docker.io/starryzhang/sweb.eval.x86_64.django_1776_django_1776_4.0"
     )
 
 
 def test_ms_image_name_double_underscore():
     assert _ms_image_name("sympy__sympy__1.0") == (
-        "starryzhang/sweb.eval.x86_64.sympy_1776_sympy_1776_1.0"
+        "docker.io/starryzhang/sweb.eval.x86_64.sympy_1776_sympy_1776_1.0"
     )
 
 
 def test_ms_image_name_uppercase():
     assert _ms_image_name("Django__Django__4.0") == (
-        "starryzhang/sweb.eval.x86_64.django_1776_django_1776_4.0"
+        "docker.io/starryzhang/sweb.eval.x86_64.django_1776_django_1776_4.0"
     )
 
 
 def test_ms_image_name_mixed():
     assert _ms_image_name("Repo__Name__v2") == (
-        "starryzhang/sweb.eval.x86_64.repo_1776_name_1776_v2"
+        "docker.io/starryzhang/sweb.eval.x86_64.repo_1776_name_1776_v2"
     )
 
 
