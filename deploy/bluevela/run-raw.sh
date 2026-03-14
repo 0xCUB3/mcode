@@ -74,7 +74,51 @@ LIMIT='"${LIMIT}"'
 LOG_DIR='"${LOG_DIR}"'
 RESULTS_DIR='"${BV_RESULTS_DIR}"'
 
-echo "=== Phase 0: Reuse cached Live images (already pulled) ==="
+echo "=== Phase 0: Pre-pull SWE-bench Live Lite images ==="
+date
+python3 << PYEOF
+import docker
+from datasets import load_dataset
+
+ds = load_dataset("SWE-bench-Live/SWE-bench-Live", split="lite")
+tasks = list(ds)[:${LIMIT}]
+print(f"Pre-pulling images for {len(tasks)} tasks...")
+
+client = docker.from_env()
+
+# Build local tag cache
+local_tags = set()
+for img in client.images.list():
+    for tag in img.tags or []:
+        local_tags.add(tag)
+        if tag.startswith("docker.io/"):
+            local_tags.add(tag[len("docker.io/"):])
+        else:
+            local_tags.add(f"docker.io/{tag}")
+
+pulled = 0
+failed = 0
+cached = 0
+for i, task in enumerate(tasks):
+    iid = task["instance_id"]
+    sanitized = iid.replace("__", "_1776_").lower()
+    name = f"docker.io/starryzhang/sweb.eval.x86_64.{sanitized}"
+    if name in local_tags:
+        cached += 1
+        continue
+    try:
+        print(f"  [{i+1}/{len(tasks)}] pulling {name}...", flush=True)
+        for line in client.api.pull(name, stream=True, decode=True):
+            if "error" in line:
+                raise RuntimeError(line["error"])
+        pulled += 1
+    except Exception as e:
+        print(f"  [{i+1}/{len(tasks)}] FAILED {name}: {e}", flush=True)
+        failed += 1
+
+print(f"Pre-pull done: {pulled} pulled, {failed} failed, {cached} cached")
+PYEOF
+echo "=== Phase 0 complete ==="
 date
 
 run_shard() {
