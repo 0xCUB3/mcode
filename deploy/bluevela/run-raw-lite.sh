@@ -101,7 +101,7 @@ failed = 0
 cached = 0
 for i, task in enumerate(tasks):
     iid = task["instance_id"]
-    sanitized = iid.replace("__", "_s_").lower()
+    sanitized = iid.replace("__", "_1776_").lower()
     name = f"docker.io/swebench/sweb.eval.x86_64.{sanitized}:latest"
     if name in local_tags or name.replace("docker.io/", "") in local_tags:
         cached += 1
