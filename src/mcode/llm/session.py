@@ -274,11 +274,24 @@ class LLMSession:
         timeout_s = int(os.environ.get("MCODE_REACT_TIMEOUT", str(budget * 30)))
 
         use_budget_warning = os.environ.get("MCODE_BUDGET_WARNING", "1") == "1"
+        use_mid_nudge = os.environ.get("MCODE_MID_NUDGE", "0") == "1"
 
-        def _budget_warning(turn, total, ctx):
-            if total > 3 and turn == total - 2:
-                from mellea.stdlib.components.chat import Message
+        def _on_turn(turn, total, ctx):
+            from mellea.stdlib.components.chat import Message
 
+            if use_mid_nudge and total > 5 and turn == total // 2:
+                ctx = ctx.add(
+                    Message(
+                        role="user",
+                        content=(
+                            "You are halfway through your budget. If you have not "
+                            "made any edits yet, you need to start editing NOW. "
+                            "Pick the most likely fix based on what you've read "
+                            "and make the edit. Do not spend more turns just reading."
+                        ),
+                    )
+                )
+            if use_budget_warning and total > 3 and turn == total - 2:
                 ctx = ctx.add(
                     Message(
                         role="user",
@@ -301,7 +314,7 @@ class LLMSession:
                         tools=tools,
                         loop_budget=budget,
                         model_options=model_opts,
-                        on_turn=_budget_warning if use_budget_warning else None,
+                        on_turn=_on_turn if (use_budget_warning or use_mid_nudge) else None,
                     ),
                     timeout=timeout_s,
                 )
