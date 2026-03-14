@@ -258,6 +258,26 @@ Initial run had 24/300 tasks fail with disk quota errors (/tmp too small for pod
 
 **Takeaway:** Scaling from MoE 3B-active to dense 27B improved baseline from ~20% to 27%. Prompt/budget tweaks produce small effects (+/-1pp). The explore-first prompt is consistently harmful across both model sizes and task counts. Budget warning and read nudge show modest but consistent gains at scale. Further improvement likely needs architectural changes or larger models.
 
+### Phase 3: Qwen3.5-27B on SWE-bench Live Lite (300 tasks)
+
+Ran the positive-EV experiments (baseline, B-warning, D-nudge) on SWE-bench Live Lite. Live tasks are from newer GitHub issues, generally harder than SWE-bench Lite.
+
+**Setup:**
+- Same model/serving as Phase 2 (Qwen3.5-27B, 1x H100, vLLM v0.17.0)
+- SWE-bench Live Lite split (300 tasks), images from `starryzhang/sweb.eval.x86_64.*`
+- 3 experiments x 7 shards = 21 parallel processes
+- Budget=15, timeout=450s, no majority voting
+
+| Experiment | Score | Rate | vs Baseline |
+|-|-|-|-|
+| Baseline | 19/300 | 6.3% | -- |
+| Budget warning | 15/300 | 5.0% | -1.3pp |
+| Read nudge | 19/300 | 6.3% | 0pp |
+
+14 tasks per experiment hit the 32k context window limit. 0 infrastructure failures (all 300 tasks ran per experiment).
+
+**Analysis:** SWE-bench Live Lite is substantially harder than SWE-bench Lite (6.3% vs 27.0% baseline). The B-warning intervention that helped on Lite (+1.0pp) was slightly negative on Live (-1.3pp), suggesting its benefit doesn't generalize to harder tasks. Read nudge was neutral on both benchmarks. The model's capability on real-world, recent issues is roughly 4x lower than on the curated Lite set.
+
 ## Infrastructure Notes
 
 - **Podman rootless netns:** Stale `/tmp/podman-run-$UID/networks/rootless-netns/rootless-netns: file exists` error blocks all Docker operations. Fix: `podman system reset --force` before starting service.
