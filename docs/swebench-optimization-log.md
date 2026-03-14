@@ -278,6 +278,25 @@ Ran the positive-EV experiments (baseline, B-warning, D-nudge) on SWE-bench Live
 
 **Analysis:** SWE-bench Live Lite is substantially harder than SWE-bench Lite (6.3% vs 27.0% baseline). The B-warning intervention that helped on Lite (+1.0pp) was slightly negative on Live (-1.3pp), suggesting its benefit doesn't generalize to harder tasks. Read nudge was neutral on both benchmarks. The model's capability on real-world, recent issues is roughly 4x lower than on the curated Lite set.
 
+### Phase 4: Raw Model Comparison (no agent framework)
+
+Ran Qwen3.5-27B in single-shot mode (no mellea agent, no tools, no ReAct loop) on both benchmarks. The model receives only the problem statement and a repo map, then generates a unified diff in one shot. This measures how much value the agent framework adds.
+
+**Setup:**
+- Same model/serving as Phase 2-3 (Qwen3.5-27B, 1x H100, vLLM v0.17.0)
+- `--strategy raw`: single OpenAI API call, no tools, no iterative loop
+- Model generates a unified diff from problem statement + repo map only
+- Diff applied via `git apply`, falling back to `git apply --3way`
+
+| Benchmark | Agent (baseline) | Raw (no agent) | Agent advantage |
+|-|-|-|-|
+| SWE-bench Lite (300) | 81/300 = 27.0% | 1/300 = 0.3% | +26.7pp |
+| SWE-bench Live Lite (300) | 19/300 = 6.3% | 0/300 = 0.0% | +6.3pp |
+
+The single raw pass (`django__django-14580` on Lite) was a lucky simple diff. Nearly every raw-generated patch failed `git apply` due to corrupt formatting, wrong line numbers, or hallucinated file content. The model cannot generate valid patches without tools to read actual file contents, search the codebase, and iteratively refine edits.
+
+**Takeaway:** The mellea agent framework (tool use, ReAct loop, iterative editing) is responsible for essentially all of the model's SWE-bench performance. Raw LLM generation without file access produces near-zero results regardless of benchmark difficulty.
+
 ## Infrastructure Notes
 
 - **Podman rootless netns:** Stale `/tmp/podman-run-$UID/networks/rootless-netns/rootless-netns: file exists` error blocks all Docker operations. Fix: `podman system reset --force` before starting service.
