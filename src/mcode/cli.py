@@ -2336,8 +2336,8 @@ def bench_swebench_lite(
     ] = None,
 ) -> None:
     strategy_name = strategy.strip().lower()
-    if strategy_name not in {"repair", "sofai"}:
-        raise typer.BadParameter("Unknown --strategy. Use repair or sofai.")
+    if strategy_name not in {"repair", "sofai", "raw"}:
+        raise typer.BadParameter("Unknown --strategy. Use repair, sofai, or raw.")
     if strategy_name == "sofai" and not s2_model:
         raise typer.BadParameter("--s2-model is required when --strategy=sofai.")
 
