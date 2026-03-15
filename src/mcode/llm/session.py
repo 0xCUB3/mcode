@@ -251,7 +251,10 @@ class LLMSession:
                 "2. Search the codebase to find the relevant code\n"
                 "3. Identify the root cause\n"
                 "4. Make the minimal edit to fix it\n"
-                "5. Call final_answer when done"
+                "5. Call final_answer when done\n\n"
+                "IMPORTANT: Do not remove or rename any existing functions, "
+                "classes, or module-level names. Other code imports these "
+                "symbols. Add or modify behavior, do not delete definitions."
             )
 
         test_block = ""
