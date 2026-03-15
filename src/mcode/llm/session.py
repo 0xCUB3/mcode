@@ -211,7 +211,7 @@ class LLMSession:
         try:
             from mellea.agent.repomap import build_repo_map
 
-            repo_map_text = build_repo_map(repo_root, problem_statement, max_tokens=2048)
+            repo_map_text = build_repo_map(repo_root, problem_statement, max_tokens=4096)
         except Exception as e:
             print(f"  [repo_map] failed: {e}", flush=True)
 
