@@ -196,9 +196,28 @@ The agent framework is responsible for essentially all of the benchmark performa
 | SWE-bench Lite | 81/300 = 27.0% | 1/300 = 0.3% | +26.7pp |
 | Live Lite | 19/300 = 6.3% | 0/300 = 0.0% | +6.3pp |
 
-Best result: 84/300 = 28.0% on SWE-bench Lite with budget warning.
+### Phase 5: Autoresearch on SWE-bench Live Lite
 
-Model size matters most (dense 27B >> MoE 3B-active). The agent framework is everything (without tools and iteration, the model gets 0%). Prompt/budget tweaks are marginal at +/-1pp, and the explore-first prompt is consistently harmful. Live tasks are ~4x harder than curated Lite tasks. Further gains probably need bigger models or architectural changes.
+Systematic iteration on Live Lite, testing one change at a time against the baseline.
+
+| Experiment | Score | vs Baseline |
+|-|-|-|
+| Baseline | 19/300 = 6.3% | -- |
+| Mid-budget edit nudge (turn N/2) + budget warning | 30/300 = 10.0% | +3.7pp |
+| + repo map 4096 tokens (was 2048) | 32/300 = 10.7% | +4.4pp |
+| + "don't delete definitions" prompt guard | 2/300 = 0.7% | -5.6pp (DISCARD) |
+| budget 15→20 | 30/300 = 10.0% | -0.7pp (DISCARD) |
+| + read nudge | 28/300 = 9.3% | -1.4pp (DISCARD) |
+
+The mid-budget nudge was the biggest single win. Analysis showed 80% of no-patch failures (127/159) made zero edit calls, spending their entire budget reading and searching. At turn N/2, the agent gets a message saying "if you haven't edited yet, start editing NOW." This converted 68 no-patch tasks into actual patch attempts, 15 of which became new passes (with 4 regressions, net +11).
+
+Prompt constraints are catastrophic with this model. The "don't delete definitions" guard (meant to address 42 tasks where the agent broke test imports) dropped from 10.7% to 0.7%. The explore-first structured prompt dropped 5.7pp in Phase 2. Qwen3.5-27B does best with minimal instructions and freedom to act.
+
+More budget still doesn't help, even with mid-nudge. Budget=20 with nudge at turn 10 scored the same as budget=15 with nudge at turn 7. Stacking nudges (read nudge + mid-nudge) scored worse than mid-nudge alone.
+
+Best result: 84/300 = 28.0% on SWE-bench Lite, 32/300 = 10.7% on Live Lite.
+
+Model size matters most (dense 27B >> MoE 3B-active). The agent framework is everything (without tools and iteration, the model gets 0%). The mid-budget nudge is the most effective prompt intervention we've found (+3.7pp on Live). The explore-first prompt is consistently harmful. Live tasks are ~4x harder than curated Lite tasks. Further gains probably need bigger models or architectural changes.
 
 ## Infrastructure notes
 
