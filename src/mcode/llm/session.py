@@ -328,8 +328,57 @@ class LLMSession:
         def _reset_repo():
             subprocess.run(["git", "checkout", "."], cwd=repo_root, capture_output=True)
 
+        use_self_verify = os.environ.get("MCODE_SELF_VERIFY", "0") == "1"
+
+        def _verify_patch(diff: str) -> bool:
+            """Ask the LLM if the patch looks correct. Returns True to keep."""
+            if not diff or not diff.strip():
+                return True
+            try:
+                from openai import OpenAI
+
+                client = OpenAI(
+                    base_url=os.environ.get("OPENAI_BASE_URL"),
+                    api_key=os.environ.get("OPENAI_API_KEY", "unused"),
+                )
+                resp = client.chat.completions.create(
+                    model=self.model_id,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a code reviewer. Answer yes or no.",
+                        },
+                        {
+                            "role": "user",
+                            "content": (
+                                f"Bug report:\n{problem_statement[:2000].strip()}\n\n"
+                                f"Proposed patch:\n```\n{diff[:3000]}\n```\n\n"
+                                "Does this patch correctly fix the described issue? "
+                                "Answer ONLY 'yes' or 'no'."
+                            ),
+                        },
+                    ],
+                    max_tokens=16,
+                    temperature=0.0,
+                    timeout=30,
+                )
+                answer = (resp.choices[0].message.content or "").strip().lower()
+                approved = answer.startswith("yes")
+                tag = "approved" if approved else "rejected"
+                print(f"  [verify] {tag}: {answer[:50]}", flush=True)
+                return approved
+            except Exception as e:
+                print(f"  [verify] error: {e}", flush=True)
+                return True
+
         if n_samples <= 1:
-            return asyncio.run(_one_attempt())
+            diff = asyncio.run(_one_attempt())
+            if use_self_verify and diff and diff.strip():
+                if not _verify_patch(diff):
+                    print("  [verify] retrying...", flush=True)
+                    _reset_repo()
+                    diff = asyncio.run(_one_attempt())
+            return diff
 
         # Multiple samples: run react() n_samples times, pick most common diff
         from collections import Counter
