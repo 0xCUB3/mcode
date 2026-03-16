@@ -218,7 +218,7 @@ class LLMSession:
         repo_map_block = f"\n\nRepository structure:\n{repo_map_text}" if repo_map_text else ""
         hints_block = f"\n\nAdditional context:\n{hints_text.strip()}" if hints_text.strip() else ""
 
-        if os.environ.get("MCODE_EXPLORE_PROMPT", "1") == "1":
+        if os.environ.get("MCODE_EXPLORE_PROMPT", "0") == "1":
             system_prompt = (
                 "You are an expert software engineer fixing a bug in an "
                 "open-source repository. You MUST edit existing source files "
