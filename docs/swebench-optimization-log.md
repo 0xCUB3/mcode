@@ -221,6 +221,19 @@ More budget still doesn't help, even with mid-nudge. Budget=20 with nudge at tur
 
 Self-verification retry (ask the LLM "does this patch fix the issue?" and retry on "no") was neutral. The model makes the same mistakes on retry. The verification call itself works (20/300 tasks triggered retries), but the second attempt doesn't produce better patches.
 
+### Phase 6: Mellea framework changes
+
+Tested three changes to the mellea agent framework (the fork), each independently on top of the best config.
+
+| Experiment | Score | vs Best (~9-11%) |
+|-|-|-|
+| Context compression (summarize old tool outputs at turn N/2) | 10/300 = 3.3% | regression (DISCARD) |
+| Fuzzy edit matching (whitespace-normalized fallback) | 32/300 = 10.7% | neutral |
+
+Context compression actively hurts. The model needs full tool output history to reason about what it already tried and what it found. Compressing old results removes information the model relies on for later turns.
+
+Fuzzy edit matching (try whitespace-normalized substring match when exact match fails) neither helped nor hurt. The edit tool's existing exact-match + error message is already good enough -- the model can usually fix its whitespace on a retry.
+
 Best result: 84/300 = 28.0% on SWE-bench Lite, ~28-32/300 = 9-11% on Live Lite.
 
 Model size matters most (dense 27B >> MoE 3B-active). The agent framework is everything (without tools and iteration, the model gets 0%). The mid-budget nudge is the most effective prompt intervention we've found (+3.7pp on Live). The explore-first prompt is consistently harmful. Live tasks are ~4x harder than curated Lite tasks. Further gains probably need bigger models or architectural changes (agentless-style localization, multi-agent, trajectory fine-tuning).
