@@ -1452,7 +1452,7 @@ wheels = [
 [[package]]
 name = "mellea"
 version = "0.3.2"
-source = { git = "https://github.com/0xCUB3/mellea#034e903a2f8f14204ee415d7ee0b74339843a752" }
+source = { git = "https://github.com/0xCUB3/mellea#6d736929a576e61ce5531e17288822762902edcf" }
 dependencies = [
     { name = "click" },
     { name = "jinja2" },
