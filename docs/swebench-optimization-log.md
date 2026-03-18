@@ -42,7 +42,7 @@ Added `_read_counts` tracking in the mellea fork's `make_agent_tools()`. After 3
 
 Run 8: 0/25 (infra failure masked results, but still bad)
 
-98 loop detection warnings fired. Way too aggressive -- the agent legitimately reads the same file with different line ranges (e.g., lines 1-200 then 300-500). Blocking this prevents normal exploration of large files.
+98 loop detection warnings fired. Way too aggressive. The agent legitimately reads the same file with different line ranges (e.g., lines 1-200 then 300-500). Blocking this prevents normal exploration of large files.
 
 Discarded. A smarter approach would track (path, start_line, end_line) tuples instead of just paths, but not worth the complexity. Commits `669cb43`, `287742d` (revert).
 
@@ -85,13 +85,13 @@ After reading up on SOTA approaches (OpenHands, SWE-agent, Moatless, Agentless),
 
 Only 15/25 tasks had Docker images available (down from 24 in run9b). Baseline on this subset: 4/15 = 26.7%.
 
-A: Explore-first prompt (`MCODE_EXPLORE_PROMPT=1`). Structured EXPLORE/DIAGNOSE/EDIT/VERIFY prompt inspired by OpenHands. 3/15 = 20%, -1 vs baseline, lost kubernetes-2303. Didn't help, the structured prompt just constrained the model.
+A: Explore-first prompt (`MCODE_EXPLORE_PROMPT=1`). Structured EXPLORE/DIAGNOSE/EDIT/VERIFY prompt inspired by OpenHands. 3/15 = 20%, lost kubernetes-2303. The structured prompt just constrained the model.
 
-B: Budget warning (`MCODE_BUDGET_WARNING=1`). `on_turn` callback in mellea's `react()` that injects a warning at turn N-2. 3/15 = 20%, -1 vs baseline. No improvement at this scale.
+B: Budget warning (`MCODE_BUDGET_WARNING=1`). Injects a warning at turn N-2 via `on_turn` callback. 3/15 = 20%. No improvement at this scale.
 
-C: Larger budget (`loop_budget=25`). Just gave it more turns. 3/15 = 20%, -1 vs baseline. The agent either finds the fix early or goes in circles.
+C: Larger budget (`loop_budget=25`). 3/15 = 20%. The agent either finds the fix early or goes in circles.
 
-D: Read history nudge (`MCODE_READ_NUDGE=1`). Gentle nudge (not a block) when the agent re-reads files 3+ times. 4/15 = 26.7%, matches baseline exactly. Neutral.
+D: Read history nudge (`MCODE_READ_NUDGE=1`). Gentle nudge when the agent re-reads files 3+ times. 4/15 = 26.7%, matches baseline exactly.
 
 | Exp | Feature | Result (15 tasks) | vs Baseline (4/15) |
 |-|-|-|-|
@@ -100,7 +100,7 @@ D: Read history nudge (`MCODE_READ_NUDGE=1`). Gentle nudge (not a block) when th
 | C | Budget=25 | 3/15 = 20% | -1 |
 | D | Read nudge | 4/15 = 26.7% | 0 |
 
-A/B/C all lost kubernetes-2303, probably voting variance. None of these moved the needle. Small prompt changes and budget increases don't help at this model size. The 29.2% ceiling with majority voting seems to be a capability limit.
+A/B/C all lost kubernetes-2303, probably voting variance. None of these moved the needle. The 29.2% ceiling with majority voting seems to be a capability limit at this model size.
 
 ---
 
@@ -122,9 +122,9 @@ First run had 24 tasks fail with /tmp disk quota errors (podman graphroot filled
 
 4 tasks across experiments hit the 32k context window limit.
 
-Explore-first prompt is harmful at scale too. -5.7pp. Confirmed bad across both model sizes and task counts. Budget warning is the best single tweak at +1.0pp, 3 more tasks resolved -- the warning at turn N-2 gives the model a signal to wrap up. Read nudge helps a little at +0.7pp. More turns still don't help, same story as Round 2.
+Explore-first prompt confirmed harmful at scale too, dropping 5.7pp. Budget warning was the best single tweak at +1.0pp (3 more tasks resolved) by giving the model a signal to wrap up. Read nudge helped a little at +0.7pp. More turns still didn't help, same as Round 2.
 
-Model upgrade matters most. 27.0% baseline with dense 27B vs ~20% with MoE 3B-active. All 27B parameters active per token vs only 3B makes a real difference.
+The model upgrade mattered most. 27.0% baseline with dense 27B vs ~20% with MoE 3B-active. Having all 27B parameters active per token vs only 3B makes a real difference.
 
 Infrastructure was painful. Podman rootless + Docker SDK needed workarounds for fully-qualified image names, lchown failures, name normalization. Container name collisions with parallel experiments (fixed with UUID suffix). Docker Hub rate limits. Node pinning to keep cached images accessible. /tmp filling up with 35 containers (moved graphroot to NFS). Jobs stuck on `wait` from podman cleanup hangs.
 
@@ -144,61 +144,20 @@ Live Lite is way harder than regular Lite: 6.3% vs 27.0% baseline. The budget wa
 
 ## Phase 4: Raw model comparison (no agent)
 
-This was the fun one. We ran Qwen3.5-27B in single-shot mode on both benchmarks -- no mellea agent, no tools, no ReAct loop. Just the problem statement and a repo map, ask for a unified diff, one shot. How much does the agent framework actually matter?
+We ran Qwen3.5-27B in single-shot mode on both benchmarks, no mellea agent, no tools, no ReAct loop. Just the problem statement and a repo map, ask for a unified diff, one shot. How much does the agent framework actually matter?
 
 | Benchmark | Agent (baseline) | Raw (no agent) | Agent advantage |
 |-|-|-|-|
 | SWE-bench Lite (300) | 81/300 = 27.0% | 1/300 = 0.3% | +26.7pp |
 | SWE-bench Live Lite (300) | 19/300 = 6.3% | 0/300 = 0.0% | +6.3pp |
 
-Nearly every raw diff failed `git apply` -- corrupt formatting, wrong line numbers, hallucinated file content. The model can't produce valid patches without actually reading the files. The one lucky pass on Lite was `django__django-14580`, presumably simple enough that the model guessed the right diff format.
+Nearly every raw diff failed `git apply` with corrupt formatting, wrong line numbers, hallucinated file content. The model can't produce valid patches without actually reading the files. The one lucky pass on Lite was `django__django-14580`, presumably simple enough that the model guessed the right diff format.
 
-The agent framework is responsible for essentially all of the benchmark performance. Without file access, you get nothing.
+The agent framework is responsible for essentially all of the benchmark performance. Without file access you get nothing.
 
-## Overall summary
+## Phase 5: Autoresearch on SWE-bench Live Lite
 
-### Phase 1: Qwen3.5-35B-A3B (MoE, 3B active), 25-task smoke suite
-
-| Experiment | Score | vs Baseline | Kept? |
-|-|-|-|-|
-| Baseline | 5/25 = 20% | -- | -- |
-| File localization | 2/25 = 8% | -12% | No |
-| Read loop detection | 0/25 | -20% (+ infra) | No |
-| Majority voting (n=3) | 7/24 = 29.2% | +9.2% | Yes |
-| Docker test execution | 1/8 = 12.5% | -16.7% | No |
-| Explore-first prompt | 3/15 = 20% | -6.7% (vs 15-task) | No |
-| Budget warning | 3/15 = 20% | -6.7% (vs 15-task) | No |
-| Budget=25 | 3/15 = 20% | -6.7% (vs 15-task) | No |
-| Read nudge | 4/15 = 26.7% | 0 (vs 15-task) | No |
-
-### Phase 2: Qwen3.5-27B (dense 27B), full SWE-bench Lite (300 tasks)
-
-| Experiment | Score | vs Baseline | Kept? |
-|-|-|-|-|
-| Baseline | 81/300 = 27.0% | -- | -- |
-| Explore-first prompt | 64/300 = 21.3% | -5.7pp | No |
-| Budget warning | 84/300 = 28.0% | +1.0pp | Maybe |
-| Budget=25 | 79/300 = 26.3% | -0.7pp | No |
-| Read nudge | 83/300 = 27.7% | +0.7pp | Maybe |
-
-### Phase 3: Qwen3.5-27B, SWE-bench Live Lite (300 tasks)
-
-| Experiment | Score | vs Baseline |
-|-|-|-|
-| Baseline | 19/300 = 6.3% | -- |
-| Budget warning | 15/300 = 5.0% | -1.3pp |
-| Read nudge | 19/300 = 6.3% | 0pp |
-
-### Phase 4: Raw model (no agent), both benchmarks
-
-| Benchmark | Agent | Raw | Delta |
-|-|-|-|-|
-| SWE-bench Lite | 81/300 = 27.0% | 1/300 = 0.3% | +26.7pp |
-| Live Lite | 19/300 = 6.3% | 0/300 = 0.0% | +6.3pp |
-
-### Phase 5: Autoresearch on SWE-bench Live Lite
-
-Systematic iteration on Live Lite, testing one change at a time against the baseline.
+Systematic iteration on Live Lite, testing one change at a time against the baseline. We dug into the failure modes first: 80% of no-patch failures (127 out of 159) made zero edit calls. The agent spent its entire budget reading and searching without ever committing to a change. That became the main target.
 
 | Experiment | Score | vs Baseline |
 |-|-|-|
@@ -206,22 +165,22 @@ Systematic iteration on Live Lite, testing one change at a time against the base
 | Mid-budget edit nudge (turn N/2) + budget warning | 30/300 = 10.0% | +3.7pp |
 | + repo map 4096 tokens (was 2048) | 32/300 = 10.7% | +4.4pp |
 | + "don't delete definitions" prompt guard | 2/300 = 0.7% | -5.6pp (DISCARD) |
-| budget 15→20 | 30/300 = 10.0% | -0.7pp (DISCARD) |
+| budget 15->20 | 30/300 = 10.0% | -0.7pp (DISCARD) |
 | + read nudge | 28/300 = 9.3% | -1.4pp (DISCARD) |
 | self-verification retry | 27/300 = 9.0% | +2.7pp (NEUTRAL) |
 | control rerun (same as best config) | 26/300 = 8.7% | +2.4pp (variance) |
 
-Run-to-run variance is ~4 tasks (26-32 across reruns of the same config). The true effect of mid-nudge + repo map 4096 is ~9-11% on Live Lite.
+Run-to-run variance is about 4 tasks (26-32 across reruns of the same config). The true effect of mid-nudge + repo map 4096 lands somewhere in the 9-11% range on Live Lite.
 
-The mid-budget nudge was the biggest single win. Analysis showed 80% of no-patch failures (127/159) made zero edit calls, spending their entire budget reading and searching. At turn N/2, the agent gets a message saying "if you haven't edited yet, start editing NOW." This converted 68 no-patch tasks into actual patch attempts, 15 of which became new passes (with 4 regressions, net +11).
+The mid-budget nudge was by far the biggest win. At turn N/2, the agent gets a message saying "if you haven't edited yet, start editing NOW." This converted 68 no-patch tasks into actual patch attempts. 15 of those became new passes (with 4 regressions, so net +11).
 
-Prompt constraints are catastrophic with this model. The "don't delete definitions" guard (meant to address 42 tasks where the agent broke test imports) dropped from 10.7% to 0.7%. The explore-first structured prompt dropped 5.7pp in Phase 2. Qwen3.5-27B does best with minimal instructions and freedom to act.
+Prompt constraints are catastrophic with this model. The "don't delete definitions" guard, meant to address 42 tasks where the agent broke test imports, dropped from 10.7% to 0.7%. The explore-first structured prompt dropped 5.7pp in Phase 2. Qwen3.5-27B does best with minimal instructions and freedom to act.
 
-More budget still doesn't help, even with mid-nudge. Budget=20 with nudge at turn 10 scored the same as budget=15 with nudge at turn 7. Stacking nudges (read nudge + mid-nudge) scored worse than mid-nudge alone.
+More budget doesn't help even with mid-nudge. Budget=20 with nudge at turn 10 scored the same as budget=15 with nudge at turn 7. Stacking nudges (read nudge + mid-nudge) scored worse than mid-nudge alone.
 
-Self-verification retry (ask the LLM "does this patch fix the issue?" and retry on "no") was neutral. The model makes the same mistakes on retry. The verification call itself works (20/300 tasks triggered retries), but the second attempt doesn't produce better patches.
+Self-verification retry (ask the LLM "does this patch fix the issue?" and retry on "no") was neutral. The model makes the same mistakes the second time around. The verification call itself fired on about 20/300 tasks, but the retries didn't produce better patches.
 
-### Phase 6: Mellea framework changes
+## Phase 6: Mellea framework changes
 
 Tested three changes to the mellea agent framework (the fork), each independently on top of the best config.
 
@@ -231,17 +190,19 @@ Tested three changes to the mellea agent framework (the fork), each independentl
 | File position echo (show context around edit) | 31/300 = 10.3% | neutral |
 | Fuzzy edit matching (whitespace-normalized fallback) | 32/300 = 10.7% | neutral |
 
-Context compression actively hurts. The model needs full tool output history to reason about what it already tried and what it found. Compressing old results removes information the model relies on for later turns.
+Context compression actively hurts. The model needs the full tool output history to reason about what it already tried and what it found. Compressing old results removes information it relies on for later turns.
 
-File position echo (showing surrounding lines after each edit) was neutral at 31/300. The model doesn't benefit from seeing the edit context -- it already knows what it changed.
+File position echo (showing surrounding lines after each edit) was neutral at 31/300. The model doesn't benefit from seeing the edit context since it already knows what it changed.
 
-Fuzzy edit matching (try whitespace-normalized substring match when exact match fails) was neutral at 32/300. The edit tool's existing exact-match + error message is already good enough -- the model can usually fix its whitespace on a retry.
+Fuzzy edit matching (try whitespace-normalized substring match when exact match fails) was neutral at 32/300. The edit tool's existing exact-match + error message is already good enough since the model can usually fix its whitespace on retry.
 
-None of the three framework changes improved over the base config. The mellea tools are already well-designed for this model.
+None of the framework changes improved over the base config. The mellea tools are already well-designed for this model size.
 
-Best result: 84/300 = 28.0% on SWE-bench Lite, ~28-32/300 = 9-11% on Live Lite.
+## Where things stand
 
-Model size matters most (dense 27B >> MoE 3B-active). The agent framework is everything (without tools and iteration, the model gets 0%). The mid-budget nudge is the most effective prompt intervention we've found (+3.7pp on Live). The explore-first prompt is consistently harmful. Live tasks are ~4x harder than curated Lite tasks. Further gains probably need bigger models or architectural changes (agentless-style localization, multi-agent, trajectory fine-tuning).
+Best result: 84/300 = 28.0% on SWE-bench Lite, roughly 28-32/300 (9-11%) on Live Lite.
+
+The biggest factor is model capability. Dense 27B performed way better than MoE 3B-active, and the agent framework accounts for essentially all performance over raw generation. The mid-budget nudge is the most effective prompt intervention we found (+3.7pp on Live), while the explore-first prompt is consistently harmful. Live tasks are about 4x harder than the curated Lite tasks. Further gains at this model size seem unlikely from prompt or tool tweaks alone. The ceiling is the model itself.
 
 ## Infrastructure notes
 
