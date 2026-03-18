@@ -228,11 +228,16 @@ Tested three changes to the mellea agent framework (the fork), each independentl
 | Experiment | Score | vs Best (~9-11%) |
 |-|-|-|
 | Context compression (summarize old tool outputs at turn N/2) | 10/300 = 3.3% | regression (DISCARD) |
+| File position echo (show context around edit) | 31/300 = 10.3% | neutral |
 | Fuzzy edit matching (whitespace-normalized fallback) | 32/300 = 10.7% | neutral |
 
 Context compression actively hurts. The model needs full tool output history to reason about what it already tried and what it found. Compressing old results removes information the model relies on for later turns.
 
-Fuzzy edit matching (try whitespace-normalized substring match when exact match fails) neither helped nor hurt. The edit tool's existing exact-match + error message is already good enough -- the model can usually fix its whitespace on a retry.
+File position echo (showing surrounding lines after each edit) was neutral at 31/300. The model doesn't benefit from seeing the edit context -- it already knows what it changed.
+
+Fuzzy edit matching (try whitespace-normalized substring match when exact match fails) was neutral at 32/300. The edit tool's existing exact-match + error message is already good enough -- the model can usually fix its whitespace on a retry.
+
+None of the three framework changes improved over the base config. The mellea tools are already well-designed for this model.
 
 Best result: 84/300 = 28.0% on SWE-bench Lite, ~28-32/300 = 9-11% on Live Lite.
 
