@@ -203,7 +203,3 @@ None of the framework changes improved over the base config. The mellea tools ar
 Best result: 84/300 = 28.0% on SWE-bench Lite, roughly 28-32/300 (9-11%) on Live Lite.
 
 The biggest factor is model capability. Dense 27B performed way better than MoE 3B-active, and the agent framework accounts for essentially all performance over raw generation. The mid-budget nudge is the most effective prompt intervention we found (+3.7pp on Live), while the explore-first prompt is consistently harmful. Live tasks are about 4x harder than the curated Lite tasks. Further gains at this model size seem unlikely from prompt or tool tweaks alone. The ceiling is the model itself.
-
-## Infrastructure notes
-
-Stale `/tmp/podman-run-$UID/networks/rootless-netns/rootless-netns: file exists` blocks all podman operations. Fix with `podman system reset --force`. Compute nodes can't always reach other racks, so pin jobs to the same rack as vLLM. `OPENAI_BASE_URL` must be hardcoded in bsub scripts, not interpolated inside heredocs. `uv run` resolves from lockfile and can override manual installs; use `uv lock --upgrade-package mellea` after pushing fork changes. Need `--storage-opt ignore_chown_errors=true` on podman service for lchown. High-level `client.images.pull()` fails on podman; use `client.api.pull()` instead. Podman SIGTERM/SIGKILL escalation + pasta process errors keep `wait` stuck; kill and merge manually. Use anonymous Docker Hub pulls (100/6hr per-IP) instead of authenticated (200/6hr per-user, shared across jobs).
