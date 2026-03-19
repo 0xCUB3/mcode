@@ -59,6 +59,8 @@ class LLMSession:
             opts[ModelOption.CONTEXT_WINDOW] = int(ctx_raw)
         elif self.backend_name == "ollama":
             opts[ModelOption.CONTEXT_WINDOW] = 16384
+        # Disable streaming to avoid tool call argument loss in vLLM.
+        opts[ModelOption.STREAM] = False
         return opts
 
     def _strategy(self):
