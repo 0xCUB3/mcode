@@ -202,9 +202,13 @@ class LLMSession:
         import asyncio
         import subprocess
 
+        use_text_tools = os.environ.get("MELLEA_TEXT_TOOLS", "0") == "1"
+
         from mellea.agent.tools import make_agent_tools
-        from mellea.stdlib.context import ChatContext
-        from mellea.stdlib.frameworks.react import react
+
+        if not use_text_tools:
+            from mellea.stdlib.context import ChatContext
+            from mellea.stdlib.frameworks.react import react
 
         tools = make_agent_tools(repo_root, test_cmds=test_cmds, test_fn=test_fn)
 
@@ -306,26 +310,89 @@ class LLMSession:
                 )
             return ctx
 
-        async def _one_attempt():
-            try:
-                result, _ = await asyncio.wait_for(
-                    react(
-                        goal=goal,
-                        context=ChatContext(),
-                        backend=self._m.backend,
-                        tools=tools,
-                        loop_budget=budget,
-                        model_options=model_opts,
-                        on_turn=_on_turn if (use_budget_warning or use_mid_nudge) else None,
-                    ),
-                    timeout=timeout_s,
-                )
-                print(f"  [react] final_answer: {result.value[:120]}", flush=True)
-            except TimeoutError:
-                print(f"  [react] timed out after {timeout_s}s", flush=True)
-            except RuntimeError:
-                print("  [react] budget exhausted without final_answer", flush=True)
-            return _get_diff(repo_root)
+        if use_text_tools:
+
+            def _text_on_turn(turn, total, msgs):
+                if use_mid_nudge and total > 5 and turn == total // 2:
+                    msgs.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "You are halfway through your budget. "
+                                "If you have not made any edits yet, "
+                                "start editing NOW."
+                            ),
+                        }
+                    )
+                if use_budget_warning and total > 3 and turn == total - 2:
+                    msgs.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "WARNING: You have 2 turns left. Make "
+                                "your edit and call final_answer now."
+                            ),
+                        }
+                    )
+                return msgs
+
+            async def _one_attempt():
+                from mellea.agent.text_react import text_react
+
+                try:
+                    answer, done = await asyncio.wait_for(
+                        text_react(
+                            goal=goal,
+                            backend=self._m.backend if self._m else None,
+                            tools=tools,
+                            system_prompt=system_prompt,
+                            loop_budget=budget,
+                            on_turn=_text_on_turn,
+                        ),
+                        timeout=timeout_s,
+                    )
+                    if done:
+                        print(
+                            f"  [react] final_answer: {answer[:120]}",
+                            flush=True,
+                        )
+                    else:
+                        print(
+                            "  [react] budget exhausted without final_answer",
+                            flush=True,
+                        )
+                except TimeoutError:
+                    print(f"  [react] timed out after {timeout_s}s", flush=True)
+                return _get_diff(repo_root)
+
+        else:
+
+            async def _one_attempt():
+                try:
+                    result, _ = await asyncio.wait_for(
+                        react(
+                            goal=goal,
+                            context=ChatContext(),
+                            backend=self._m.backend,
+                            tools=tools,
+                            loop_budget=budget,
+                            model_options=model_opts,
+                            on_turn=_on_turn if (use_budget_warning or use_mid_nudge) else None,
+                        ),
+                        timeout=timeout_s,
+                    )
+                    print(
+                        f"  [react] final_answer: {result.value[:120]}",
+                        flush=True,
+                    )
+                except TimeoutError:
+                    print(f"  [react] timed out after {timeout_s}s", flush=True)
+                except RuntimeError:
+                    print(
+                        "  [react] budget exhausted without final_answer",
+                        flush=True,
+                    )
+                return _get_diff(repo_root)
 
         def _reset_repo():
             subprocess.run(["git", "checkout", "."], cwd=repo_root, capture_output=True)
