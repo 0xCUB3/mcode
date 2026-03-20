@@ -212,8 +212,20 @@ The root cause is vLLM's tool call parsers (minimax_m2, mistral). They extract t
 
 The top SWE-bench frameworks (SWE-agent, smolagents, OpenHands) all handle tool calling at the application level rather than relying on vLLM's parsers. We built a text-based tool calling mode (`MELLEA_TEXT_TOOLS=1`) that embeds tool schemas in the prompt and parses tool calls from the model's text output using XML-delimited JSON blocks. This bypasses vLLM entirely and works with any model.
 
+With text-based tool calling, MiniMax M2.5 tool call failures dropped from 51% to 0%. The model produced patches on 46% of tasks (comparable to Qwen's 47%), but the pass rate on generated patches was lower (9.4% vs Qwen's 14.9%). Increasing the turn budget from 15 to 100 barely helped (13/300 to 15/300), producing only 17 more patches but at roughly the same success rate. The 80.2% Verified score that MiniMax M2.5 achieves with OpenHands is clearly a scaffold gap, not a model gap.
+
+## Phase 8: Scaffold gap analysis
+
+The gap between our results and published benchmarks is almost entirely about the agent scaffold, not model capability or tool calling.
+
+We studied OpenHands' CodeAct agent (which achieves 80.2% with MiniMax M2.5) and found the following key differences from our setup:
+
+OpenHands gives the model 100 iterations (we use 15), but when we tested 100 turns with MiniMax M2.5 it only gained 2 tasks (13 to 15 out of 300). More turns alone isn't enough. The real differences are architectural. OpenHands gives the agent a bash tool that can run any shell command, not just our six specific tools (search_code, read_file, edit, find_file, list_dir, final_answer). It also provides IPython for running Python code inline, a memory condenser that compresses conversation history when context gets long, and a much richer system prompt with structured workflow guidance covering exploration, analysis, testing, implementation, and verification phases. There's also a "think" tool for explicit reasoning steps.
+
+The implication is clear: matching top-tier benchmark scores requires rebuilding the agent scaffold to be much closer to OpenHands' architecture. The specific gaps that matter most are the bash tool (lets the model run grep, find, git, pytest, and any other command instead of being limited to our predefined tools), context condensation (manages the 32k window across 100 turns), and the structured problem-solving workflow in the system prompt.
+
 ## Where things stand
 
-Best result: 84/300 = 28.0% on SWE-bench Lite, roughly 28-32/300 (9-11%) on Live Lite with Qwen3.5-27B.
+Best result with Qwen3.5-27B: 84/300 = 28.0% on SWE-bench Lite, roughly 28-32/300 (9-11%) on Live Lite. Best result with MiniMax M2.5 (text tools, budget=100): 15/300 = 5.0% on Live Lite.
 
-The biggest factor is model capability. Dense 27B performed way better than MoE 3B-active, and the agent framework accounts for essentially all performance over raw generation. The mid-budget nudge is the most effective prompt intervention we found (+3.7pp on Live), while the explore-first prompt is consistently harmful. Live tasks are about 4x harder than the curated Lite tasks. Scaling to larger models is blocked by vLLM tool calling bugs until text-based tool calling is validated.
+The text-based tool calling infrastructure works and is model-agnostic. The mid-budget nudge remains the most effective single intervention (+3.7pp on Live with Qwen). But the 75pp gap between our MiniMax results and OpenHands' is fundamentally about the scaffold architecture, not model capability or tool calling mechanics. Closing that gap requires adding bash execution, context condensation, and richer agent prompting to mellea.
