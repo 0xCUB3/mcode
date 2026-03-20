@@ -198,8 +198,22 @@ Fuzzy edit matching (try whitespace-normalized substring match when exact match 
 
 None of the framework changes improved over the base config. The mellea tools are already well-designed for this model size.
 
+## Phase 7: Larger models (MiniMax M2.5, Devstral 2)
+
+Tried scaling up from Qwen3.5-27B to larger models on 4x H100 GPUs. Both MiniMax M2.5 (230B MoE, 10B active, 80.2% Verified) and Devstral 2 (123B dense, 72.2% Verified) had broken tool calling through vLLM. Over 50% of tool calls lost their arguments entirely, resulting in the agent wasting half its turns on failed calls.
+
+| Model | Verified score | Our Live Lite score | Tool call failure rate |
+|-|-|-|-|
+| MiniMax M2.5 (vLLM v0.17.0) | 80.2% | 7.3% | 51% |
+| MiniMax M2.5 (vLLM nightly) | 80.2% | 5.3% | 53% |
+| Devstral 2 (vLLM v0.17.1) | 72.2% | 2.7% | 53% |
+
+The root cause is vLLM's tool call parsers (minimax_m2, mistral). They extract the function name from the model's output but drop the argument JSON during streaming token accumulation. This is a known issue across multiple vLLM GitHub issues (#31501, #29192, #22975). The models themselves can generate code fine (MiniMax raw mode produced 14x more valid diffs than Qwen), but the tool calling pipeline breaks them.
+
+The top SWE-bench frameworks (SWE-agent, smolagents, OpenHands) all handle tool calling at the application level rather than relying on vLLM's parsers. We built a text-based tool calling mode (`MELLEA_TEXT_TOOLS=1`) that embeds tool schemas in the prompt and parses tool calls from the model's text output using XML-delimited JSON blocks. This bypasses vLLM entirely and works with any model.
+
 ## Where things stand
 
-Best result: 84/300 = 28.0% on SWE-bench Lite, roughly 28-32/300 (9-11%) on Live Lite.
+Best result: 84/300 = 28.0% on SWE-bench Lite, roughly 28-32/300 (9-11%) on Live Lite with Qwen3.5-27B.
 
-The biggest factor is model capability. Dense 27B performed way better than MoE 3B-active, and the agent framework accounts for essentially all performance over raw generation. The mid-budget nudge is the most effective prompt intervention we found (+3.7pp on Live), while the explore-first prompt is consistently harmful. Live tasks are about 4x harder than the curated Lite tasks. Further gains at this model size seem unlikely from prompt or tool tweaks alone. The ceiling is the model itself.
+The biggest factor is model capability. Dense 27B performed way better than MoE 3B-active, and the agent framework accounts for essentially all performance over raw generation. The mid-budget nudge is the most effective prompt intervention we found (+3.7pp on Live), while the explore-first prompt is consistently harmful. Live tasks are about 4x harder than the curated Lite tasks. Scaling to larger models is blocked by vLLM tool calling bugs until text-based tool calling is validated.
