@@ -50,6 +50,7 @@ class BenchConfig:
     swebench_force_rebuild: bool = False
     swebench_mem_limit: str = "4g"
     swebench_pids_limit: int = 512
+    swebench_dataset: str = "SWE-bench/SWE-bench_Lite"
     lcb_cutoff: str | None = None
     n_samples: int = 1
 
@@ -189,6 +190,7 @@ class BenchmarkRunner:
             self.config.cache_dir,
             split=self.config.swebench_split,
             limit=limit,
+            dataset_name=self.config.swebench_dataset,
         )
         if task_ids:
             id_set = set(task_ids)
@@ -197,8 +199,8 @@ class BenchmarkRunner:
         config = _augment_run_config(asdict(self.config))
         config["planned_task_count"] = len(tasks)
         config["dataset"] = {
-            "name": "SWE-bench_Lite",
-            "hf_dataset": "SWE-bench/SWE-bench_Lite",
+            "name": self.config.swebench_dataset.split("/")[-1],
+            "hf_dataset": self.config.swebench_dataset,
             "split": self.config.swebench_split,
         }
         run_id = self.results_db.start_run("swebench-lite", config)

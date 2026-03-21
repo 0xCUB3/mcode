@@ -2334,6 +2334,10 @@ def bench_swebench_lite(
         str | None,
         typer.Option("--task-ids", help="Comma-separated task IDs to run (or path to JSON file)"),
     ] = None,
+    dataset: Annotated[
+        str,
+        typer.Option("--dataset", help="HuggingFace dataset name"),
+    ] = "SWE-bench/SWE-bench_Lite",
 ) -> None:
     strategy_name = strategy.strip().lower()
     if strategy_name not in {"repair", "sofai", "raw"}:
@@ -2370,6 +2374,7 @@ def bench_swebench_lite(
         swebench_pids_limit=pids_limit,
         task_shard_count=shard_count,
         task_shard_index=shard_index,
+        swebench_dataset=dataset,
     )
     parsed_task_ids = _parse_task_ids(task_ids)
     runner = BenchmarkRunner(config=config, results_db=ResultsDB(db))
