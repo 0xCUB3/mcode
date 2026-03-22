@@ -70,14 +70,20 @@ def _validate_shards(
 
 
 def _parse_task_ids(raw: str | None) -> list[str] | None:
-    """Parse --task-ids: comma-separated string or path to JSON file."""
+    """Parse --task-ids: comma-separated string or path to JSON/text file."""
     if not raw:
         return None
-    p = Path(raw)
-    if p.exists():
-        import json
-
-        data = json.loads(p.read_text())
+    try:
+        p = Path(raw)
+        exists = p.exists()
+    except OSError:
+        exists = False
+    if exists:
+        text = p.read_text()
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return [t.strip() for t in text.replace("\n", ",").split(",") if t.strip()]
         if isinstance(data, list):
             return data
         if isinstance(data, dict) and "tasks" in data:
@@ -2202,7 +2208,10 @@ def bench_swebench_live(
     ] = 1,
     task_ids: Annotated[
         str | None,
-        typer.Option("--task-ids", help="Comma-separated task IDs to run (or path to JSON file)"),
+        typer.Option(
+            "--task-ids",
+            help="Comma-separated task IDs to run (or path to JSON/text file)",
+        ),
     ] = None,
 ) -> None:
     """Run Microsoft SWE-bench-Live benchmark."""
@@ -2332,7 +2341,10 @@ def bench_swebench_lite(
     ] = "best_attempt",
     task_ids: Annotated[
         str | None,
-        typer.Option("--task-ids", help="Comma-separated task IDs to run (or path to JSON file)"),
+        typer.Option(
+            "--task-ids",
+            help="Comma-separated task IDs to run (or path to JSON/text file)",
+        ),
     ] = None,
     dataset: Annotated[
         str,
