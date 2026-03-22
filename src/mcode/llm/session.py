@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field
 
+from mcode.agent.coding_agent import build_coding_agent
 from mcode.bench.tasks import Task
 
 
@@ -203,128 +204,28 @@ class LLMSession:
         import asyncio
         import subprocess
 
-        budget = max(1, self.loop_budget)
-        verification_timeout_s = int(os.environ.get("MCODE_REACT_TIMEOUT", str(budget * 30)))
-        use_text_tools = os.environ.get("MELLEA_TEXT_TOOLS", "0") == "1"
+        from mellea.stdlib.context import ChatContext
+        from mellea.stdlib.frameworks.react import react
 
-        from mellea.agent.tools import make_agent_tools
-
-        if not use_text_tools:
-            from mellea.stdlib.context import ChatContext
-            from mellea.stdlib.frameworks.react import react
-
-        verification_cmds = _normalize_verification_commands(test_cmds)
-        verification_test_fn = test_fn
-        if verification_test_fn is None:
-
-            def verification_test_fn(test_cmd: str = "default") -> str:
-                command = test_cmd.strip()
-                if command.lower() == "default":
-                    if not verification_cmds:
-                        return (
-                            "No task-default verification commands available. "
-                            "Pass an explicit shell command, such as "
-                            "`pytest -q` or `python -m pytest -q path/to/test.py -k name`."
-                        )
-                    cmds = verification_cmds
-                else:
-                    cmds = [command]
-
-                outputs: list[str] = []
-                for cmd in cmds:
-                    if not cmd.strip():
-                        continue
-                    try:
-                        result = subprocess.run(
-                            ["bash", "-lc", cmd],
-                            cwd=repo_root,
-                            capture_output=True,
-                            text=True,
-                            timeout=verification_timeout_s,
-                        )
-                        out = result.stdout + result.stderr
-                        status = (
-                            "PASSED"
-                            if result.returncode == 0
-                            else f"FAILED (exit {result.returncode})"
-                        )
-                        outputs.append(f"$ {cmd}\n{status}\n{out}")
-                    except subprocess.TimeoutExpired:
-                        outputs.append(f"$ {cmd}\nTIMEOUT after {verification_timeout_s}s")
-                    except OSError as e:
-                        outputs.append(f"$ {cmd}\nError: {e}")
-
-                return "\n---\n".join(outputs) if outputs else "No verification commands available."
-
-        tools = make_agent_tools(
-            repo_root,
-            test_cmds=verification_cmds,
-            test_fn=verification_test_fn,
+        agent = build_coding_agent(
+            session=self,
+            repo=repo,
+            problem_statement=problem_statement,
+            hints_text=hints_text,
+            repo_root=repo_root,
+            test_cmds=test_cmds,
+            test_fn=test_fn,
         )
 
-        # Build repo map for initial context.
-        repo_map_text = ""
-        try:
-            from mellea.agent.repomap import build_repo_map
-
-            repo_map_text = build_repo_map(repo_root, problem_statement, max_tokens=4096)
-        except Exception as e:
-            print(f"  [repo_map] failed: {e}", flush=True)
-
-        repo_map_block = f"\n\nRepository structure:\n{repo_map_text}" if repo_map_text else ""
-        hints_block = f"\n\nAdditional context:\n{hints_text.strip()}" if hints_text.strip() else ""
-
-        if os.environ.get("MCODE_EXPLORE_PROMPT", "0") == "1":
-            system_prompt = (
-                "You are an expert software engineer fixing a bug in an "
-                "open-source repository. You MUST edit existing source files "
-                "to fix the bug. Do NOT create new files. Do NOT write test "
-                "scripts. Only modify the existing code that contains the bug.\n\n"
-                "Strategy:\n"
-                "1. EXPLORE: Read the issue carefully. Search the codebase to "
-                "find the relevant code. Read multiple files to understand "
-                "the context. Do NOT edit anything yet.\n"
-                "2. DIAGNOSE: Before making any edit, explain the root cause "
-                "in your reasoning. If you cannot explain exactly why the "
-                "current code is wrong, keep reading.\n"
-                "3. EDIT: Make the minimal fix. Change the fewest lines "
-                "possible. Prefer fixing the root cause over adding "
-                "workarounds.\n"
-                "4. VERIFY: Review your edit by reading the changed file. "
-                "Make sure you didn't break anything.\n"
-                "5. Call final_answer when done.\n\n"
-                "Do NOT jump to editing after reading just one file. "
-                "Understand the problem fully first."
-            )
-        else:
-            system_prompt = (
-                "You are an expert software engineer fixing a bug in an "
-                "open-source repository. You MUST edit existing source files "
-                "to fix the bug. Do NOT create new files. Do NOT write test "
-                "scripts. Only modify the existing code that contains the bug.\n\n"
-                "Strategy:\n"
-                "1. Read the issue carefully\n"
-                "2. Search the codebase to find the relevant code\n"
-                "3. Identify the root cause\n"
-                "4. Make the minimal edit to fix it\n"
-                "5. Call final_answer when done"
-            )
-
-        test_block = _verification_prompt(verification_cmds)
-
-        goal = (
-            f"Fix this bug in {repo} by editing the existing source code.\n\n"
-            f"Issue:\n{problem_statement.strip()}"
-            f"{repo_map_block}{hints_block}{test_block}\n\n"
-            "Only edit existing files. Do not create new files or test scripts."
-        )
-
-        model_opts = self._model_options(system_prompt=system_prompt)
-
-        timeout_s = int(os.environ.get("MCODE_REACT_TIMEOUT", str(budget * 30)))
-
-        use_budget_warning = os.environ.get("MCODE_BUDGET_WARNING", "1") == "1"
-        use_mid_nudge = os.environ.get("MCODE_MID_NUDGE", "0") == "1"
+        budget = agent.loop_budget
+        timeout_s = agent.timeout_s
+        use_text_tools = agent.use_text_tools
+        tools = agent.tools
+        system_prompt = agent.system_prompt
+        goal = agent.goal
+        model_opts = agent.model_options
+        use_budget_warning = agent.use_budget_warning
+        use_mid_nudge = agent.use_mid_nudge
 
         def _on_turn(turn, total, ctx):
             from mellea.stdlib.components.chat import Message
