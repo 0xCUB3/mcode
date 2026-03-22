@@ -23,6 +23,7 @@ from mcode.bench.runner import BenchConfig, BenchmarkRunner
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 bench_app = typer.Typer(add_completion=False, no_args_is_help=True)
+deps_app = typer.Typer(add_completion=False, no_args_is_help=True)
 console = Console()
 DEFAULT_DB_PATH = Path("experiments/results/results.db")
 
@@ -168,6 +169,34 @@ def _root(
 ) -> None:
     """mCode benchmarking harness."""
     _configure_mellea_logging(verbose)
+
+
+@deps_app.command("sync")
+def deps_sync(
+    extra: Annotated[
+        list[str] | None,
+        typer.Option("--extra", help="Optional dependency extra to install (repeatable)."),
+    ] = None,
+    no_dev: Annotated[
+        bool,
+        typer.Option("--no-dev", help="Do not install the default dev extra."),
+    ] = False,
+) -> None:
+    """Sync uv dependencies, preferring a sibling mellea-fork when present."""
+    from mcode.uv_setup import sync_uv_environment
+
+    extras = list(extra or [])
+    if not no_dev:
+        extras.insert(0, "dev")
+    sync_args: list[str] = []
+    for name in extras:
+        sync_args.extend(["--extra", name])
+
+    selection = sync_uv_environment(Path.cwd(), sync_args=sync_args)
+    if selection.source == "local":
+        console.print(f"Using local mellea fork at {selection.local_path}")
+    else:
+        console.print("Using GitHub mellea source")
 
 
 @app.command("results")
@@ -1469,6 +1498,7 @@ def export_csv(
 
 
 app.add_typer(bench_app, name="bench")
+app.add_typer(deps_app, name="deps")
 
 
 def _print_run_summary(
@@ -1623,7 +1653,7 @@ def bench_humaneval(
     limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
     strategy: Annotated[
         str,
-        typer.Option("--strategy", help="Sampling strategy: repair or sofai"),
+        typer.Option("--strategy", help="Sampling strategy: repair, sofai, or raw"),
     ] = "repair",
     s2_model: Annotated[
         str | None,
@@ -1702,7 +1732,7 @@ def bench_mbpp(
     limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
     strategy: Annotated[
         str,
-        typer.Option("--strategy", help="Sampling strategy: repair or sofai"),
+        typer.Option("--strategy", help="Sampling strategy: repair, sofai, or raw"),
     ] = "repair",
     s2_model: Annotated[
         str | None,
@@ -1781,7 +1811,7 @@ def bench_humaneval_plus(
     limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
     strategy: Annotated[
         str,
-        typer.Option("--strategy", help="Sampling strategy: repair or sofai"),
+        typer.Option("--strategy", help="Sampling strategy: repair, sofai, or raw"),
     ] = "repair",
     s2_model: Annotated[
         str | None,
@@ -2325,7 +2355,7 @@ def bench_swebench_lite(
     limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
     strategy: Annotated[
         str,
-        typer.Option("--strategy", help="Sampling strategy: repair or sofai"),
+        typer.Option("--strategy", help="Sampling strategy: repair, sofai, or raw"),
     ] = "repair",
     s2_model: Annotated[
         str | None,
@@ -2339,6 +2369,10 @@ def bench_swebench_lite(
         str,
         typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
     ] = "best_attempt",
+    n_samples: Annotated[
+        int,
+        typer.Option("--n-samples", min=1, help="Samples per task for majority voting"),
+    ] = 1,
     task_ids: Annotated[
         str | None,
         typer.Option(
@@ -2386,6 +2420,7 @@ def bench_swebench_lite(
         swebench_pids_limit=pids_limit,
         task_shard_count=shard_count,
         task_shard_index=shard_index,
+        n_samples=n_samples,
         swebench_dataset=dataset,
     )
     parsed_task_ids = _parse_task_ids(task_ids)

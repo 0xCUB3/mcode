@@ -13,11 +13,8 @@ Two good options:
 ### Option A: project virtualenv (best for development)
 
 ```bash
-uv venv
-uv pip install -e '.[dev]'
-
-source .venv/bin/activate
-mcode --help
+uv sync --extra dev
+uv run mcode --help
 ```
 
 ### Option B: global tool
@@ -28,6 +25,16 @@ uv tool update-shell
 # restart your shell
 mcode --help
 ```
+
+If you also have a sibling `../mellea-fork` checkout, prefer:
+
+```bash
+uv run mcode deps sync
+```
+
+That keeps the committed lockfile portable, then overlays the local fork into `.venv` and verifies
+that `mcode` can import the expected `mellea` runtime modules. Add benchmark extras as needed, for
+example `uv run mcode deps sync --extra swebench --extra datasets`.
 
 ## Run benchmarks
 
@@ -103,7 +110,7 @@ Docker images.
 Install the extra:
 
 ```bash
-uv pip install -e '.[swebench]'
+uv run mcode deps sync --extra swebench
 ```
 
 If you installed `mcode` via `uv tool`, install the extra there too:
@@ -140,7 +147,7 @@ If image building OOMs, try `--max-workers 1` and increase Docker Desktop memory
 Install the extra:
 
 ```bash
-uv pip install -e '.[datasets]'
+uv run mcode deps sync --extra datasets
 ```
 
 Run a small slice:

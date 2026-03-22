@@ -264,12 +264,12 @@ def test_generate_patch_keeps_shell_verification_without_task_defaults(tmp_path,
     assert "No task-default verification commands available" in captured["test_fn"]("default")
 
 
-def test_swebench_live_runner_passes_dataset_test_cmds(tmp_path, monkeypatch):
+def test_swebench_live_runner_passes_task_metadata_to_generate_patch(tmp_path, monkeypatch):
     _init_repo(tmp_path)
 
     db = ResultsDB(tmp_path / "results.db")
     runner = BenchmarkRunner(
-        config=BenchConfig(model_id="test", sandbox="process"),
+        config=BenchConfig(model_id="test", sandbox="process", n_samples=3),
         results_db=db,
     )
 
@@ -289,6 +289,7 @@ def test_swebench_live_runner_passes_dataset_test_cmds(tmp_path, monkeypatch):
         problem_statement = "Fix the bug"
         hints_text = "Hint"
         test_cmds = [f'{sys.executable} -c "print(\'live verification\')"']
+        raw_instance = {"test_cmds": test_cmds}
 
     class FakeLiveSandbox:
         @contextmanager
@@ -305,16 +306,17 @@ def test_swebench_live_runner_passes_dataset_test_cmds(tmp_path, monkeypatch):
     )
 
     assert result["passed"] is False
-    assert captured["test_cmds"] == FakeTask.test_cmds
+    assert captured["test_cmds"] == FakeTask.raw_instance
+    assert captured["n_samples"] == 3
     assert captured["repo"] == FakeTask.repo
 
 
-def test_swebench_lite_runner_does_not_require_metadata(tmp_path):
+def test_swebench_lite_runner_passes_task_metadata_to_generate_patch(tmp_path):
     _init_repo(tmp_path)
 
     db = ResultsDB(tmp_path / "results.db")
     runner = BenchmarkRunner(
-        config=BenchConfig(model_id="test", sandbox="process"),
+        config=BenchConfig(model_id="test", sandbox="process", n_samples=3),
         results_db=db,
     )
 
@@ -352,3 +354,38 @@ def test_swebench_lite_runner_does_not_require_metadata(tmp_path):
 
     assert result["passed"] is False
     assert captured["test_cmds"] == FakeTask.raw_instance
+    assert captured["n_samples"] == 3
+
+
+def test_swebench_lite_runner_reports_repo_context_failures(tmp_path):
+    _init_repo(tmp_path)
+
+    db = ResultsDB(tmp_path / "results.db")
+    runner = BenchmarkRunner(
+        config=BenchConfig(model_id="test", sandbox="process"),
+        results_db=db,
+    )
+
+    class FakeTask:
+        benchmark = "swebench-lite"
+        instance_id = "lite-1"
+        repo = "test/repo"
+        problem_statement = "Fix the bug"
+        hints_text = "Hint"
+        raw_instance = {}
+
+    class FakeSWEbenchSandbox:
+        @contextmanager
+        def repo_context(self, task):
+            raise RuntimeError("repo setup failed")
+            yield tmp_path
+
+    result = runner._run_swebench_task(
+        FakeTask(),
+        swe_sandbox=FakeSWEbenchSandbox(),
+        run_id=1,
+    )
+
+    assert result["passed"] is False
+    assert result["error"] == "RuntimeError: repo setup failed"
+    assert "repo setup failed" in result["stderr"]

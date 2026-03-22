@@ -282,20 +282,27 @@ class BenchmarkRunner:
 
         return RunSummary(run_id=run_id, total=total, passed=passed)
 
+    def _generate_task_patch(self, task, *, repo_root: Path | str) -> str:
+        verification_metadata = getattr(task, "raw_instance", None)
+        if verification_metadata is None:
+            verification_metadata = getattr(task, "test_cmds", None)
+
+        with self.llm.open():
+            return self.llm.generate_patch(
+                repo=task.repo,
+                problem_statement=task.problem_statement,
+                hints_text=task.hints_text or "",
+                repo_root=str(repo_root),
+                n_samples=self.config.n_samples,
+                test_cmds=verification_metadata,
+            )
+
     def _run_swebench_live_task(self, task, *, live_sandbox, run_id: int) -> dict:
         start = time.time()
         try:
             with live_sandbox.repo_context(task) as repo_root:
                 try:
-                    with self.llm.open():
-                        patch = self.llm.generate_patch(
-                            repo=task.repo,
-                            problem_statement=task.problem_statement,
-                            hints_text=task.hints_text or "",
-                            repo_root=str(repo_root),
-                            n_samples=self.config.n_samples,
-                            test_cmds=task.test_cmds,
-                        )
+                    patch = self._generate_task_patch(task, repo_root=repo_root)
                 except Exception as e:
                     elapsed_ms = int((time.time() - start) * 1000)
                     tb = traceback.format_exc()
@@ -358,51 +365,60 @@ class BenchmarkRunner:
 
     def _run_swebench_task(self, task, *, swe_sandbox, run_id: int) -> dict:
         start = time.time()
-        with swe_sandbox.repo_context(task.raw_instance) as repo_root:
-            try:
-                with self.llm.open():
-                    patch = self.llm.generate_patch(
-                        repo=task.repo,
-                        problem_statement=task.problem_statement,
-                        hints_text=task.hints_text or "",
-                        repo_root=str(repo_root),
-                        test_cmds=task.raw_instance,
-                    )
-            except Exception as e:
+        try:
+            with swe_sandbox.repo_context(task.raw_instance) as repo_root:
+                try:
+                    patch = self._generate_task_patch(task, repo_root=repo_root)
+                except Exception as e:
+                    elapsed_ms = int((time.time() - start) * 1000)
+                    tb = traceback.format_exc()
+                    return {
+                        "task_id": task.instance_id,
+                        "passed": False,
+                        "attempts_used": 0,
+                        "time_ms": elapsed_ms,
+                        "exit_code": None,
+                        "timed_out": False,
+                        "stdout": None,
+                        "stderr": _truncate(tb, max_chars=8000) if tb else None,
+                        "error": f"{type(e).__name__}: {e}",
+                        "code_sha256": None,
+                    }
                 elapsed_ms = int((time.time() - start) * 1000)
-                tb = traceback.format_exc()
-                return {
-                    "task_id": task.instance_id,
-                    "passed": False,
-                    "attempts_used": 0,
-                    "time_ms": elapsed_ms,
-                    "exit_code": None,
-                    "timed_out": False,
-                    "stdout": None,
-                    "stderr": _truncate(tb, max_chars=8000) if tb else None,
-                    "error": f"{type(e).__name__}: {e}",
-                    "code_sha256": None,
-                }
-            elapsed_ms = int((time.time() - start) * 1000)
 
-            has_patch = bool(patch and patch.strip())
-            last_detail: dict = {}
-            if has_patch:
-                run = swe_sandbox.evaluate_patch(
-                    instance=task.raw_instance,
-                    model_id=self.config.model_id,
-                    patch=patch,
-                    run_id=f"mcode-{run_id}",
-                    timeout_s=self.config.timeout_s,
-                )
-                inst_report = run.report.get(task.instance_id, {})
-                last_detail = {
-                    "exit_code": None,
-                    "timed_out": run.timed_out,
-                    "stdout": _truncate(run.test_output),
-                    "stderr": json.dumps(inst_report, sort_keys=True),
-                    "error": None if run.resolved else "Not resolved",
-                }
+                has_patch = bool(patch and patch.strip())
+                last_detail: dict = {}
+                if has_patch:
+                    run = swe_sandbox.evaluate_patch(
+                        instance=task.raw_instance,
+                        model_id=self.config.model_id,
+                        patch=patch,
+                        run_id=f"mcode-{run_id}",
+                        timeout_s=self.config.timeout_s,
+                    )
+                    inst_report = run.report.get(task.instance_id, {})
+                    last_detail = {
+                        "exit_code": None,
+                        "timed_out": run.timed_out,
+                        "stdout": _truncate(run.test_output),
+                        "stderr": json.dumps(inst_report, sort_keys=True),
+                        "error": None if run.resolved else "Not resolved",
+                    }
+        except Exception as e:
+            elapsed_ms = int((time.time() - start) * 1000)
+            tb = traceback.format_exc()
+            return {
+                "task_id": task.instance_id,
+                "passed": False,
+                "attempts_used": 0,
+                "time_ms": elapsed_ms,
+                "exit_code": None,
+                "timed_out": False,
+                "stdout": None,
+                "stderr": _truncate(tb, max_chars=8000) if tb else None,
+                "error": f"{type(e).__name__}: {e}",
+                "code_sha256": None,
+            }
 
         sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest() if patch else None
 
