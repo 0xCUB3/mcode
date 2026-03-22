@@ -14,6 +14,68 @@ from mcode.bench.runner import BenchConfig, BenchmarkRunner
 from mcode.llm.session import LLMSession
 
 
+def _install_fake_runtime_modules():
+    runtime_module = types.ModuleType("mellea.agent.runtime")
+    memory_module = types.ModuleType("mellea.agent.runtime.memory")
+
+    class FakeSafetyPolicy:
+        def __init__(self, mode, network_access=None, writable_roots=()):
+            self.mode = mode
+            self.network_access = network_access
+            self.writable_roots = tuple(writable_roots)
+
+    class FakeSessionMetadata:
+        def __init__(self, session_id=None, executor=None, branch=None, metadata=None):
+            self.session_id = session_id
+            self.executor = executor
+            self.branch = branch
+            self.metadata = dict(metadata or {})
+
+    class FakeWorkspace:
+        def __init__(self, cwd, safety_policy, session, metadata=None):
+            self.cwd = cwd
+            self.safety_policy = safety_policy
+            self.session = session
+            self.metadata = dict(metadata or {})
+
+    class FakeEventLog:
+        def __init__(self, *, workspace=None, events=None):
+            self.workspace = workspace
+            self.events = list(events or [])
+
+    class FakeWorkingMemory:
+        def __init__(self, summary="", facts=(), hypotheses=(), next_steps=()):
+            self.summary = summary
+            self.facts = tuple(facts)
+            self.hypotheses = tuple(hypotheses)
+            self.next_steps = tuple(next_steps)
+
+    class FakeCondensedState:
+        def __init__(
+            self,
+            working_memory=None,
+            recent_messages=(),
+            omitted_messages=0,
+            show_reminder=None,
+        ):
+            self.working_memory = working_memory or FakeWorkingMemory()
+            self.recent_messages = tuple(recent_messages)
+            self.omitted_messages = omitted_messages
+            self.show_reminder = omitted_messages > 0 if show_reminder is None else show_reminder
+
+    runtime_module.EventLog = FakeEventLog
+    runtime_module.SafetyPolicy = FakeSafetyPolicy
+    runtime_module.SessionMetadata = FakeSessionMetadata
+    runtime_module.Workspace = FakeWorkspace
+    memory_module.CondensedState = FakeCondensedState
+    memory_module.WorkingMemory = FakeWorkingMemory
+
+    return {
+        "mellea.agent.runtime": runtime_module,
+        "mellea.agent.runtime.memory": memory_module,
+    }
+
+
 def _init_repo(tmp_path):
     env = {
         **os.environ,
@@ -48,7 +110,9 @@ def test_generate_patch_uses_react(tmp_path):
     async def mock_react(*args, **kwargs):
         return (mock_result, mock_ctx)
 
-    with patch("mellea.stdlib.frameworks.react.react", mock_react):
+    with patch.dict(sys.modules, _install_fake_runtime_modules()), patch(
+        "mellea.stdlib.frameworks.react.react", mock_react
+    ):
         result = session.generate_patch(
             repo="test/repo",
             problem_statement="Fix the bug",
@@ -82,7 +146,13 @@ def test_generate_patch_passes_model_options_to_text_react(tmp_path, monkeypatch
     fake_module = types.ModuleType("mellea.agent.text_react")
     fake_module.text_react = mock_text_react
 
-    with patch.dict(sys.modules, {"mellea.agent.text_react": fake_module}):
+    with patch.dict(
+        sys.modules,
+        {
+            **_install_fake_runtime_modules(),
+            "mellea.agent.text_react": fake_module,
+        },
+    ):
         result = session.generate_patch(
             repo="test/repo",
             problem_statement="Fix the bug",
@@ -123,7 +193,9 @@ def test_generate_patch_exposes_task_default_verification(tmp_path, monkeypatch)
         captured["goal"] = kwargs["goal"]
         return (mock_result, mock_ctx)
 
-    with patch("mellea.agent.tools.make_agent_tools", fake_make_agent_tools), patch(
+    with patch.dict(sys.modules, _install_fake_runtime_modules()), patch(
+        "mellea.agent.tools.make_agent_tools", fake_make_agent_tools
+    ), patch(
         "mellea.stdlib.frameworks.react.react", mock_react
     ):
         result = session.generate_patch(
@@ -170,7 +242,9 @@ def test_generate_patch_keeps_shell_verification_without_task_defaults(tmp_path,
         captured["goal"] = kwargs["goal"]
         return (mock_result, mock_ctx)
 
-    with patch("mellea.agent.tools.make_agent_tools", fake_make_agent_tools), patch(
+    with patch.dict(sys.modules, _install_fake_runtime_modules()), patch(
+        "mellea.agent.tools.make_agent_tools", fake_make_agent_tools
+    ), patch(
         "mellea.stdlib.frameworks.react.react", mock_react
     ):
         result = session.generate_patch(

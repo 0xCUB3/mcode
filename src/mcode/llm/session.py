@@ -14,6 +14,33 @@ class CodeOutput(BaseModel):
     code: str = Field(..., description="Python code only, no markdown.")
 
 
+def _seed_react_context_from_runtime(*, condensed_state):
+    from mellea.stdlib.components.chat import Message
+    from mellea.stdlib.context import ChatContext
+
+    context = ChatContext()
+    if condensed_state is None:
+        return context
+
+    show_reminder = bool(getattr(condensed_state, "show_reminder", False))
+    omitted_messages = int(getattr(condensed_state, "omitted_messages", 0) or 0)
+    working_memory = getattr(condensed_state, "working_memory", None)
+    recent_messages = getattr(condensed_state, "recent_messages", ())
+
+    if show_reminder and working_memory is not None:
+        reminder = working_memory.as_message(omitted_messages=omitted_messages)
+        context = context.add(
+            Message(role=reminder["role"], content=str(reminder["content"]))
+        )
+
+    for message in recent_messages:
+        context = context.add(
+            Message(role=message["role"], content=str(message["content"]))
+        )
+
+    return context
+
+
 @dataclass
 class LLMSession:
     model_id: str
@@ -203,7 +230,6 @@ class LLMSession:
         import asyncio
         import subprocess
 
-        from mellea.stdlib.context import ChatContext
         from mellea.stdlib.frameworks.react import react
 
         agent = build_coding_agent(
@@ -328,7 +354,9 @@ class LLMSession:
                     result, _ = await asyncio.wait_for(
                         react(
                             goal=goal,
-                            context=ChatContext(),
+                            context=_seed_react_context_from_runtime(
+                                condensed_state=condensed_state
+                            ),
                             backend=self._m.backend,
                             tools=tools,
                             loop_budget=budget,

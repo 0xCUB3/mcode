@@ -21,9 +21,9 @@ class CodingAgentAssembly:
     use_text_tools: bool
     use_budget_warning: bool
     use_mid_nudge: bool
-    workspace: object | None = None
-    event_log: object | None = None
-    condensed_state: object | None = None
+    workspace: object = None
+    event_log: object = None
+    condensed_state: object = None
     max_retries_per_turn: int = 0
 
     @property
@@ -137,31 +137,39 @@ def build_agent_runtime(*, repo: str, repo_root: str, session):
     try:
         runtime_module = importlib.import_module("mellea.agent.runtime")
         memory_module = importlib.import_module("mellea.agent.runtime.memory")
-    except Exception:
-        return None, None, None
+    except Exception as exc:
+        raise RuntimeError(
+            "mellea runtime primitives are required for coding agent assembly"
+        ) from exc
 
-    safety_policy = runtime_module.SafetyPolicy(
-        mode=os.environ.get("MCODE_RUNTIME_SAFETY_MODE", "workspace-write"),
-        network_access=True,
-        writable_roots=(repo_root,),
-    )
-    workspace = runtime_module.Workspace(
-        cwd=repo_root,
-        safety_policy=safety_policy,
-        session=runtime_module.SessionMetadata(
-            executor="mcode",
-            metadata={
-                "repo": repo,
-                "backend_name": session.backend_name,
-                "model_id": session.model_id,
-            },
-        ),
-        metadata={"repo": repo},
-    )
-    event_log = runtime_module.EventLog(workspace=workspace)
-    condensed_state = memory_module.CondensedState(
-        working_memory=memory_module.WorkingMemory()
-    )
+    try:
+        safety_policy = runtime_module.SafetyPolicy(
+            mode=os.environ.get("MCODE_RUNTIME_SAFETY_MODE", "workspace-write"),
+            network_access=True,
+            writable_roots=(repo_root,),
+        )
+        workspace = runtime_module.Workspace(
+            cwd=repo_root,
+            safety_policy=safety_policy,
+            session=runtime_module.SessionMetadata(
+                executor="mcode",
+                metadata={
+                    "repo": repo,
+                    "backend_name": session.backend_name,
+                    "model_id": session.model_id,
+                },
+            ),
+            metadata={"repo": repo},
+        )
+        event_log = runtime_module.EventLog(workspace=workspace)
+        condensed_state = memory_module.CondensedState(
+            working_memory=memory_module.WorkingMemory()
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "failed to assemble coding agent runtime state from mellea primitives"
+        ) from exc
+
     return workspace, event_log, condensed_state
 
 

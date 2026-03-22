@@ -47,11 +47,26 @@ def _install_fake_runtime_modules():
             self.hypotheses = tuple(hypotheses)
             self.next_steps = tuple(next_steps)
 
+        def as_message(self, *, omitted_messages=0):
+            prefix = (
+                f"Condensed context: {omitted_messages} omitted\n"
+                if omitted_messages
+                else "Condensed context:\n"
+            )
+            return {"role": "user", "content": f"{prefix}{self.summary}".strip()}
+
     class FakeCondensedState:
-        def __init__(self, working_memory=None, recent_messages=(), omitted_messages=0):
+        def __init__(
+            self,
+            working_memory=None,
+            recent_messages=(),
+            omitted_messages=0,
+            show_reminder=None,
+        ):
             self.working_memory = working_memory or FakeWorkingMemory()
             self.recent_messages = tuple(recent_messages)
             self.omitted_messages = omitted_messages
+            self.show_reminder = omitted_messages > 0 if show_reminder is None else show_reminder
 
     runtime_module.EventLog = FakeEventLog
     runtime_module.SafetyPolicy = FakeSafetyPolicy
@@ -91,9 +106,9 @@ def test_build_coding_agent_assembles_prompt_and_tools_without_benchmark_path(
 
     monkeypatch.setenv("MELLEA_TEXT_TOOLS", "0")
 
-    with patch("mcode.agent.coding_agent.build_repo_map", return_value="repo map"), patch(
-        "mcode.agent.coding_agent.make_agent_tools", fake_make_agent_tools
-    ):
+    with patch.dict(sys.modules, _install_fake_runtime_modules()[0]), patch(
+        "mcode.agent.coding_agent.build_repo_map", return_value="repo map"
+    ), patch("mcode.agent.coding_agent.make_agent_tools", fake_make_agent_tools):
         assembly = build_coding_agent(
             session=session,
             repo="test/repo",
@@ -164,6 +179,33 @@ def test_build_coding_agent_assembles_mellea_runtime_and_keeps_mcode_policy(
     assert isinstance(assembly.event_log, FakeEventLog)
     assert assembly.event_log.workspace is assembly.workspace
     assert isinstance(assembly.condensed_state, FakeCondensedState)
+
+
+def test_build_coding_agent_requires_runtime_primitives(tmp_path):
+    from mcode.agent import coding_agent as coding_agent_module
+
+    session = LLMSession(model_id="test", backend_name="openai", loop_budget=4)
+    session._m = MagicMock()
+    session._m.backend = MagicMock()
+
+    with patch.object(
+        coding_agent_module.importlib,
+        "import_module",
+        side_effect=ModuleNotFoundError("missing mellea runtime"),
+    ):
+        try:
+            coding_agent_module.build_coding_agent(
+                session=session,
+                repo="test/repo",
+                problem_statement="Fix the bug",
+                repo_root=str(tmp_path),
+            )
+        except RuntimeError as exc:
+            assert "mellea runtime primitives" in str(exc)
+        else:  # pragma: no cover - this is the failure mode under test
+            raise AssertionError(
+                "build_coding_agent() should fail when runtime primitives are missing"
+            )
 
 
 def test_build_coding_policy_composes_shell_first_goal():
@@ -258,6 +300,77 @@ def test_coding_agent_can_be_requested_from_session_generate_patch(
 
     assert result == "diff"
     assert build_agent.called
+
+
+def test_session_generate_patch_seeds_react_context_from_runtime_state(
+    tmp_path, monkeypatch
+):
+    from mcode.llm import session as session_module
+
+    monkeypatch.setenv("MELLEA_TEXT_TOOLS", "0")
+
+    session = LLMSession(model_id="test", backend_name="ollama")
+    session._m = MagicMock()
+    session._m.backend = MagicMock()
+
+    _, _, _, FakeCondensedState = _install_fake_runtime_modules()
+    condensed_state = FakeCondensedState(
+        working_memory=types.SimpleNamespace(
+            as_message=lambda *, omitted_messages=0: {
+                "role": "user",
+                "content": f"reminder:{omitted_messages}",
+            }
+        ),
+        recent_messages=(
+            {"role": "assistant", "content": "prior reasoning"},
+            {"role": "user", "content": "latest observation"},
+        ),
+        omitted_messages=3,
+    )
+
+    build_agent = MagicMock()
+    build_agent.return_value = types.SimpleNamespace(
+        goal="assembled",
+        tools=[],
+        model_options={},
+        loop_budget=1,
+        timeout_s=1,
+        use_text_tools=False,
+        use_budget_warning=False,
+        use_mid_nudge=False,
+        system_prompt="system",
+        verification_cmds=[],
+        verification_test_fn=lambda cmd="default": "",
+        condensed_state=condensed_state,
+        workspace=types.SimpleNamespace(cwd=str(tmp_path)),
+        event_log=types.SimpleNamespace(),
+    )
+
+    captured: dict[str, object] = {}
+
+    async def fake_react(*args, **kwargs):
+        context_items = kwargs["context"].view_for_generation()
+        captured["messages"] = [
+            (message.role, message.content)
+            for message in (context_items or [])
+        ]
+        return (types.SimpleNamespace(value="done"), MagicMock())
+
+    with patch.object(session_module, "build_coding_agent", build_agent, create=True), patch(
+        "mellea.stdlib.frameworks.react.react", fake_react
+    ), patch.object(session_module, "_get_diff", return_value="diff"):
+        result = session.generate_patch(
+            repo="test/repo",
+            problem_statement="Fix the bug",
+            repo_root=str(tmp_path),
+        )
+
+    assert result == "diff"
+    assert captured["messages"] == [
+        ("user", "reminder:3"),
+        ("assistant", "prior reasoning"),
+        ("user", "latest observation"),
+    ]
 
 
 def test_session_generate_patch_passes_runtime_state_to_text_react(
