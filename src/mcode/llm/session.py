@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -188,7 +189,7 @@ class LLMSession:
         hints_text: str = "",
         repo_root: str,
         n_samples: int = 1,
-        test_cmds: list[str] | None = None,
+        test_cmds: object | None = None,
         test_fn: object | None = None,
     ) -> str:
         if self.strategy_name == "raw":
@@ -202,6 +203,8 @@ class LLMSession:
         import asyncio
         import subprocess
 
+        budget = max(1, self.loop_budget)
+        verification_timeout_s = int(os.environ.get("MCODE_REACT_TIMEOUT", str(budget * 30)))
         use_text_tools = os.environ.get("MELLEA_TEXT_TOOLS", "0") == "1"
 
         from mellea.agent.tools import make_agent_tools
@@ -210,7 +213,54 @@ class LLMSession:
             from mellea.stdlib.context import ChatContext
             from mellea.stdlib.frameworks.react import react
 
-        tools = make_agent_tools(repo_root, test_cmds=test_cmds, test_fn=test_fn)
+        verification_cmds = _normalize_verification_commands(test_cmds)
+        verification_test_fn = test_fn
+        if verification_test_fn is None:
+
+            def verification_test_fn(test_cmd: str = "default") -> str:
+                command = test_cmd.strip()
+                if command.lower() == "default":
+                    if not verification_cmds:
+                        return (
+                            "No task-default verification commands available. "
+                            "Pass an explicit shell command, such as "
+                            "`pytest -q` or `python -m pytest -q path/to/test.py -k name`."
+                        )
+                    cmds = verification_cmds
+                else:
+                    cmds = [command]
+
+                outputs: list[str] = []
+                for cmd in cmds:
+                    if not cmd.strip():
+                        continue
+                    try:
+                        result = subprocess.run(
+                            ["bash", "-lc", cmd],
+                            cwd=repo_root,
+                            capture_output=True,
+                            text=True,
+                            timeout=verification_timeout_s,
+                        )
+                        out = result.stdout + result.stderr
+                        status = (
+                            "PASSED"
+                            if result.returncode == 0
+                            else f"FAILED (exit {result.returncode})"
+                        )
+                        outputs.append(f"$ {cmd}\n{status}\n{out}")
+                    except subprocess.TimeoutExpired:
+                        outputs.append(f"$ {cmd}\nTIMEOUT after {verification_timeout_s}s")
+                    except OSError as e:
+                        outputs.append(f"$ {cmd}\nError: {e}")
+
+                return "\n---\n".join(outputs) if outputs else "No verification commands available."
+
+        tools = make_agent_tools(
+            repo_root,
+            test_cmds=verification_cmds,
+            test_fn=verification_test_fn,
+        )
 
         # Build repo map for initial context.
         repo_map_text = ""
@@ -260,12 +310,7 @@ class LLMSession:
                 "5. Call final_answer when done"
             )
 
-        test_block = ""
-        if test_fn is not None or test_cmds:
-            test_block = (
-                "\n\nYou have a run_tests tool. Use it after editing to verify "
-                "your fix. Pass 'default' to run the task's test suite."
-            )
+        test_block = _verification_prompt(verification_cmds)
 
         goal = (
             f"Fix this bug in {repo} by editing the existing source code.\n\n"
@@ -274,7 +319,6 @@ class LLMSession:
             "Only edit existing files. Do not create new files or test scripts."
         )
 
-        budget = max(1, self.loop_budget)
         model_opts = self._model_options(system_prompt=system_prompt)
 
         timeout_s = int(os.environ.get("MCODE_REACT_TIMEOUT", str(budget * 30)))
@@ -574,3 +618,57 @@ def _code_system_prompt(task: Task) -> str:
             "Keep the function name and signature exactly the same."
         )
     return "You are an expert Python programmer."
+
+
+def _normalize_verification_commands(source: object | None) -> list[str]:
+    if source is None:
+        return []
+
+    if isinstance(source, dict):
+        for key in ("test_cmds", "verification_cmds", "verification", "commands"):
+            if key in source:
+                return _normalize_verification_commands(source[key])
+        return []
+
+    if isinstance(source, str):
+        text = source.strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            return [text]
+        return _normalize_verification_commands(parsed)
+
+    if isinstance(source, (list, tuple, set)):
+        cmds: list[str] = []
+        for item in source:
+            text = str(item).strip()
+            if text:
+                cmds.append(text)
+        return cmds
+
+    text = str(source).strip()
+    return [text] if text else []
+
+
+def _verification_prompt(test_cmds: list[str]) -> str:
+    if test_cmds:
+        formatted = ", ".join(f"`{cmd}`" for cmd in test_cmds[:3])
+        more = "" if len(test_cmds) <= 3 else f" and {len(test_cmds) - 3} more"
+        return (
+            "\n\nVerification:\n"
+            "You have a `run_tests` tool. Start with `run_tests default` "
+            f"to run the task-default checks ({formatted}{more}). Keep "
+            "verification cheap, if you need a narrower check, use a "
+            "targeted command instead of a broad suite."
+        )
+
+    return (
+        "\n\nVerification:\n"
+        "You still have a `run_tests` tool even though there are no "
+        "task-default commands. Use it with the cheapest shell command "
+        "that exercises your change, such as `pytest -q path/to/test.py -k "
+        "name` or `python -m pytest -q path/to/test.py -k name`. Avoid "
+        "full-suite runs unless necessary."
+    )
