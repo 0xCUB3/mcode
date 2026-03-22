@@ -13,6 +13,12 @@ class VerificationPolicy:
     test_fn: Callable[[str], str]
     prompt_block: str
 
+    def tool_kwargs(self) -> dict[str, object]:
+        return {
+            "test_cmds": self.test_cmds,
+            "test_fn": self.test_fn,
+        }
+
 
 def normalize_verification_commands(source: object | None) -> list[str]:
     if source is None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import os
 from dataclasses import dataclass
 
@@ -20,6 +21,10 @@ class CodingAgentAssembly:
     use_text_tools: bool
     use_budget_warning: bool
     use_mid_nudge: bool
+    workspace: object | None = None
+    event_log: object | None = None
+    condensed_state: object | None = None
+    max_retries_per_turn: int = 0
 
     @property
     def system_prompt(self) -> str:
@@ -76,11 +81,32 @@ def build_coding_agent(
         verification_prompt=verification_policy.prompt_block,
         explore_prompt=explore_prompt,
     )
+    prompt_inputs_fn = getattr(coding_policy, "prompt_inputs", None)
+    if callable(prompt_inputs_fn):
+        prompt_inputs = prompt_inputs_fn()
+    else:
+        prompt_inputs = {
+            "system_prompt": coding_policy.system_prompt,
+            "goal": coding_policy.goal,
+        }
+    workspace, event_log, condensed_state = build_agent_runtime(
+        repo=repo,
+        repo_root=repo_root,
+        session=session,
+    )
+
+    tool_kwargs_fn = getattr(verification_policy, "tool_kwargs", None)
+    if callable(tool_kwargs_fn):
+        tool_kwargs = tool_kwargs_fn()
+    else:
+        tool_kwargs = {
+            "test_cmds": verification_policy.test_cmds,
+            "test_fn": verification_policy.test_fn,
+        }
 
     tools = make_agent_tools(
         repo_root,
-        test_cmds=verification_policy.test_cmds,
-        test_fn=verification_policy.test_fn,
+        **tool_kwargs,
     )
 
     return CodingAgentAssembly(
@@ -89,12 +115,15 @@ def build_coding_agent(
         coding_policy=coding_policy,
         verification_policy=verification_policy,
         tools=tools,
-        model_options=session._model_options(system_prompt=coding_policy.system_prompt),
+        model_options=session._model_options(system_prompt=prompt_inputs["system_prompt"]),
         loop_budget=budget,
         timeout_s=timeout_s,
         use_text_tools=use_text_tools,
         use_budget_warning=use_budget_warning,
         use_mid_nudge=use_mid_nudge,
+        workspace=workspace,
+        event_log=event_log,
+        condensed_state=condensed_state,
     )
 
 
@@ -102,6 +131,38 @@ def build_repo_map(repo_root: str, query: str, *, max_tokens: int = 4096) -> str
     from mellea.agent.repomap import build_repo_map as _build_repo_map
 
     return _build_repo_map(repo_root, query, max_tokens=max_tokens)
+
+
+def build_agent_runtime(*, repo: str, repo_root: str, session):
+    try:
+        runtime_module = importlib.import_module("mellea.agent.runtime")
+        memory_module = importlib.import_module("mellea.agent.runtime.memory")
+    except Exception:
+        return None, None, None
+
+    safety_policy = runtime_module.SafetyPolicy(
+        mode=os.environ.get("MCODE_RUNTIME_SAFETY_MODE", "workspace-write"),
+        network_access=True,
+        writable_roots=(repo_root,),
+    )
+    workspace = runtime_module.Workspace(
+        cwd=repo_root,
+        safety_policy=safety_policy,
+        session=runtime_module.SessionMetadata(
+            executor="mcode",
+            metadata={
+                "repo": repo,
+                "backend_name": session.backend_name,
+                "model_id": session.model_id,
+            },
+        ),
+        metadata={"repo": repo},
+    )
+    event_log = runtime_module.EventLog(workspace=workspace)
+    condensed_state = memory_module.CondensedState(
+        working_memory=memory_module.WorkingMemory()
+    )
+    return workspace, event_log, condensed_state
 
 
 def make_agent_tools(

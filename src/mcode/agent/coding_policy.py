@@ -37,6 +37,12 @@ class CodingPolicy:
     system_prompt: str
     goal: str
 
+    def prompt_inputs(self) -> dict[str, str]:
+        return {
+            "system_prompt": self.system_prompt,
+            "goal": self.goal,
+        }
+
 
 def build_system_prompt(*, explore_prompt: bool) -> str:
     return _EXPLORATION_SYSTEM_PROMPT if explore_prompt else _BASE_SYSTEM_PROMPT

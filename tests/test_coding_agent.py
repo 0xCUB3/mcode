@@ -7,6 +7,65 @@ from unittest.mock import MagicMock, patch
 from mcode.llm.session import LLMSession
 
 
+def _install_fake_runtime_modules():
+    runtime_module = types.ModuleType("mellea.agent.runtime")
+    memory_module = types.ModuleType("mellea.agent.runtime.memory")
+
+    class FakeSafetyPolicy:
+        def __init__(self, mode, network_access=None, writable_roots=()):
+            self.mode = mode
+            self.network_access = network_access
+            self.writable_roots = tuple(writable_roots)
+
+    class FakeSessionMetadata:
+        def __init__(self, session_id=None, executor=None, branch=None, metadata=None):
+            self.session_id = session_id
+            self.executor = executor
+            self.branch = branch
+            self.metadata = dict(metadata or {})
+
+    class FakeWorkspace:
+        def __init__(self, cwd, safety_policy, session, metadata=None):
+            self.cwd = cwd
+            self.safety_policy = safety_policy
+            self.session = session
+            self.metadata = dict(metadata or {})
+
+    class FakeEventLog:
+        def __init__(self, *, workspace=None, events=None):
+            self.workspace = workspace
+            self.events = list(events or [])
+
+        def emit(self, event):
+            self.events.append(event)
+            return event
+
+    class FakeWorkingMemory:
+        def __init__(self, summary="", facts=(), hypotheses=(), next_steps=()):
+            self.summary = summary
+            self.facts = tuple(facts)
+            self.hypotheses = tuple(hypotheses)
+            self.next_steps = tuple(next_steps)
+
+    class FakeCondensedState:
+        def __init__(self, working_memory=None, recent_messages=(), omitted_messages=0):
+            self.working_memory = working_memory or FakeWorkingMemory()
+            self.recent_messages = tuple(recent_messages)
+            self.omitted_messages = omitted_messages
+
+    runtime_module.EventLog = FakeEventLog
+    runtime_module.SafetyPolicy = FakeSafetyPolicy
+    runtime_module.SessionMetadata = FakeSessionMetadata
+    runtime_module.Workspace = FakeWorkspace
+    memory_module.CondensedState = FakeCondensedState
+    memory_module.WorkingMemory = FakeWorkingMemory
+
+    return {
+        "mellea.agent.runtime": runtime_module,
+        "mellea.agent.runtime.memory": memory_module,
+    }, FakeWorkspace, FakeEventLog, FakeCondensedState
+
+
 def test_build_coding_agent_assembles_prompt_and_tools_without_benchmark_path(
     tmp_path, monkeypatch
 ):
@@ -57,6 +116,54 @@ def test_build_coding_agent_assembles_prompt_and_tools_without_benchmark_path(
         f'{sys.executable} -c "print(\'default verification\')"'
     ]
     assert captured["test_fn"] is not None
+
+
+def test_build_coding_agent_assembles_mellea_runtime_and_keeps_mcode_policy(
+    tmp_path, monkeypatch
+):
+    from mcode.agent import coding_agent as coding_agent_module
+
+    session = LLMSession(model_id="test", backend_name="openai", loop_budget=4)
+    session._m = MagicMock()
+    session._m.backend = MagicMock()
+
+    monkeypatch.setenv("MELLEA_TEXT_TOOLS", "1")
+
+    runtime_modules, FakeWorkspace, FakeEventLog, FakeCondensedState = (
+        _install_fake_runtime_modules()
+    )
+    fake_policy = types.SimpleNamespace(
+        system_prompt="system prompt from mcode",
+        goal="goal from mcode",
+    )
+    fake_verification = types.SimpleNamespace(
+        test_cmds=["pytest -q tests/test_coding_agent.py"],
+        test_fn=lambda test_cmd="default": test_cmd,
+        prompt_block="\n\nVerification:\nUse mcode verification policy.",
+    )
+
+    with patch.dict(sys.modules, runtime_modules), patch.object(
+        coding_agent_module, "build_repo_map", return_value="repo map"
+    ), patch.object(coding_agent_module, "make_agent_tools", return_value=["tool-a"]), patch.object(
+        coding_agent_module, "build_coding_policy", return_value=fake_policy
+    ), patch.object(
+        coding_agent_module, "build_verification_policy", return_value=fake_verification
+    ):
+        assembly = coding_agent_module.build_coding_agent(
+            session=session,
+            repo="test/repo",
+            problem_statement="Fix the bug",
+            repo_root=str(tmp_path),
+        )
+
+    assert assembly.coding_policy is fake_policy
+    assert assembly.verification_policy is fake_verification
+    assert assembly.system_prompt == "system prompt from mcode"
+    assert assembly.goal == "goal from mcode"
+    assert isinstance(assembly.workspace, FakeWorkspace)
+    assert isinstance(assembly.event_log, FakeEventLog)
+    assert assembly.event_log.workspace is assembly.workspace
+    assert isinstance(assembly.condensed_state, FakeCondensedState)
 
 
 def test_build_coding_policy_composes_shell_first_goal():
@@ -151,3 +258,60 @@ def test_coding_agent_can_be_requested_from_session_generate_patch(
 
     assert result == "diff"
     assert build_agent.called
+
+
+def test_session_generate_patch_passes_runtime_state_to_text_react(
+    tmp_path, monkeypatch
+):
+    from mcode.llm import session as session_module
+
+    monkeypatch.setenv("MELLEA_TEXT_TOOLS", "1")
+
+    session = LLMSession(model_id="test", backend_name="ollama")
+    session._m = MagicMock()
+    session._m.backend = MagicMock()
+
+    workspace = types.SimpleNamespace(cwd=str(tmp_path))
+    event_log = types.SimpleNamespace(workspace=workspace)
+    condensed_state = types.SimpleNamespace(label="memory")
+    build_agent = MagicMock()
+    build_agent.return_value = types.SimpleNamespace(
+        goal="assembled",
+        tools=[],
+        model_options={},
+        loop_budget=3,
+        timeout_s=1,
+        use_text_tools=True,
+        use_budget_warning=False,
+        use_mid_nudge=False,
+        system_prompt="system",
+        verification_cmds=[],
+        verification_test_fn=lambda cmd="default": "",
+        workspace=workspace,
+        event_log=event_log,
+        condensed_state=condensed_state,
+        max_retries_per_turn=2,
+    )
+
+    captured: dict[str, object] = {}
+
+    async def fake_text_react(*args, **kwargs):
+        captured.update(kwargs)
+        return ("done", True)
+
+    fake_module = types.ModuleType("mellea.agent.text_react")
+    fake_module.text_react = fake_text_react
+
+    with patch.object(session_module, "build_coding_agent", build_agent, create=True), patch.dict(
+        sys.modules, {"mellea.agent.text_react": fake_module}
+    ), patch.object(session_module, "_get_diff", return_value="diff"):
+        result = session.generate_patch(
+            repo="test/repo",
+            problem_statement="Fix the bug",
+            repo_root=str(tmp_path),
+        )
+
+    assert result == "diff"
+    assert captured["event_log"] is event_log
+    assert captured["condensed_state"] is condensed_state
+    assert captured["max_retries_per_turn"] == 2

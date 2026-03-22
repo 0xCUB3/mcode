@@ -225,6 +225,9 @@ class LLMSession:
         model_opts = agent.model_options
         use_budget_warning = agent.use_budget_warning
         use_mid_nudge = agent.use_mid_nudge
+        event_log = getattr(agent, "event_log", None)
+        condensed_state = getattr(agent, "condensed_state", None)
+        max_retries_per_turn = int(getattr(agent, "max_retries_per_turn", 0))
 
         def _on_turn(turn, total, ctx):
             from mellea.stdlib.components.chat import Message
@@ -283,17 +286,25 @@ class LLMSession:
             async def _one_attempt():
                 from mellea.agent.text_react import text_react
 
+                react_kwargs = {
+                    "goal": goal,
+                    "backend": self._m.backend if self._m else None,
+                    "tools": tools,
+                    "system_prompt": system_prompt,
+                    "model_options": model_opts,
+                    "loop_budget": budget,
+                    "on_turn": _text_on_turn,
+                }
+                if condensed_state is not None:
+                    react_kwargs["condensed_state"] = condensed_state
+                if event_log is not None:
+                    react_kwargs["event_log"] = event_log
+                if max_retries_per_turn > 0:
+                    react_kwargs["max_retries_per_turn"] = max_retries_per_turn
+
                 try:
                     answer, done = await asyncio.wait_for(
-                        text_react(
-                            goal=goal,
-                            backend=self._m.backend if self._m else None,
-                            tools=tools,
-                            system_prompt=system_prompt,
-                            model_options=model_opts,
-                            loop_budget=budget,
-                            on_turn=_text_on_turn,
-                        ),
+                        text_react(**react_kwargs),
                         timeout=timeout_s,
                     )
                     if done:
