@@ -346,6 +346,7 @@ class LLMSession:
                             backend=self._m.backend if self._m else None,
                             tools=tools,
                             system_prompt=system_prompt,
+                            model_options=model_opts,
                             loop_budget=budget,
                             on_turn=_text_on_turn,
                         ),
