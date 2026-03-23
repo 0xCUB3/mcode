@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from mcode.agent.coding_policy import CodingPolicy, build_coding_policy
@@ -52,6 +53,7 @@ def build_coding_agent(
     repo_root: str,
     test_cmds: object | None = None,
     test_fn=None,
+    command_fn: Callable[[str], str] | None = None,
 ) -> CodingAgentAssembly:
     budget = max(1, session.loop_budget)
     timeout_s = int(os.environ.get("MCODE_REACT_TIMEOUT", str(budget * 30)))
@@ -106,6 +108,7 @@ def build_coding_agent(
 
     tools = make_agent_tools(
         repo_root,
+        command_fn=command_fn,
         workspace=workspace,
         **tool_kwargs,
     )
@@ -179,6 +182,7 @@ def make_agent_tools(
     *,
     test_cmds: list[str] | None = None,
     test_fn=None,
+    command_fn: Callable[[str], str] | None = None,
     workspace=None,
 ):
     from mellea.agent.tools import make_agent_tools as _make_agent_tools
@@ -187,5 +191,6 @@ def make_agent_tools(
         repo_root,
         test_cmds=test_cmds,
         test_fn=test_fn,
+        command_fn=command_fn,
         workspace=workspace,
     )

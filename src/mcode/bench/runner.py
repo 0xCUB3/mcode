@@ -5,6 +5,7 @@ import json
 import os
 import time
 import traceback
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -53,6 +54,18 @@ class BenchConfig:
     swebench_dataset: str = "SWE-bench/SWE-bench_Lite"
     lcb_cutoff: str | None = None
     n_samples: int = 1
+
+
+@dataclass(frozen=True)
+class PatchRepoContext:
+    repo_root: Path | str
+    command_fn: Callable[[str], str] | None = None
+
+
+def _coerce_patch_repo_context(repo_context: object) -> PatchRepoContext:
+    repo_root = getattr(repo_context, "repo_root", repo_context)
+    command_fn = getattr(repo_context, "command_fn", None)
+    return PatchRepoContext(repo_root=repo_root, command_fn=command_fn)
 
 
 class BenchmarkRunner:
@@ -282,7 +295,13 @@ class BenchmarkRunner:
 
         return RunSummary(run_id=run_id, total=total, passed=passed)
 
-    def _generate_task_patch(self, task, *, repo_root: Path | str) -> str:
+    def _generate_task_patch(
+        self,
+        task,
+        *,
+        repo_root: Path | str,
+        command_fn: Callable[[str], str] | None = None,
+    ) -> str:
         verification_metadata = getattr(task, "raw_instance", None)
         if verification_metadata is None:
             verification_metadata = getattr(task, "test_cmds", None)
@@ -295,14 +314,20 @@ class BenchmarkRunner:
                 repo_root=str(repo_root),
                 n_samples=self.config.n_samples,
                 test_cmds=verification_metadata,
+                command_fn=command_fn,
             )
 
     def _run_swebench_live_task(self, task, *, live_sandbox, run_id: int) -> dict:
         start = time.time()
         try:
-            with live_sandbox.repo_context(task) as repo_root:
+            with live_sandbox.repo_context(task) as repo_context:
+                patch_context = _coerce_patch_repo_context(repo_context)
                 try:
-                    patch = self._generate_task_patch(task, repo_root=repo_root)
+                    patch = self._generate_task_patch(
+                        task,
+                        repo_root=patch_context.repo_root,
+                        command_fn=patch_context.command_fn,
+                    )
                 except Exception as e:
                     elapsed_ms = int((time.time() - start) * 1000)
                     tb = traceback.format_exc()
@@ -366,9 +391,14 @@ class BenchmarkRunner:
     def _run_swebench_task(self, task, *, swe_sandbox, run_id: int) -> dict:
         start = time.time()
         try:
-            with swe_sandbox.repo_context(task.raw_instance) as repo_root:
+            with swe_sandbox.repo_context(task.raw_instance) as repo_context:
+                patch_context = _coerce_patch_repo_context(repo_context)
                 try:
-                    patch = self._generate_task_patch(task, repo_root=repo_root)
+                    patch = self._generate_task_patch(
+                        task,
+                        repo_root=patch_context.repo_root,
+                        command_fn=patch_context.command_fn,
+                    )
                 except Exception as e:
                     elapsed_ms = int((time.time() - start) * 1000)
                     tb = traceback.format_exc()

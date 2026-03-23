@@ -151,6 +151,9 @@ class SWEbenchLiveSandbox:
         import tempfile
         from contextlib import contextmanager
         from pathlib import Path
+        from types import SimpleNamespace
+
+        from mellea.agent.tools.bash import format_tool_result
 
         @contextmanager
         def _ctx():
@@ -164,9 +167,10 @@ class SWEbenchLiveSandbox:
                         raise RuntimeError(line["error"])
 
             dest = tempfile.mkdtemp(prefix="mcode-testbed-")
-            container = client.containers.create(image=image_name, command="true")
+            source_container = client.containers.create(image=image_name, command="true")
+            exec_container = None
             try:
-                bits, _ = container.get_archive("/testbed")
+                bits, _ = source_container.get_archive("/testbed")
                 buf = io.BytesIO()
                 for chunk in bits:
                     buf.write(chunk)
@@ -218,9 +222,42 @@ class SWEbenchLiveSandbox:
                             "GIT_COMMITTER_EMAIL": "mcode@test",
                         },
                     )
-                yield testbed
+                exec_container = client.containers.create(
+                    image=image_name,
+                    command="tail -f /dev/null",
+                    detach=True,
+                    volumes={str(testbed): {"bind": "/testbed", "mode": "rw"}},
+                    cap_drop=["ALL"],
+                    security_opt=["no-new-privileges"],
+                    network_disabled=True,
+                    mem_limit=self.mem_limit,
+                    pids_limit=self.pids_limit,
+                )
+                exec_container.start()
+
+                def command_fn(command: str) -> str:
+                    output, exit_code, timed_out = _exec_agent_command_in_container(
+                        exec_container,
+                        command,
+                        timeout_s=30,
+                    )
+                    if timed_out:
+                        return format_tool_result(command, "TIMEOUT after 30s", "")
+                    if exit_code == 0:
+                        return format_tool_result(command, "PASSED", output)
+                    if exit_code < 0 and output.startswith("Error:"):
+                        return format_tool_result(command, "ERROR", output)
+                    return format_tool_result(
+                        command,
+                        f"FAILED (exit {exit_code})",
+                        output,
+                    )
+
+                yield SimpleNamespace(repo_root=testbed, command_fn=command_fn)
             finally:
-                container.remove(force=True)
+                source_container.remove(force=True)
+                if exec_container is not None:
+                    exec_container.remove(force=True)
                 shutil.rmtree(dest, ignore_errors=True)
 
         return _ctx()
@@ -405,6 +442,46 @@ def _copy_to_container(container, dest_path: str, content: str) -> None:
     buf.seek(0)
     dest_dir = "/".join(dest_path.split("/")[:-1]) or "/"
     container.put_archive(dest_dir, buf)
+
+
+def _truncate_agent_output(output: str, *, max_chars: int = 10_000) -> str:
+    if len(output) <= max_chars:
+        return output
+    half = max_chars // 2
+    return (
+        output[:half]
+        + f"\n\n[... truncated {len(output) - max_chars} chars ...]\n\n"
+        + output[-half:]
+    )
+
+
+def _exec_agent_command_in_container(
+    container,
+    cmd: str,
+    *,
+    workdir: str = "/testbed",
+    timeout_s: int = 30,
+) -> tuple[str, int, bool]:
+    result_box: list[tuple[str, int]] = []
+
+    def _run():
+        try:
+            val = container.exec_run(
+                ["bash", "-o", "pipefail", "-c", cmd],
+                workdir=workdir,
+            )
+            output = (val.output or b"").decode("utf-8", errors="replace")
+            result_box.append((_truncate_agent_output(output), val.exit_code))
+        except Exception as e:
+            result_box.append((f"Error: {type(e).__name__}: {e}", -1))
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=timeout_s)
+    if not result_box:
+        return ("", -1, True)
+    output, exit_code = result_box[0]
+    return (output, exit_code, False)
 
 
 def _exec_in_container(

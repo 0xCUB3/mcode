@@ -218,6 +218,7 @@ class LLMSession:
         n_samples: int = 1,
         test_cmds: object | None = None,
         test_fn: object | None = None,
+        command_fn: object | None = None,
     ) -> str:
         if self.strategy_name == "raw":
             return self._generate_patch_raw(
@@ -240,6 +241,7 @@ class LLMSession:
             repo_root=repo_root,
             test_cmds=test_cmds,
             test_fn=test_fn,
+            command_fn=command_fn,
         )
 
         budget = agent.loop_budget

@@ -71,6 +71,7 @@ def _install_fake_runtime_modules():
     runtime_module.Workspace = FakeWorkspace
     memory_module.CondensedState = FakeCondensedState
     memory_module.WorkingMemory = FakeWorkingMemory
+    workspace_module.Workspace = FakeWorkspace
     workspace_module.format_workspace_state = (
         lambda workspace: None
         if workspace is None
@@ -192,10 +193,13 @@ def test_generate_patch_exposes_task_default_verification(tmp_path, monkeypatch)
 
     captured: dict = {}
 
-    def fake_make_agent_tools(repo_root, *, test_cmds=None, test_fn=None, workspace=None):
+    def fake_make_agent_tools(
+        repo_root, *, test_cmds=None, test_fn=None, command_fn=None, workspace=None
+    ):
         captured["repo_root"] = repo_root
         captured["test_cmds"] = test_cmds
         captured["test_fn"] = test_fn
+        captured["command_fn"] = command_fn
         captured["workspace"] = workspace
         return []
 
@@ -226,6 +230,7 @@ def test_generate_patch_exposes_task_default_verification(tmp_path, monkeypatch)
         f'{sys.executable} -c "print(\'default verification\')"'
     ]
     assert captured["test_fn"] is None
+    assert captured["command_fn"] is None
     assert captured["workspace"].cwd == str(tmp_path)
     assert "Start with `run_tests default`" in captured["goal"]
     assert "Keep verification cheap" in captured["goal"]
@@ -240,10 +245,13 @@ def test_generate_patch_keeps_shell_verification_without_task_defaults(tmp_path,
 
     captured: dict = {}
 
-    def fake_make_agent_tools(repo_root, *, test_cmds=None, test_fn=None, workspace=None):
+    def fake_make_agent_tools(
+        repo_root, *, test_cmds=None, test_fn=None, command_fn=None, workspace=None
+    ):
         captured["repo_root"] = repo_root
         captured["test_cmds"] = test_cmds
         captured["test_fn"] = test_fn
+        captured["command_fn"] = command_fn
         captured["workspace"] = workspace
         return []
 
@@ -269,6 +277,7 @@ def test_generate_patch_keeps_shell_verification_without_task_defaults(tmp_path,
     assert isinstance(result, str)
     assert captured["test_cmds"] == []
     assert captured["test_fn"] is None
+    assert captured["command_fn"] is None
     assert captured["workspace"].cwd == str(tmp_path)
     assert "cheapest shell command" in captured["goal"]
     assert "Avoid full-suite runs unless necessary." in captured["goal"]
@@ -319,6 +328,7 @@ def test_swebench_live_runner_passes_task_metadata_to_generate_patch(tmp_path, m
     assert captured["test_cmds"] == FakeTask.raw_instance
     assert captured["n_samples"] == 3
     assert captured["repo"] == FakeTask.repo
+    assert captured.get("command_fn") is None
 
 
 def test_swebench_lite_runner_passes_task_metadata_to_generate_patch(tmp_path):
@@ -365,6 +375,62 @@ def test_swebench_lite_runner_passes_task_metadata_to_generate_patch(tmp_path):
     assert result["passed"] is False
     assert captured["test_cmds"] == FakeTask.raw_instance
     assert captured["n_samples"] == 3
+    assert captured.get("command_fn") is None
+
+
+def test_swebench_lite_runner_passes_repo_command_executor_to_generate_patch(tmp_path):
+    _init_repo(tmp_path)
+
+    db = ResultsDB(tmp_path / "results.db")
+    runner = BenchmarkRunner(
+        config=BenchConfig(model_id="test", sandbox="process", n_samples=3),
+        results_db=db,
+    )
+
+    captured: dict = {}
+
+    def fake_generate_patch(**kwargs):
+        captured.update(kwargs)
+        return ""
+
+    def fake_command(command: str) -> str:
+        return f"ran {command}"
+
+    @contextmanager
+    def fake_open():
+        yield runner.llm
+
+    class FakeRepoContext:
+        def __init__(self):
+            self.repo_root = tmp_path
+            self.command_fn = fake_command
+
+        def __fspath__(self):
+            return str(self.repo_root)
+
+    class FakeTask:
+        benchmark = "swebench-lite"
+        instance_id = "lite-1"
+        repo = "test/repo"
+        problem_statement = "Fix the bug"
+        hints_text = "Hint"
+        raw_instance = {}
+
+    class FakeSWEbenchSandbox:
+        @contextmanager
+        def repo_context(self, task):
+            yield FakeRepoContext()
+
+    runner.llm.open = fake_open  # type: ignore[method-assign]
+    runner.llm.generate_patch = fake_generate_patch  # type: ignore[method-assign]
+
+    runner._run_swebench_task(
+        FakeTask(),
+        swe_sandbox=FakeSWEbenchSandbox(),
+        run_id=1,
+    )
+
+    assert captured["command_fn"] is fake_command
 
 
 def test_swebench_lite_runner_reports_repo_context_failures(tmp_path):

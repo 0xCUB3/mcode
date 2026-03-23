@@ -98,10 +98,13 @@ def test_build_coding_agent_assembles_prompt_and_tools_without_benchmark_path(
 
     captured: dict[str, object] = {}
 
-    def fake_make_agent_tools(repo_root, *, test_cmds=None, test_fn=None, workspace=None):
+    def fake_make_agent_tools(
+        repo_root, *, test_cmds=None, test_fn=None, command_fn=None, workspace=None
+    ):
         captured["repo_root"] = repo_root
         captured["test_cmds"] = test_cmds
         captured["test_fn"] = test_fn
+        captured["command_fn"] = command_fn
         captured["workspace"] = workspace
         return ["tool-a"]
 
@@ -132,6 +135,7 @@ def test_build_coding_agent_assembles_prompt_and_tools_without_benchmark_path(
         f'{sys.executable} -c "print(\'default verification\')"'
     ]
     assert captured["test_fn"] is None
+    assert captured["command_fn"] is None
     assert captured["workspace"] is assembly.workspace
 
 
