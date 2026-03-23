@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -10,7 +8,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class VerificationPolicy:
     test_cmds: list[str]
-    test_fn: Callable[[str], str]
+    test_fn: Callable[[str], str] | None
     prompt_block: str
 
     def tool_kwargs(self) -> dict[str, object]:
@@ -82,56 +80,10 @@ def build_verification_policy(
     timeout_s: int | None = None,
 ) -> VerificationPolicy:
     verification_cmds = normalize_verification_commands(test_cmds)
-    verification_timeout_s = timeout_s if timeout_s is not None else int(
-        os.environ.get("MCODE_REACT_TIMEOUT", "120")
-    )
-
-    if test_fn is None:
-
-        def verification_test_fn(test_cmd: str = "default") -> str:
-            command = test_cmd.strip()
-            if command.lower() == "default":
-                if not verification_cmds:
-                    return (
-                        "No task-default verification commands available. "
-                        "Pass an explicit shell command, such as "
-                        "`pytest -q` or `python -m pytest -q path/to/test.py -k name`."
-                    )
-                cmds = verification_cmds
-            else:
-                cmds = [command]
-
-            outputs: list[str] = []
-            for cmd in cmds:
-                if not cmd.strip():
-                    continue
-                try:
-                    result = subprocess.run(
-                        ["bash", "-lc", cmd],
-                        cwd=repo_root,
-                        capture_output=True,
-                        text=True,
-                        timeout=verification_timeout_s,
-                    )
-                    out = result.stdout + result.stderr
-                    status = (
-                        "PASSED"
-                        if result.returncode == 0
-                        else f"FAILED (exit {result.returncode})"
-                    )
-                    outputs.append(f"$ {cmd}\n{status}\n{out}")
-                except subprocess.TimeoutExpired:
-                    outputs.append(f"$ {cmd}\nTIMEOUT after {verification_timeout_s}s")
-                except OSError as e:
-                    outputs.append(f"$ {cmd}\nError: {e}")
-
-            return "\n---\n".join(outputs) if outputs else "No verification commands available."
-
-    else:
-        verification_test_fn = test_fn
+    del repo_root, timeout_s
 
     return VerificationPolicy(
         test_cmds=verification_cmds,
-        test_fn=verification_test_fn,
+        test_fn=test_fn,
         prompt_block=build_verification_prompt(verification_cmds),
     )

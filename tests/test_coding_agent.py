@@ -98,10 +98,11 @@ def test_build_coding_agent_assembles_prompt_and_tools_without_benchmark_path(
 
     captured: dict[str, object] = {}
 
-    def fake_make_agent_tools(repo_root, *, test_cmds=None, test_fn=None):
+    def fake_make_agent_tools(repo_root, *, test_cmds=None, test_fn=None, workspace=None):
         captured["repo_root"] = repo_root
         captured["test_cmds"] = test_cmds
         captured["test_fn"] = test_fn
+        captured["workspace"] = workspace
         return ["tool-a"]
 
     monkeypatch.setenv("MELLEA_TEXT_TOOLS", "0")
@@ -130,7 +131,8 @@ def test_build_coding_agent_assembles_prompt_and_tools_without_benchmark_path(
     assert captured["test_cmds"] == [
         f'{sys.executable} -c "print(\'default verification\')"'
     ]
-    assert captured["test_fn"] is not None
+    assert captured["test_fn"] is None
+    assert captured["workspace"] is assembly.workspace
 
 
 def test_build_coding_agent_assembles_mellea_runtime_and_keeps_mcode_policy(
@@ -240,9 +242,7 @@ def test_build_verification_policy_prefers_task_default_checks(tmp_path):
     assert policy.test_cmds == [f'{sys.executable} -c "print(\'default verification\')"']
     assert "Start with `run_tests default`" in policy.prompt_block
     assert "Keep verification cheap" in policy.prompt_block
-    output = policy.test_fn("default")
-    assert "default verification" in output
-    assert "PASSED" in output
+    assert policy.test_fn is None
 
 
 def test_build_verification_policy_uses_shell_first_fallback(tmp_path):
@@ -253,9 +253,23 @@ def test_build_verification_policy_uses_shell_first_fallback(tmp_path):
     assert policy.test_cmds == []
     assert "cheapest shell command" in policy.prompt_block
     assert "Avoid full-suite runs unless necessary." in policy.prompt_block
-    output = policy.test_fn(f'{sys.executable} -c "print(\'shell verification\')"')
-    assert "shell verification" in output
-    assert "PASSED" in output
+    assert policy.test_fn is None
+
+
+def test_build_verification_policy_preserves_explicit_test_fn(tmp_path):
+    from mcode.agent.verification import build_verification_policy
+
+    def custom_test_fn(command="default"):
+        return f"custom:{command}"
+
+    policy = build_verification_policy(
+        repo_root=str(tmp_path),
+        test_cmds=["pytest -q"],
+        test_fn=custom_test_fn,
+    )
+
+    assert policy.test_cmds == ["pytest -q"]
+    assert policy.test_fn is custom_test_fn
 
 
 def test_coding_agent_can_be_requested_from_session_generate_patch(

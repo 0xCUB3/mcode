@@ -17,6 +17,8 @@ from mcode.llm.session import LLMSession
 def _install_fake_runtime_modules():
     runtime_module = types.ModuleType("mellea.agent.runtime")
     memory_module = types.ModuleType("mellea.agent.runtime.memory")
+    workspace_module = types.ModuleType("mellea.agent.runtime.workspace")
+    runtime_module.__path__ = []
 
     class FakeSafetyPolicy:
         def __init__(self, mode, network_access=None, writable_roots=()):
@@ -69,10 +71,21 @@ def _install_fake_runtime_modules():
     runtime_module.Workspace = FakeWorkspace
     memory_module.CondensedState = FakeCondensedState
     memory_module.WorkingMemory = FakeWorkingMemory
+    workspace_module.format_workspace_state = (
+        lambda workspace: None
+        if workspace is None
+        else (
+            "Runtime state:\n"
+            f"Current working directory: {workspace.cwd}\n"
+            "Use relative paths from this directory unless a tool explicitly "
+            "requires an absolute path."
+        )
+    )
 
     return {
         "mellea.agent.runtime": runtime_module,
         "mellea.agent.runtime.memory": memory_module,
+        "mellea.agent.runtime.workspace": workspace_module,
     }
 
 
@@ -179,10 +192,11 @@ def test_generate_patch_exposes_task_default_verification(tmp_path, monkeypatch)
 
     captured: dict = {}
 
-    def fake_make_agent_tools(repo_root, *, test_cmds=None, test_fn=None):
+    def fake_make_agent_tools(repo_root, *, test_cmds=None, test_fn=None, workspace=None):
         captured["repo_root"] = repo_root
         captured["test_cmds"] = test_cmds
         captured["test_fn"] = test_fn
+        captured["workspace"] = workspace
         return []
 
     mock_result = MagicMock()
@@ -194,7 +208,7 @@ def test_generate_patch_exposes_task_default_verification(tmp_path, monkeypatch)
         return (mock_result, mock_ctx)
 
     with patch.dict(sys.modules, _install_fake_runtime_modules()), patch(
-        "mellea.agent.tools.make_agent_tools", fake_make_agent_tools
+        "mcode.agent.coding_agent.make_agent_tools", fake_make_agent_tools
     ), patch(
         "mellea.stdlib.frameworks.react.react", mock_react
     ):
@@ -211,12 +225,10 @@ def test_generate_patch_exposes_task_default_verification(tmp_path, monkeypatch)
     assert captured["test_cmds"] == [
         f'{sys.executable} -c "print(\'default verification\')"'
     ]
-    assert captured["test_fn"] is not None
+    assert captured["test_fn"] is None
+    assert captured["workspace"].cwd == str(tmp_path)
     assert "Start with `run_tests default`" in captured["goal"]
     assert "Keep verification cheap" in captured["goal"]
-    output = captured["test_fn"]("default")
-    assert "default verification" in output
-    assert "PASSED" in output
 
 
 def test_generate_patch_keeps_shell_verification_without_task_defaults(tmp_path, monkeypatch):
@@ -228,10 +240,11 @@ def test_generate_patch_keeps_shell_verification_without_task_defaults(tmp_path,
 
     captured: dict = {}
 
-    def fake_make_agent_tools(repo_root, *, test_cmds=None, test_fn=None):
+    def fake_make_agent_tools(repo_root, *, test_cmds=None, test_fn=None, workspace=None):
         captured["repo_root"] = repo_root
         captured["test_cmds"] = test_cmds
         captured["test_fn"] = test_fn
+        captured["workspace"] = workspace
         return []
 
     mock_result = MagicMock()
@@ -243,7 +256,7 @@ def test_generate_patch_keeps_shell_verification_without_task_defaults(tmp_path,
         return (mock_result, mock_ctx)
 
     with patch.dict(sys.modules, _install_fake_runtime_modules()), patch(
-        "mellea.agent.tools.make_agent_tools", fake_make_agent_tools
+        "mcode.agent.coding_agent.make_agent_tools", fake_make_agent_tools
     ), patch(
         "mellea.stdlib.frameworks.react.react", mock_react
     ):
@@ -255,13 +268,10 @@ def test_generate_patch_keeps_shell_verification_without_task_defaults(tmp_path,
 
     assert isinstance(result, str)
     assert captured["test_cmds"] == []
-    assert captured["test_fn"] is not None
+    assert captured["test_fn"] is None
+    assert captured["workspace"].cwd == str(tmp_path)
     assert "cheapest shell command" in captured["goal"]
     assert "Avoid full-suite runs unless necessary." in captured["goal"]
-    output = captured["test_fn"](f'{sys.executable} -c "print(\'shell verification\')"')
-    assert "shell verification" in output
-    assert "PASSED" in output
-    assert "No task-default verification commands available" in captured["test_fn"]("default")
 
 
 def test_swebench_live_runner_passes_task_metadata_to_generate_patch(tmp_path, monkeypatch):

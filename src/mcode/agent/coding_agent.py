@@ -106,6 +106,7 @@ def build_coding_agent(
 
     tools = make_agent_tools(
         repo_root,
+        workspace=workspace,
         **tool_kwargs,
     )
 
@@ -178,7 +179,13 @@ def make_agent_tools(
     *,
     test_cmds: list[str] | None = None,
     test_fn=None,
+    workspace=None,
 ):
     from mellea.agent.tools import make_agent_tools as _make_agent_tools
 
-    return _make_agent_tools(repo_root, test_cmds=test_cmds, test_fn=test_fn)
+    return _make_agent_tools(
+        repo_root,
+        test_cmds=test_cmds,
+        test_fn=test_fn,
+        workspace=workspace,
+    )
