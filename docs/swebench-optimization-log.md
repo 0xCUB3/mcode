@@ -214,7 +214,7 @@ The top SWE-bench frameworks (SWE-agent, smolagents, OpenHands) all handle tool 
 
 With text-based tool calling, MiniMax M2.5 tool call failures dropped from 51% to 0%. The model produced patches on 46% of tasks (comparable to Qwen's 47%), but the pass rate on generated patches was lower (9.4% vs Qwen's 14.9%). Increasing the turn budget from 15 to 100 barely helped (13/300 to 15/300), producing only 17 more patches but at roughly the same success rate. The 80.2% Verified score that MiniMax M2.5 achieves with OpenHands is clearly a scaffold gap, not a model gap.
 
-On the full SWE-bench Verified benchmark (500 tasks), the same text-tool setup plus the sandboxed bash tool reached 156/500 = 31.2%. The initial 455-task sweep scored 138/455 = 30.3%, and a follow-up 45-task patch run added 18 more passes. That puts the final result at about 38.9% of OpenHands' published 80.2%.
+On the full SWE-bench Verified benchmark (500 tasks), the corrected text-tool setup plus the sandboxed bash tool reached 165/500 = 33.0%. This supersedes the earlier 156/500 = 31.2% run after we fixed a shell-tool bug where piped commands could report false `PASSED` statuses without `pipefail`. The updated result puts us at about 41.1% of OpenHands' published 80.2%.
 
 ## Phase 8: Scaffold gap analysis
 
@@ -228,6 +228,6 @@ The implication is clear: matching top-tier benchmark scores requires rebuilding
 
 ## Where things stand
 
-Best result with Qwen3.5-27B: 84/300 = 28.0% on SWE-bench Lite, roughly 28-32/300 (9-11%) on Live Lite. Best result with MiniMax M2.5 on Live Lite (text tools, budget=100): 15/300 = 5.0%. Best result with MiniMax M2.5 on full SWE-bench Verified (text tools + bash, budget=15): 156/500 = 31.2%.
+Best result with Qwen3.5-27B: 84/300 = 28.0% on SWE-bench Lite, roughly 28-32/300 (9-11%) on Live Lite. Best result with MiniMax M2.5 on Live Lite (text tools, budget=100): 15/300 = 5.0%. Best result with MiniMax M2.5 on full SWE-bench Verified (text tools + bash, budget=15): 165/500 = 33.0%.
 
-The text-based tool calling infrastructure works and is model-agnostic. The mid-budget nudge remains the most effective single intervention (+3.7pp on Live with Qwen). But the gap between our 31.2% Verified result and OpenHands' 80.2% is fundamentally about the scaffold architecture, not model capability or tool calling mechanics. Closing that gap requires giving the agent stronger in-loop verification, better context management, and richer task guidance.
+The text-based tool calling infrastructure works and is model-agnostic. The mid-budget nudge remains the most effective single intervention (+3.7pp on Live with Qwen). But the gap between our 33.0% Verified result and OpenHands' 80.2% is fundamentally about the scaffold architecture, not model capability or tool calling mechanics. Closing that gap requires giving the agent stronger in-loop verification, better context management, and richer task guidance.
