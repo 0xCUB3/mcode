@@ -9,7 +9,12 @@ from mcode.cli import app
 
 def _invoke_help(*args: str) -> str:
     runner = CliRunner()
-    res = runner.invoke(app, list(args), color=False)
+    res = runner.invoke(
+        app,
+        list(args),
+        color=False,
+        env={"COLUMNS": "120", "TERM": "xterm-256color"},
+    )
     assert res.exit_code == 0
     return res.stdout
 
