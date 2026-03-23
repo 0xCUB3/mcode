@@ -7,68 +7,55 @@ from typer.testing import CliRunner
 from mcode.cli import app
 
 
-def test_cli_help() -> None:
+def _invoke_help(*args: str) -> str:
     runner = CliRunner()
-    res = runner.invoke(app, ["--help"])
+    res = runner.invoke(app, list(args), color=False)
     assert res.exit_code == 0
+    return res.stdout
+
+
+def test_cli_help() -> None:
+    _invoke_help("--help")
 
 
 def test_cli_bench_swebench_help() -> None:
-    runner = CliRunner()
-    res = runner.invoke(app, ["bench", "swebench-lite", "--help"])
-    assert res.exit_code == 0
-    assert "--n-samples" in res.stdout
-    assert "Sampling strategy: repair," in res.stdout
-    assert "sofai, or raw" in res.stdout
+    help_text = _invoke_help("bench", "swebench-lite", "--help")
+    assert "--n-samples" in help_text
+    assert "Sampling strategy: repair," in help_text
+    assert "sofai, or raw" in help_text
 
 
 def test_cli_bench_humaneval_plus_help() -> None:
-    runner = CliRunner()
-    res = runner.invoke(app, ["bench", "humaneval+", "--help"])
-    assert res.exit_code == 0
+    _invoke_help("bench", "humaneval+", "--help")
 
 
 def test_cli_bench_mbpp_plus_help() -> None:
-    runner = CliRunner()
-    res = runner.invoke(app, ["bench", "mbpp+", "--help"])
-    assert res.exit_code == 0
+    _invoke_help("bench", "mbpp+", "--help")
 
 
 def test_cli_report_help() -> None:
-    runner = CliRunner()
-    res = runner.invoke(app, ["report", "--help"])
-    assert res.exit_code == 0
+    _invoke_help("report", "--help")
 
 
 def test_cli_bench_livecodebench_help() -> None:
-    runner = CliRunner()
-    res = runner.invoke(app, ["bench", "livecodebench", "--help"])
-    assert res.exit_code == 0
+    _invoke_help("bench", "livecodebench", "--help")
 
 
 def test_cli_bench_bigcodebench_complete_help() -> None:
-    runner = CliRunner()
-    res = runner.invoke(app, ["bench", "bigcodebench-complete", "--help"])
-    assert res.exit_code == 0
+    _invoke_help("bench", "bigcodebench-complete", "--help")
 
 
 def test_cli_bench_bigcodebench_instruct_help() -> None:
-    runner = CliRunner()
-    res = runner.invoke(app, ["bench", "bigcodebench-instruct", "--help"])
-    assert res.exit_code == 0
+    _invoke_help("bench", "bigcodebench-instruct", "--help")
 
 
 def test_cli_bench_swebench_live_help() -> None:
-    runner = CliRunner()
-    res = runner.invoke(app, ["bench", "swebench-live", "--help"])
-    assert res.exit_code == 0
-    assert "--n-samples" in res.stdout
+    help_text = _invoke_help("bench", "swebench-live", "--help")
+    assert "--n-samples" in help_text
 
 
 def test_cli_deps_sync_help() -> None:
-    runner = CliRunner()
-    res = runner.invoke(app, ["deps", "sync", "--help"])
-    assert res.exit_code == 0
+    _invoke_help("deps", "sync", "--help")
 
 
 def test_cli_deps_sync_defaults_to_dev_extra(monkeypatch) -> None:
