@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from mcode.execution.swebench_live import (
+    _build_agent_shell_command,
     _check_resolution,
     _ms_image_name,
     _parse_pytest_output,
@@ -184,3 +185,17 @@ def test_load_swebench_live_missing_datasets(monkeypatch):
 
     with pytest.raises(RuntimeError, match="datasets"):
         load_swebench_live(None, split="verified", limit=1)
+
+
+def test_build_agent_shell_command_activates_testbed_and_rewrites_repo_root():
+    command = "cd /tmp/mcode-testbed-123/testbed && python -m pytest -q"
+    wrapped = _build_agent_shell_command(
+        command,
+        host_repo_root="/tmp/mcode-testbed-123/testbed",
+    )
+
+    assert "source /opt/miniconda3/bin/activate" in wrapped
+    assert "conda activate testbed" in wrapped
+    assert "git config --global --add safe.directory /testbed" in wrapped
+    assert "cd /testbed && python -m pytest -q" in wrapped
+    assert "/tmp/mcode-testbed-123/testbed" not in wrapped

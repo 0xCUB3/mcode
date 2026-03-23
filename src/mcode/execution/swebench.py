@@ -74,6 +74,47 @@ def _truncate_command_output(output: str, *, max_chars: int = 10_000) -> str:
     )
 
 
+def _normalize_agent_command(command: str, *, host_repo_root: str | None = None) -> str:
+    if host_repo_root:
+        return command.replace(host_repo_root, "/testbed")
+    return command
+
+
+def _build_agent_shell_command(
+    command: str,
+    *,
+    host_repo_root: str | None = None,
+) -> str:
+    normalized = _normalize_agent_command(command, host_repo_root=host_repo_root)
+    preamble = [
+        "source /opt/miniconda3/bin/activate",
+        "conda activate testbed",
+        "cd /testbed",
+        "git config --global --add safe.directory /testbed",
+    ]
+    return "\n".join([*preamble, normalized])
+
+
+def _build_agent_setup_script(eval_script_list: list[str]) -> str:
+    setup_commands: list[str] = []
+    for raw_command in eval_script_list:
+        command = raw_command.strip()
+        if not command:
+            continue
+        if command.startswith("git checkout "):
+            break
+        if command in {"git status", "git show"}:
+            continue
+        if command.startswith("git -c core.fileMode=false diff "):
+            continue
+        if command.startswith("git apply "):
+            continue
+        if command.startswith(": '>>>>> "):
+            continue
+        setup_commands.append(command)
+    return "\n".join(setup_commands)
+
+
 def _exec_agent_command_in_container(
     container,
     cmd: str,
@@ -277,20 +318,41 @@ class SWEbenchSandbox:
                 )
                 exec_container.start()
 
+                setup_script = _build_agent_setup_script(test_spec.eval_script_list)
+                if setup_script:
+                    setup_output, setup_exit_code, setup_timed_out = (
+                        _exec_agent_command_in_container(
+                            exec_container,
+                            setup_script,
+                            timeout_s=300,
+                        )
+                    )
+                    if setup_timed_out:
+                        raise RuntimeError("Timed out preparing SWE-bench task environment")
+                    if setup_exit_code != 0:
+                        raise RuntimeError(
+                            "Failed to prepare SWE-bench task environment:\n"
+                            f"{setup_output}"
+                        )
+
                 def command_fn(command: str) -> str:
+                    shell_command = _build_agent_shell_command(
+                        command,
+                        host_repo_root=str(testbed),
+                    )
                     output, exit_code, timed_out = _exec_agent_command_in_container(
                         exec_container,
-                        command,
+                        shell_command,
                         timeout_s=30,
                     )
                     if timed_out:
-                        return format_tool_result(command, "TIMEOUT after 30s", "")
+                        return format_tool_result(shell_command, "TIMEOUT after 30s", "")
                     if exit_code == 0:
-                        return format_tool_result(command, "PASSED", output)
+                        return format_tool_result(shell_command, "PASSED", output)
                     if exit_code < 0 and output.startswith("Error:"):
-                        return format_tool_result(command, "ERROR", output)
+                        return format_tool_result(shell_command, "ERROR", output)
                     return format_tool_result(
-                        command,
+                        shell_command,
                         f"FAILED (exit {exit_code})",
                         output,
                     )
