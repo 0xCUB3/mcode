@@ -59,7 +59,8 @@ def build_verification_prompt(test_cmds: list[str]) -> str:
             "You have a `run_tests` tool. Start with `run_tests default` "
             f"to run the task-default checks ({formatted}{more}). Keep "
             "verification cheap, if you need a narrower check, use a "
-            "targeted command instead of a broad suite."
+            "targeted command instead of a broad suite. Do not run tests "
+            "through `bash` when `run_tests` is available."
         )
 
     return (
@@ -68,7 +69,8 @@ def build_verification_prompt(test_cmds: list[str]) -> str:
         "task-default commands. Use it with the cheapest shell command "
         "that exercises your change, such as `pytest -q path/to/test.py -k "
         "name` or `python -m pytest -q path/to/test.py -k name`. Avoid "
-        "full-suite runs unless necessary."
+        "full-suite runs unless necessary, and do not run tests through "
+        "`bash` when `run_tests` is available."
     )
 
 

@@ -280,7 +280,7 @@ def test_generate_patch_keeps_shell_verification_without_task_defaults(tmp_path,
     assert captured["command_fn"] is None
     assert captured["workspace"].cwd == str(tmp_path)
     assert "cheapest shell command" in captured["goal"]
-    assert "Avoid full-suite runs unless necessary." in captured["goal"]
+    assert "Avoid full-suite runs unless necessary" in captured["goal"]
 
 
 def test_swebench_live_runner_passes_task_metadata_to_generate_patch(tmp_path, monkeypatch):

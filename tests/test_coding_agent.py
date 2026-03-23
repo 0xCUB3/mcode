@@ -298,7 +298,7 @@ def test_build_verification_policy_uses_shell_first_fallback(tmp_path):
 
     assert policy.test_cmds == []
     assert "cheapest shell command" in policy.prompt_block
-    assert "Avoid full-suite runs unless necessary." in policy.prompt_block
+    assert "Avoid full-suite runs unless necessary" in policy.prompt_block
     assert policy.test_fn is None
 
 

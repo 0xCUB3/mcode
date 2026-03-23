@@ -25,6 +25,7 @@ def test_build_verification_prompt_mentions_default_checks() -> None:
     prompt = verification.build_verification_prompt(["pytest -q", "python -m pytest -q"])
 
     assert "Start with `run_tests default`" in prompt
+    assert "Do not run tests through `bash`" in prompt
     assert "`pytest -q`" in prompt
 
 
