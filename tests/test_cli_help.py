@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from typer.main import get_command
 from typer.testing import CliRunner
 
 from mcode.cli import app
@@ -19,13 +20,22 @@ def _invoke_help(*args: str) -> str:
     return res.stdout
 
 
+def _command_option_names(*args: str) -> set[str]:
+    command = get_command(app)
+    current = command
+    for name in args:
+        current = current.get_command(None, name)
+        assert current is not None
+    return {param.name for param in current.params}
+
+
 def test_cli_help() -> None:
     _invoke_help("--help")
 
 
 def test_cli_bench_swebench_help() -> None:
     help_text = _invoke_help("bench", "swebench-lite", "--help")
-    assert "--n-samples" in help_text
+    assert "n_samples" in _command_option_names("bench", "swebench-lite")
     assert "Sampling strategy: repair," in help_text
     assert "sofai, or raw" in help_text
 
@@ -55,8 +65,7 @@ def test_cli_bench_bigcodebench_instruct_help() -> None:
 
 
 def test_cli_bench_swebench_live_help() -> None:
-    help_text = _invoke_help("bench", "swebench-live", "--help")
-    assert "--n-samples" in help_text
+    assert "n_samples" in _command_option_names("bench", "swebench-live")
 
 
 def test_cli_deps_sync_help() -> None:
