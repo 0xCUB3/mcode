@@ -18,7 +18,7 @@ trap "kill ${PODMAN_PID} 2>/dev/null; wait ${PODMAN_PID} 2>/dev/null" EXIT
 
 podman --root=${PD_GRAPH} --runroot=${PD_RUN}/runroot container prune -f 2>/dev/null || true
 
-source /u/skula/mcode/venv/bin/activate
+source /u/skula/mcode/.venv/bin/activate
 export OPENAI_BASE_URL="http://${VLLM_HOST}:8321/v1"
 export OPENAI_API_KEY=dummy
 export MCODE_MAX_NEW_TOKENS=4096

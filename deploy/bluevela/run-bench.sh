@@ -30,7 +30,7 @@ bsub -q "${BV_QUEUE}" \
   -o "${LOG_DIR}/bench-%I.log" \
   -e "${LOG_DIR}/bench-%I.log" \
   bash -c '
-    source '"${BV_MCODE_DIR}"'/venv/bin/activate
+    source '"${BV_MCODE_DIR}"'/.venv/bin/activate
     export OPENAI_BASE_URL='"'${OPENAI_BASE_URL}'"'
     export OPENAI_API_KEY='"'${OPENAI_API_KEY}'"'
     export MCODE_MAX_NEW_TOKENS='"'${MCODE_MAX_NEW_TOKENS}'"'
