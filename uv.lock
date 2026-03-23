@@ -1429,7 +1429,7 @@ requires-dist = [
     { name = "datasets", marker = "extra == 'datasets'", specifier = ">=2.14.0,<4.0" },
     { name = "docker", specifier = ">=7.0.0" },
     { name = "evalplus", marker = "extra == 'evalplus'", specifier = ">=0.3.0" },
-    { name = "mellea", extras = ["agent"], git = "https://github.com/0xCUB3/mellea?rev=015bddd227f0f380bf968d7521b05ff1f19e3d67" },
+    { name = "mellea", extras = ["agent"], git = "https://github.com/0xCUB3/mellea?rev=7f15a9815401081ea1c4f3c16ec515a661010576" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "requests", specifier = ">=2.31.0" },
@@ -1452,7 +1452,7 @@ wheels = [
 [[package]]
 name = "mellea"
 version = "0.4.0"
-source = { git = "https://github.com/0xCUB3/mellea?rev=015bddd227f0f380bf968d7521b05ff1f19e3d67#015bddd227f0f380bf968d7521b05ff1f19e3d67" }
+source = { git = "https://github.com/0xCUB3/mellea?rev=7f15a9815401081ea1c4f3c16ec515a661010576#7f15a9815401081ea1c4f3c16ec515a661010576" }
 dependencies = [
     { name = "click" },
     { name = "jinja2" },
