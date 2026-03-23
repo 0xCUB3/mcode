@@ -357,7 +357,11 @@ class SWEbenchSandbox:
                         output,
                     )
 
-                yield SimpleNamespace(repo_root=testbed, command_fn=command_fn)
+                yield SimpleNamespace(
+                    repo_root=testbed,
+                    visible_repo_root="/testbed",
+                    command_fn=command_fn,
+                )
             finally:
                 source_container.remove(force=True)
                 if exec_container is not None:

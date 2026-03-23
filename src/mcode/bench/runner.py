@@ -60,12 +60,18 @@ class BenchConfig:
 class PatchRepoContext:
     repo_root: Path | str
     command_fn: Callable[[str], str] | None = None
+    visible_repo_root: str | None = None
 
 
 def _coerce_patch_repo_context(repo_context: object) -> PatchRepoContext:
     repo_root = getattr(repo_context, "repo_root", repo_context)
     command_fn = getattr(repo_context, "command_fn", None)
-    return PatchRepoContext(repo_root=repo_root, command_fn=command_fn)
+    visible_repo_root = getattr(repo_context, "visible_repo_root", None)
+    return PatchRepoContext(
+        repo_root=repo_root,
+        command_fn=command_fn,
+        visible_repo_root=visible_repo_root,
+    )
 
 
 class BenchmarkRunner:
@@ -301,6 +307,7 @@ class BenchmarkRunner:
         *,
         repo_root: Path | str,
         command_fn: Callable[[str], str] | None = None,
+        visible_repo_root: str | None = None,
     ) -> str:
         verification_metadata = getattr(task, "raw_instance", None)
         if verification_metadata is None:
@@ -315,6 +322,7 @@ class BenchmarkRunner:
                 n_samples=self.config.n_samples,
                 test_cmds=verification_metadata,
                 command_fn=command_fn,
+                visible_repo_root=visible_repo_root,
             )
 
     def _run_swebench_live_task(self, task, *, live_sandbox, run_id: int) -> dict:
@@ -327,6 +335,7 @@ class BenchmarkRunner:
                         task,
                         repo_root=patch_context.repo_root,
                         command_fn=patch_context.command_fn,
+                        visible_repo_root=patch_context.visible_repo_root,
                     )
                 except Exception as e:
                     elapsed_ms = int((time.time() - start) * 1000)
@@ -398,6 +407,7 @@ class BenchmarkRunner:
                         task,
                         repo_root=patch_context.repo_root,
                         command_fn=patch_context.command_fn,
+                        visible_repo_root=patch_context.visible_repo_root,
                     )
                 except Exception as e:
                     elapsed_ms = int((time.time() - start) * 1000)

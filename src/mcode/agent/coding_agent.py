@@ -51,6 +51,7 @@ def build_coding_agent(
     problem_statement: str,
     hints_text: str = "",
     repo_root: str,
+    visible_repo_root: str | None = None,
     test_cmds: object | None = None,
     test_fn=None,
     command_fn: Callable[[str], str] | None = None,
@@ -94,6 +95,7 @@ def build_coding_agent(
     workspace, event_log, condensed_state = build_agent_runtime(
         repo=repo,
         repo_root=repo_root,
+        visible_repo_root=visible_repo_root,
         session=session,
     )
 
@@ -137,7 +139,13 @@ def build_repo_map(repo_root: str, query: str, *, max_tokens: int = 4096) -> str
     return _build_repo_map(repo_root, query, max_tokens=max_tokens)
 
 
-def build_agent_runtime(*, repo: str, repo_root: str, session):
+def build_agent_runtime(
+    *,
+    repo: str,
+    repo_root: str,
+    visible_repo_root: str | None = None,
+    session,
+):
     try:
         runtime_module = importlib.import_module("mellea.agent.runtime")
         memory_module = importlib.import_module("mellea.agent.runtime.memory")
@@ -163,7 +171,14 @@ def build_agent_runtime(*, repo: str, repo_root: str, session):
                     "model_id": session.model_id,
                 },
             ),
-            metadata={"repo": repo},
+            metadata={
+                "repo": repo,
+                **(
+                    {"display_cwd": visible_repo_root}
+                    if visible_repo_root is not None
+                    else {}
+                ),
+            },
         )
         event_log = runtime_module.EventLog(workspace=workspace)
         condensed_state = memory_module.CondensedState(

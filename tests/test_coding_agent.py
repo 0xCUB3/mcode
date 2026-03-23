@@ -187,6 +187,48 @@ def test_build_coding_agent_assembles_mellea_runtime_and_keeps_mcode_policy(
     assert isinstance(assembly.condensed_state, FakeCondensedState)
 
 
+def test_build_coding_agent_can_expose_visible_repo_root_to_runtime_state(
+    tmp_path, monkeypatch
+):
+    from mcode.agent import coding_agent as coding_agent_module
+
+    session = LLMSession(model_id="test", backend_name="openai", loop_budget=4)
+    session._m = MagicMock()
+    session._m.backend = MagicMock()
+
+    monkeypatch.setenv("MELLEA_TEXT_TOOLS", "1")
+
+    runtime_modules, FakeWorkspace, _, _ = _install_fake_runtime_modules()
+    fake_policy = types.SimpleNamespace(
+        system_prompt="system prompt from mcode",
+        goal="goal from mcode",
+    )
+    fake_verification = types.SimpleNamespace(
+        test_cmds=[],
+        test_fn=lambda test_cmd="default": test_cmd,
+        prompt_block="",
+    )
+
+    with patch.dict(sys.modules, runtime_modules), patch.object(
+        coding_agent_module, "build_repo_map", return_value="repo map"
+    ), patch.object(coding_agent_module, "make_agent_tools", return_value=["tool-a"]), patch.object(
+        coding_agent_module, "build_coding_policy", return_value=fake_policy
+    ), patch.object(
+        coding_agent_module, "build_verification_policy", return_value=fake_verification
+    ):
+        assembly = coding_agent_module.build_coding_agent(
+            session=session,
+            repo="test/repo",
+            problem_statement="Fix the bug",
+            repo_root=str(tmp_path),
+            visible_repo_root="/testbed",
+        )
+
+    assert isinstance(assembly.workspace, FakeWorkspace)
+    assert assembly.workspace.cwd == str(tmp_path)
+    assert assembly.workspace.metadata["display_cwd"] == "/testbed"
+
+
 def test_build_coding_agent_requires_runtime_primitives(tmp_path):
     from mcode.agent import coding_agent as coding_agent_module
 

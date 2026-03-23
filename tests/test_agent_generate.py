@@ -404,6 +404,7 @@ def test_swebench_lite_runner_passes_repo_command_executor_to_generate_patch(tmp
         def __init__(self):
             self.repo_root = tmp_path
             self.command_fn = fake_command
+            self.visible_repo_root = "/testbed"
 
         def __fspath__(self):
             return str(self.repo_root)
@@ -431,6 +432,7 @@ def test_swebench_lite_runner_passes_repo_command_executor_to_generate_patch(tmp
     )
 
     assert captured["command_fn"] is fake_command
+    assert captured["visible_repo_root"] == "/testbed"
 
 
 def test_swebench_lite_runner_reports_repo_context_failures(tmp_path):

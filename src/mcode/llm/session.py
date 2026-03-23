@@ -219,6 +219,7 @@ class LLMSession:
         test_cmds: object | None = None,
         test_fn: object | None = None,
         command_fn: object | None = None,
+        visible_repo_root: str | None = None,
     ) -> str:
         if self.strategy_name == "raw":
             return self._generate_patch_raw(
@@ -239,6 +240,7 @@ class LLMSession:
             problem_statement=problem_statement,
             hints_text=hints_text,
             repo_root=repo_root,
+            visible_repo_root=visible_repo_root,
             test_cmds=test_cmds,
             test_fn=test_fn,
             command_fn=command_fn,
