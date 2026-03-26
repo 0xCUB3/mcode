@@ -257,6 +257,7 @@ class LLMSession:
         use_mid_nudge = agent.use_mid_nudge
         event_log = getattr(agent, "event_log", None)
         condensed_state = getattr(agent, "condensed_state", None)
+        condensation = getattr(agent, "condensation", None)
         max_retries_per_turn = int(getattr(agent, "max_retries_per_turn", 0))
         has_run_tests_tool = any(getattr(tool, "name", None) == "run_tests" for tool in tools)
 
@@ -367,6 +368,8 @@ class LLMSession:
                 }
                 if condensed_state is not None:
                     react_kwargs["condensed_state"] = condensed_state
+                if condensation is not None:
+                    react_kwargs["condensation"] = condensation
                 if event_log is not None:
                     react_kwargs["event_log"] = event_log
                 if max_retries_per_turn > 0:

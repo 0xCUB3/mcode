@@ -10,6 +10,7 @@ from mcode.llm.session import LLMSession
 def _install_fake_runtime_modules():
     runtime_module = types.ModuleType("mellea.agent.runtime")
     memory_module = types.ModuleType("mellea.agent.runtime.memory")
+    loops_module = types.ModuleType("mellea.agent.runtime.loops")
 
     class FakeSafetyPolicy:
         def __init__(self, mode, network_access=None, writable_roots=()):
@@ -68,17 +69,33 @@ def _install_fake_runtime_modules():
             self.omitted_messages = omitted_messages
             self.show_reminder = omitted_messages > 0 if show_reminder is None else show_reminder
 
+    class FakeCondensationConfig:
+        def __init__(
+            self,
+            *,
+            working_memory,
+            max_messages,
+            preserve_recent=4,
+            preserve_head=2,
+        ):
+            self.working_memory = working_memory
+            self.max_messages = max_messages
+            self.preserve_recent = preserve_recent
+            self.preserve_head = preserve_head
+
     runtime_module.EventLog = FakeEventLog
     runtime_module.SafetyPolicy = FakeSafetyPolicy
     runtime_module.SessionMetadata = FakeSessionMetadata
     runtime_module.Workspace = FakeWorkspace
     memory_module.CondensedState = FakeCondensedState
     memory_module.WorkingMemory = FakeWorkingMemory
+    loops_module.CondensationConfig = FakeCondensationConfig
 
     return {
         "mellea.agent.runtime": runtime_module,
         "mellea.agent.runtime.memory": memory_module,
-    }, FakeWorkspace, FakeEventLog, FakeCondensedState
+        "mellea.agent.runtime.loops": loops_module,
+    }, FakeWorkspace, FakeEventLog, FakeCondensedState, FakeCondensationConfig
 
 
 def test_build_coding_agent_assembles_prompt_and_tools_without_benchmark_path(
@@ -150,7 +167,7 @@ def test_build_coding_agent_assembles_mellea_runtime_and_keeps_mcode_policy(
 
     monkeypatch.setenv("MELLEA_TEXT_TOOLS", "1")
 
-    runtime_modules, FakeWorkspace, FakeEventLog, FakeCondensedState = (
+    runtime_modules, FakeWorkspace, FakeEventLog, FakeCondensedState, FakeCondensationConfig = (
         _install_fake_runtime_modules()
     )
     fake_policy = types.SimpleNamespace(
@@ -185,6 +202,8 @@ def test_build_coding_agent_assembles_mellea_runtime_and_keeps_mcode_policy(
     assert isinstance(assembly.event_log, FakeEventLog)
     assert assembly.event_log.workspace is assembly.workspace
     assert isinstance(assembly.condensed_state, FakeCondensedState)
+    assert isinstance(assembly.condensation, FakeCondensationConfig)
+    assert assembly.condensation.max_messages > 0
 
 
 def test_build_coding_agent_can_expose_visible_repo_root_to_runtime_state(
@@ -198,7 +217,7 @@ def test_build_coding_agent_can_expose_visible_repo_root_to_runtime_state(
 
     monkeypatch.setenv("MELLEA_TEXT_TOOLS", "1")
 
-    runtime_modules, FakeWorkspace, _, _ = _install_fake_runtime_modules()
+    runtime_modules, FakeWorkspace, _, _, _ = _install_fake_runtime_modules()
     fake_policy = types.SimpleNamespace(
         system_prompt="system prompt from mcode",
         goal="goal from mcode",
@@ -373,7 +392,7 @@ def test_session_generate_patch_seeds_react_context_from_runtime_state(
     session._m = MagicMock()
     session._m.backend = MagicMock()
 
-    _, _, _, FakeCondensedState = _install_fake_runtime_modules()
+    _, _, _, FakeCondensedState, _ = _install_fake_runtime_modules()
     condensed_state = FakeCondensedState(
         working_memory=types.SimpleNamespace(
             as_message=lambda *, omitted_messages=0: {

@@ -17,6 +17,7 @@ from mcode.llm.session import LLMSession
 def _install_fake_runtime_modules():
     runtime_module = types.ModuleType("mellea.agent.runtime")
     memory_module = types.ModuleType("mellea.agent.runtime.memory")
+    loops_module = types.ModuleType("mellea.agent.runtime.loops")
     workspace_module = types.ModuleType("mellea.agent.runtime.workspace")
     runtime_module.__path__ = []
 
@@ -65,12 +66,27 @@ def _install_fake_runtime_modules():
             self.omitted_messages = omitted_messages
             self.show_reminder = omitted_messages > 0 if show_reminder is None else show_reminder
 
+    class FakeCondensationConfig:
+        def __init__(
+            self,
+            *,
+            working_memory,
+            max_messages,
+            preserve_recent=4,
+            preserve_head=2,
+        ):
+            self.working_memory = working_memory
+            self.max_messages = max_messages
+            self.preserve_recent = preserve_recent
+            self.preserve_head = preserve_head
+
     runtime_module.EventLog = FakeEventLog
     runtime_module.SafetyPolicy = FakeSafetyPolicy
     runtime_module.SessionMetadata = FakeSessionMetadata
     runtime_module.Workspace = FakeWorkspace
     memory_module.CondensedState = FakeCondensedState
     memory_module.WorkingMemory = FakeWorkingMemory
+    loops_module.CondensationConfig = FakeCondensationConfig
     workspace_module.Workspace = FakeWorkspace
     workspace_module.format_workspace_state = (
         lambda workspace: None
@@ -86,6 +102,7 @@ def _install_fake_runtime_modules():
     return {
         "mellea.agent.runtime": runtime_module,
         "mellea.agent.runtime.memory": memory_module,
+        "mellea.agent.runtime.loops": loops_module,
         "mellea.agent.runtime.workspace": workspace_module,
     }
 
@@ -175,6 +192,7 @@ def test_generate_patch_passes_model_options_to_text_react(tmp_path, monkeypatch
 
     assert isinstance(result, str)
     assert captured["loop_budget"] == 9
+    assert captured["condensation"].max_messages > 0
     assert captured["model_options"] == {
         ModelOption.SYSTEM_PROMPT: captured["system_prompt"],
         ModelOption.TEMPERATURE: 0.25,

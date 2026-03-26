@@ -25,6 +25,7 @@ class CodingAgentAssembly:
     workspace: object = None
     event_log: object = None
     condensed_state: object = None
+    condensation: object = None
     max_retries_per_turn: int = 0
 
     @property
@@ -92,7 +93,7 @@ def build_coding_agent(
             "system_prompt": coding_policy.system_prompt,
             "goal": coding_policy.goal,
         }
-    workspace, event_log, condensed_state = build_agent_runtime(
+    workspace, event_log, condensed_state, condensation = build_agent_runtime(
         repo=repo,
         repo_root=repo_root,
         visible_repo_root=visible_repo_root,
@@ -130,6 +131,7 @@ def build_coding_agent(
         workspace=workspace,
         event_log=event_log,
         condensed_state=condensed_state,
+        condensation=condensation,
     )
 
 
@@ -149,6 +151,7 @@ def build_agent_runtime(
     try:
         runtime_module = importlib.import_module("mellea.agent.runtime")
         memory_module = importlib.import_module("mellea.agent.runtime.memory")
+        loops_module = importlib.import_module("mellea.agent.runtime.loops")
     except Exception as exc:
         raise RuntimeError(
             "mellea runtime primitives are required for coding agent assembly"
@@ -184,12 +187,18 @@ def build_agent_runtime(
         condensed_state = memory_module.CondensedState(
             working_memory=memory_module.WorkingMemory()
         )
+        condensation = loops_module.CondensationConfig(
+            working_memory=memory_module.WorkingMemory(),
+            max_messages=int(os.environ.get("MCODE_CONDENSE_MAX_MESSAGES", "24")),
+            preserve_recent=int(os.environ.get("MCODE_CONDENSE_PRESERVE_RECENT", "6")),
+            preserve_head=int(os.environ.get("MCODE_CONDENSE_PRESERVE_HEAD", "2")),
+        )
     except Exception as exc:
         raise RuntimeError(
             "failed to assemble coding agent runtime state from mellea primitives"
         ) from exc
 
-    return workspace, event_log, condensed_state
+    return workspace, event_log, condensed_state, condensation
 
 
 def make_agent_tools(
