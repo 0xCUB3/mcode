@@ -212,7 +212,7 @@ The root cause is vLLM's tool call parsers (minimax_m2, mistral). They extract t
 
 The top SWE-bench frameworks (SWE-agent, smolagents, OpenHands) all handle tool calling at the application level rather than relying on vLLM's parsers. We built a text-based tool calling mode (`MELLEA_TEXT_TOOLS=1`) that embeds tool schemas in the prompt and parses tool calls from the model's text output using XML-delimited JSON blocks. This bypasses vLLM entirely and works with any model.
 
-With text-based tool calling, MiniMax M2.5 tool call failures dropped from 51% to 0%. The model produced patches on 46% of tasks (comparable to Qwen's 47%), but the pass rate on generated patches was lower (9.4% vs Qwen's 14.9%). Increasing the turn budget from 15 to 100 barely helped (13/300 to 15/300), producing only 17 more patches but at roughly the same success rate. The 80.2% Verified score that MiniMax M2.5 achieves with OpenHands is clearly a scaffold gap, not a model gap.
+With text-based tool calling, MiniMax M2.5 tool call failures dropped from 51% to 0%. The model produced patches on 46% of tasks (comparable to Qwen's 47%), but the pass rate on generated patches was lower (9.4% vs Qwen's 14.9%). On Live Lite, increasing the turn budget from 15 to 100 barely helped (13/300 to 15/300), producing only 17 more patches but at roughly the same success rate. The 80.2% Verified score that MiniMax M2.5 achieves with OpenHands is clearly a scaffold gap, not a model gap.
 
 On the full SWE-bench Verified benchmark (500 tasks), the corrected text-tool setup plus the sandboxed bash tool reached 165/500 = 33.0%. This supersedes the earlier 156/500 = 31.2% run after we fixed a shell-tool bug where piped commands could report false `PASSED` statuses without `pipefail`. The updated result puts us at about 41.1% of OpenHands' published 80.2%.
 
@@ -222,12 +222,35 @@ The gap between our results and published benchmarks is almost entirely about th
 
 We studied OpenHands' CodeAct agent (which achieves 80.2% with MiniMax M2.5) and found the following key differences from our setup:
 
-OpenHands gives the model 100 iterations (we use 15), but when we tested 100 turns with MiniMax M2.5 it only gained 2 tasks (13 to 15 out of 300). More turns alone isn't enough. The real differences are architectural. Our final Verified setup already includes a bash tool, but it still lacks several things OpenHands relies on: IPython for inline Python execution, a memory condenser that compresses conversation history when context gets long, and a much richer system prompt with structured workflow guidance covering exploration, analysis, testing, implementation, and verification phases. There's also a "think" tool for explicit reasoning steps. For SWE-bench Lite/Verified patch generation, we also do not expose a run_tests tool inside the agent loop, so the model cannot iteratively validate its own fixes before the official harness evaluation.
+OpenHands gives the model 100 iterations. More turns alone are not enough, but timeout and loop policy were real bottlenecks on our side. On the 10-task Verified smoke slice, the progression was 3/10 at 15 turns, 4/10 at 25 turns, 5/10 at 100 turns, then 6/10 once we kept 100 turns but raised the outer ReAct timeout from 450s to 1800s and fixed malformed text-tool-call recovery. The real differences are still architectural. Our current Verified setup now includes both a bash tool and `run_tests` inside the loop, but it still lacks several things OpenHands relies on: IPython for inline Python execution, a memory condenser that compresses conversation history when context gets long, and a much richer system prompt with structured workflow guidance covering exploration, analysis, testing, implementation, and verification phases. There's also a "think" tool for explicit reasoning steps.
 
-The implication is clear: matching top-tier benchmark scores requires rebuilding the agent scaffold to be much closer to OpenHands' architecture. The specific gaps that matter most now are self-verification inside the loop (`run_tests`, IPython, richer execution flow), context condensation (manages the 32k window across 100 turns), and the structured problem-solving workflow in the system prompt.
+The implication is clear: matching top-tier benchmark scores requires rebuilding the agent scaffold to be much closer to OpenHands' architecture. The specific gaps that matter most now are stronger in-loop execution and verification flow (`run_tests`, IPython, richer execution flow), context condensation (manages the 32k window across long trajectories), and the structured problem-solving workflow in the system prompt.
+
+## Phase 9: Verified smoke reruns after runtime fixes
+
+After the full 33.0% Verified run, we focused on runtime correctness and agent-loop behavior rather than immediately rerunning all 500 tasks.
+
+The main fixes were:
+
+- added real `run_tests` usage inside the text-tool loop and blocked `bash` from being used for raw pytest invocations
+- fixed the visible working directory so the model sees `/testbed` instead of host temp paths
+- moved SWE-bench command execution into the task container with the same `testbed` environment as evaluation
+- added narrow repair for malformed `<tool_call>` JSON instead of silently discarding near-miss calls
+- raised the outer ReAct timeout from 450s to 1800s so model latency would not dominate the result
+
+On the 10-task Verified smoke slice (all Astropy tasks), the progression was:
+
+| Setting | Result |
+|-|-|
+| budget 15 | 3/10 = 30% |
+| budget 25 | 4/10 = 40% |
+| budget 100 | 5/10 = 50% |
+| budget 100 + parser repair + timeout 1800 | 6/10 = 60% |
+
+The important conclusion is that `MCODE_REACT_TIMEOUT=450` was a real bottleneck. Once the model-serving path was stable and we raised the outer timeout, the same 10-task slice gained one more pass and reached 60%. That is still nowhere near the published 80.2% OpenHands figure, but it is materially better than the earlier smoke runs and gives us a more honest baseline for the next larger rerun.
 
 ## Where things stand
 
-Best result with Qwen3.5-27B: 84/300 = 28.0% on SWE-bench Lite, roughly 28-32/300 (9-11%) on Live Lite. Best result with MiniMax M2.5 on Live Lite (text tools, budget=100): 15/300 = 5.0%. Best result with MiniMax M2.5 on full SWE-bench Verified (text tools + bash, budget=15): 165/500 = 33.0%.
+Best result with Qwen3.5-27B: 84/300 = 28.0% on SWE-bench Lite, roughly 28-32/300 (9-11%) on Live Lite. Best result with MiniMax M2.5 on Live Lite (text tools, budget=100): 15/300 = 5.0%. Best result with MiniMax M2.5 on full SWE-bench Verified so far: 165/500 = 33.0%. Best post-fix Verified smoke result on the 10-task Astropy slice: 6/10 = 60.0% with budget=100 and `MCODE_REACT_TIMEOUT=1800`.
 
-The text-based tool calling infrastructure works and is model-agnostic. The mid-budget nudge remains the most effective single intervention (+3.7pp on Live with Qwen). But the gap between our 33.0% Verified result and OpenHands' 80.2% is fundamentally about the scaffold architecture, not model capability or tool calling mechanics. Closing that gap requires giving the agent stronger in-loop verification, better context management, and richer task guidance.
+The text-based tool calling infrastructure works and is model-agnostic. The mid-budget nudge remains the most effective single intervention (+3.7pp on Live with Qwen), and the newer MiniMax smoke runs show that timeout and verification wiring were also real bottlenecks. But the gap between our 33.0% full Verified result, even our improved 60% smoke on a narrow slice, and OpenHands' 80.2% is still fundamentally about the scaffold architecture, not model capability or tool calling mechanics. Closing that gap requires giving the agent stronger in-loop verification, better context management, and richer task guidance.
