@@ -276,6 +276,7 @@ def test_generate_patch_text_nudge_demands_verification_after_edit(tmp_path, mon
     msgs = captured["on_turn"](7, 9, [])
     assert "you have not run verification yet" in msgs[-1]["content"]
     assert "Use `run_tests default` now" in msgs[-1]["content"]
+    assert "Do not call `final_answer` yet" in msgs[-1]["content"]
 
 
 def test_generate_patch_exposes_task_default_verification(tmp_path, monkeypatch):

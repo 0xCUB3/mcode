@@ -26,7 +26,31 @@ def test_build_verification_prompt_mentions_default_checks() -> None:
 
     assert "Start with `run_tests default`" in prompt
     assert "Do not run tests through `bash`" in prompt
+    assert "Do not call `final_answer`" in prompt
     assert "`pytest -q`" in prompt
+
+
+def test_build_budget_warning_blocks_submit_without_changes() -> None:
+    warning = verification.build_budget_warning(
+        has_changes=False,
+        has_run_tests_tool=True,
+        used_run_tests=False,
+    )
+
+    assert "working tree still has no code changes" in warning
+    assert "Do not call `final_answer` yet" in warning
+
+
+def test_build_budget_warning_requires_verification_before_submit() -> None:
+    warning = verification.build_budget_warning(
+        has_changes=True,
+        has_run_tests_tool=True,
+        used_run_tests=False,
+    )
+
+    assert "you have not run verification yet" in warning
+    assert "Use `run_tests default` now" in warning
+    assert "Do not call `final_answer` yet" in warning
 
 
 def test_session_does_not_define_verification_policy_helpers() -> None:

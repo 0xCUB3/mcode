@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pydantic import BaseModel, Field
 
 from mcode.agent.coding_agent import build_coding_agent
+from mcode.agent.verification import build_budget_warning
 from mcode.bench.tasks import Task
 
 
@@ -328,24 +329,11 @@ class LLMSession:
                         }
                     )
                 if use_budget_warning and total > 3 and turn == total - 2:
-                    if not _repo_has_changes():
-                        warning = (
-                            "WARNING: You have 2 turns left and your working tree "
-                            "still has no code changes. Make at least one edit now. "
-                            "Do not call `final_answer` yet."
-                        )
-                    elif has_run_tests_tool and not _messages_include_tool(msgs, "run_tests"):
-                        warning = (
-                            "WARNING: You have 2 turns left and you have not run "
-                            "verification yet. Use `run_tests default` now, or a "
-                            "narrower `run_tests <command>` if needed, before "
-                            "`final_answer`."
-                        )
-                    else:
-                        warning = (
-                            "WARNING: You have 2 turns left. Make "
-                            "your edit and call final_answer now."
-                        )
+                    warning = build_budget_warning(
+                        has_changes=_repo_has_changes(),
+                        has_run_tests_tool=has_run_tests_tool,
+                        used_run_tests=_messages_include_tool(msgs, "run_tests"),
+                    )
                     msgs.append(
                         {
                             "role": "user",

@@ -60,7 +60,9 @@ def build_verification_prompt(test_cmds: list[str]) -> str:
             f"to run the task-default checks ({formatted}{more}). Keep "
             "verification cheap, if you need a narrower check, use a "
             "targeted command instead of a broad suite. Do not run tests "
-            "through `bash` when `run_tests` is available."
+            "through `bash` when `run_tests` is available. Do not call "
+            "`final_answer` after editing until you have attempted "
+            "verification with `run_tests`."
         )
 
     return (
@@ -70,7 +72,37 @@ def build_verification_prompt(test_cmds: list[str]) -> str:
         "that exercises your change, such as `pytest -q path/to/test.py -k "
         "name` or `python -m pytest -q path/to/test.py -k name`. Avoid "
         "full-suite runs unless necessary, and do not run tests through "
-        "`bash` when `run_tests` is available."
+        "`bash` when `run_tests` is available. Do not call `final_answer` "
+        "after editing until you have attempted verification with "
+        "`run_tests`."
+    )
+
+
+def build_budget_warning(
+    *,
+    has_changes: bool,
+    has_run_tests_tool: bool,
+    used_run_tests: bool,
+) -> str:
+    if not has_changes:
+        return (
+            "WARNING: You have 2 turns left and your working tree "
+            "still has no code changes. Make at least one edit now. "
+            "Do not call `final_answer` yet."
+        )
+
+    if has_run_tests_tool and not used_run_tests:
+        return (
+            "WARNING: You have 2 turns left and you have not run "
+            "verification yet. Use `run_tests default` now, or a "
+            "narrower `run_tests <command>` if needed. Do not call "
+            "`final_answer` yet."
+        )
+
+    return (
+        "WARNING: You have 2 turns left. If your edit is already "
+        "verified, call `final_answer` now. If not, make your best "
+        "fix and call `final_answer` immediately."
     )
 
 
