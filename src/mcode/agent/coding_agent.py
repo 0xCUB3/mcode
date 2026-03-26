@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from mcode.agent.coding_policy import CodingPolicy, build_coding_policy
+from mcode.agent.repo_customization import load_repo_customization
 from mcode.agent.verification import VerificationPolicy, build_verification_policy
 
 
@@ -76,12 +77,14 @@ def build_coding_agent(
         repo_map_text = build_repo_map(repo_root, problem_statement, max_tokens=4096)
     except Exception as e:
         print(f"  [repo_map] failed: {e}", flush=True)
+    repo_customization = load_repo_customization(repo_root)
 
     coding_policy = build_coding_policy(
         repo=repo,
         problem_statement=problem_statement,
         hints_text=hints_text,
         repo_map_text=repo_map_text,
+        repo_customization_text=repo_customization.text,
         verification_prompt=verification_policy.prompt_block,
         explore_prompt=explore_prompt,
     )

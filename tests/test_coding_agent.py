@@ -292,6 +292,25 @@ def test_build_coding_policy_composes_shell_first_goal():
     assert "Repository structure:\nrepo map" in policy.goal
     assert "Additional context:\nHint text" in policy.goal
     assert "Use the cheapest shell command." in policy.goal
+    assert "WORKFLOW:" in policy.system_prompt
+    assert "EXPLORE" in policy.system_prompt
+    assert "VERIFY" in policy.system_prompt
+    assert "SUBMIT" in policy.system_prompt
+
+
+def test_build_coding_policy_can_include_repo_customization():
+    from mcode.agent.coding_policy import build_coding_policy
+
+    policy = build_coding_policy(
+        repo="test/repo",
+        problem_statement="Fix the bug",
+        repo_customization_text="Repo note: use `bin/test -q` for narrow checks.",
+    )
+
+    assert (
+        "Repository-specific guidance:\n"
+        "Repo note: use `bin/test -q` for narrow checks."
+    ) in policy.goal
 
 
 def test_build_verification_policy_prefers_task_default_checks(tmp_path):
@@ -379,6 +398,80 @@ def test_coding_agent_can_be_requested_from_session_generate_patch(
 
     assert result == "diff"
     assert build_agent.called
+
+
+def test_load_repo_customization_prefers_repo_md(tmp_path):
+    from mcode.agent.repo_customization import load_repo_customization
+
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    customization_dir = repo_dir / ".mcode"
+    customization_dir.mkdir()
+    (customization_dir / "repo.md").write_text("Use `bin/test -q` for quick checks.\n")
+
+    customization = load_repo_customization(str(repo_dir))
+
+    assert customization.text == "Use `bin/test -q` for quick checks."
+    assert customization.source_path == customization_dir / "repo.md"
+
+
+def test_build_coding_agent_includes_repo_customization_text(
+    tmp_path, monkeypatch
+):
+    from mcode.agent import coding_agent as coding_agent_module
+
+    session = LLMSession(model_id="test", backend_name="openai", loop_budget=4)
+    session._m = MagicMock()
+    session._m.backend = MagicMock()
+
+    monkeypatch.setenv("MELLEA_TEXT_TOOLS", "1")
+
+    runtime_modules, _, _, _, _ = _install_fake_runtime_modules()
+    fake_verification = types.SimpleNamespace(
+        test_cmds=[],
+        test_fn=None,
+        prompt_block="",
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_build_coding_policy(**kwargs):
+        captured.update(kwargs)
+        return types.SimpleNamespace(
+            system_prompt="system prompt from mcode",
+            goal="goal from mcode",
+            prompt_inputs=lambda: {
+                "system_prompt": "system prompt from mcode",
+                "goal": "goal from mcode",
+            },
+        )
+
+    with patch.dict(sys.modules, runtime_modules), patch.object(
+        coding_agent_module, "build_repo_map", return_value="repo map"
+    ), patch.object(
+        coding_agent_module, "make_agent_tools", return_value=["tool-a"]
+    ), patch.object(
+        coding_agent_module, "build_coding_policy", side_effect=fake_build_coding_policy
+    ), patch.object(
+        coding_agent_module,
+        "build_verification_policy",
+        return_value=fake_verification,
+    ), patch.object(
+        coding_agent_module,
+        "load_repo_customization",
+        return_value=types.SimpleNamespace(
+            text="Repo note: use `bin/test -q` first.",
+            source_path=tmp_path / ".mcode" / "repo.md",
+        ),
+    ):
+        coding_agent_module.build_coding_agent(
+            session=session,
+            repo="test/repo",
+            problem_statement="Fix the bug",
+            repo_root=str(tmp_path),
+        )
+
+    assert captured["repo_customization_text"] == "Repo note: use `bin/test -q` first."
 
 
 def test_session_generate_patch_seeds_react_context_from_runtime_state(
