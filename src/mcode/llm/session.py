@@ -258,6 +258,23 @@ class LLMSession:
         event_log = getattr(agent, "event_log", None)
         condensed_state = getattr(agent, "condensed_state", None)
         max_retries_per_turn = int(getattr(agent, "max_retries_per_turn", 0))
+        has_run_tests_tool = any(getattr(tool, "name", None) == "run_tests" for tool in tools)
+
+        def _repo_has_changes() -> bool:
+            result = subprocess.run(
+                ["git", "diff", "--quiet", "--exit-code"],
+                cwd=repo_root,
+                capture_output=True,
+            )
+            return result.returncode == 1
+
+        def _messages_include_tool(messages, tool_name: str) -> bool:
+            marker = f"[{tool_name}]"
+            for message in messages:
+                content = message.get("content", "")
+                if isinstance(content, str) and marker in content:
+                    return True
+            return False
 
         def _on_turn(turn, total, ctx):
             from mellea.stdlib.components.chat import Message
@@ -275,14 +292,22 @@ class LLMSession:
                     )
                 )
             if use_budget_warning and total > 3 and turn == total - 2:
+                if not _repo_has_changes():
+                    warning = (
+                        "WARNING: You have 2 turns left and your working tree "
+                        "still has no code changes. Make at least one edit now. "
+                        "Do not call final_answer yet."
+                    )
+                else:
+                    warning = (
+                        "WARNING: You have 2 turns left. If you have already "
+                        "made your edit, call final_answer now. If not, make "
+                        "your best fix and call final_answer immediately."
+                    )
                 ctx = ctx.add(
                     Message(
                         role="user",
-                        content=(
-                            "WARNING: You have 2 turns left. If you have already "
-                            "made your edit, call final_answer now. If not, make "
-                            "your best fix and call final_answer immediately."
-                        ),
+                        content=warning,
                     )
                 )
             return ctx
@@ -302,13 +327,28 @@ class LLMSession:
                         }
                     )
                 if use_budget_warning and total > 3 and turn == total - 2:
+                    if not _repo_has_changes():
+                        warning = (
+                            "WARNING: You have 2 turns left and your working tree "
+                            "still has no code changes. Make at least one edit now. "
+                            "Do not call `final_answer` yet."
+                        )
+                    elif has_run_tests_tool and not _messages_include_tool(msgs, "run_tests"):
+                        warning = (
+                            "WARNING: You have 2 turns left and you have not run "
+                            "verification yet. Use `run_tests default` now, or a "
+                            "narrower `run_tests <command>` if needed, before "
+                            "`final_answer`."
+                        )
+                    else:
+                        warning = (
+                            "WARNING: You have 2 turns left. Make "
+                            "your edit and call final_answer now."
+                        )
                     msgs.append(
                         {
                             "role": "user",
-                            "content": (
-                                "WARNING: You have 2 turns left. Make "
-                                "your edit and call final_answer now."
-                            ),
+                            "content": warning,
                         }
                     )
                 return msgs

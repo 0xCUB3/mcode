@@ -184,6 +184,82 @@ def test_generate_patch_passes_model_options_to_text_react(tmp_path, monkeypatch
     }
 
 
+def test_generate_patch_text_nudge_blocks_empty_diff_final_answer(tmp_path, monkeypatch):
+    _init_repo(tmp_path)
+
+    session = LLMSession(model_id="test", backend_name="openai", loop_budget=9)
+    session._m = MagicMock()
+    session._m.backend = MagicMock()
+
+    monkeypatch.setenv("MELLEA_TEXT_TOOLS", "1")
+
+    captured: dict = {}
+
+    async def mock_text_react(*args, **kwargs):
+        captured.update(kwargs)
+        return ("done", True)
+
+    fake_module = types.ModuleType("mellea.agent.text_react")
+    fake_module.text_react = mock_text_react
+
+    with patch.dict(
+        sys.modules,
+        {
+            **_install_fake_runtime_modules(),
+            "mellea.agent.text_react": fake_module,
+        },
+    ):
+        session.generate_patch(
+            repo="test/repo",
+            problem_statement="Fix the bug",
+            repo_root=str(tmp_path),
+            test_cmds={"test_cmds": ['python -m pytest -q tests/test_bug.py']},
+        )
+
+    msgs = captured["on_turn"](7, 9, [])
+    assert "working tree still has no code changes" in msgs[-1]["content"]
+    assert "Do not call `final_answer` yet" in msgs[-1]["content"]
+
+
+def test_generate_patch_text_nudge_demands_verification_after_edit(tmp_path, monkeypatch):
+    _init_repo(tmp_path)
+
+    session = LLMSession(model_id="test", backend_name="openai", loop_budget=9)
+    session._m = MagicMock()
+    session._m.backend = MagicMock()
+
+    monkeypatch.setenv("MELLEA_TEXT_TOOLS", "1")
+
+    captured: dict = {}
+
+    async def mock_text_react(*args, **kwargs):
+        captured.update(kwargs)
+        return ("done", True)
+
+    fake_module = types.ModuleType("mellea.agent.text_react")
+    fake_module.text_react = mock_text_react
+
+    with patch.dict(
+        sys.modules,
+        {
+            **_install_fake_runtime_modules(),
+            "mellea.agent.text_react": fake_module,
+        },
+    ):
+        session.generate_patch(
+            repo="test/repo",
+            problem_statement="Fix the bug",
+            repo_root=str(tmp_path),
+            test_cmds={"test_cmds": ['python -m pytest -q tests/test_bug.py']},
+        )
+
+    (tmp_path / "foo.py").write_text("x = 2\n")
+
+    msgs = captured["on_turn"](7, 9, [])
+    assert "you have not run verification yet" in msgs[-1]["content"]
+    assert "Use `run_tests default` now" in msgs[-1]["content"]
+
+
 def test_generate_patch_exposes_task_default_verification(tmp_path, monkeypatch):
     _init_repo(tmp_path)
 
