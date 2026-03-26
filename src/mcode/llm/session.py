@@ -294,18 +294,11 @@ class LLMSession:
                     )
                 )
             if use_budget_warning and total > 3 and turn == total - 2:
-                if not _repo_has_changes():
-                    warning = (
-                        "WARNING: You have 2 turns left and your working tree "
-                        "still has no code changes. Make at least one edit now. "
-                        "Do not call final_answer yet."
-                    )
-                else:
-                    warning = (
-                        "WARNING: You have 2 turns left. If you have already "
-                        "made your edit, call final_answer now. If not, make "
-                        "your best fix and call final_answer immediately."
-                    )
+                warning = build_budget_warning(
+                    has_changes=_repo_has_changes(),
+                    has_run_tests_tool=has_run_tests_tool,
+                    used_run_tests=False,
+                ).replace("`final_answer`", "final_answer")
                 ctx = ctx.add(
                     Message(
                         role="user",
