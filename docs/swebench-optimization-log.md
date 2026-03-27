@@ -251,8 +251,19 @@ The important conclusion is that `MCODE_REACT_TIMEOUT=450` was a real bottleneck
 
 We also reran that same 10-task, 100-turn Astropy smoke through the fully `uv`-managed server path after pushing the newer reasoning preservation, live condensation, repo customization, and line-range editing work. That `uv`-backed rerun matched the previous best at 6/10 = 60.0%, not better and not worse. The four remaining failures on that slice were `astropy__astropy-13033`, `astropy__astropy-13398`, `astropy__astropy-13977`, and `astropy__astropy-14182`. The postmortem on those four showed three deterministic scaffold failures, submitting the wrong verified target (`13033`), submitting an insufficiently verified patch (`13977`), and submitting a write-side-only fix without checking the task-default round-trip behavior (`14182`), plus one large-task trajectory failure with no patch produced at all (`13398`).
 
+One more deterministic scaffold mismatch showed up after that rerun: the visible working directory was `/testbed`, so the model naturally started passing absolute `/testbed/...` paths into file tools, but `read_file` and `edit` still interpreted those as host absolute paths instead of repo-relative aliases. We fixed that in the mellea fork by translating the visible repo root back to the host checkout before file tools run. That change did not unlock any brand-new tasks on the 10-task Astropy slice, but it did make the trajectories cleaner and removed another source of wasted turns.
+
+After the `/testbed` alias fix, we reran the same Astropy slice at both budget settings on the corrected `uv` path:
+
+| Setting | Result |
+|-|-|
+| budget 15, updated scaffold | 5/10 = 50% |
+| budget 100, updated scaffold | 6/10 = 60% |
+
+That gives us a cleaner budget read than before. The earlier `15`-turn baseline had only reached `3/10`, so the scaffold/runtime fixes materially improved the low-budget setting too. But `100` turns still kept a one-task edge over `15` on the same slice, so the short-loop budget is still leaving real wins on the table.
+
 ## Where things stand
 
-Best result with Qwen3.5-27B: 84/300 = 28.0% on SWE-bench Lite, roughly 28-32/300 (9-11%) on Live Lite. Best result with MiniMax M2.5 on Live Lite (text tools, budget=100): 15/300 = 5.0%. Best result with MiniMax M2.5 on full SWE-bench Verified so far: 165/500 = 33.0%. Best post-fix Verified smoke result on the 10-task Astropy slice: 6/10 = 60.0% with budget=100 and `MCODE_REACT_TIMEOUT=1800`.
+Best result with Qwen3.5-27B: 84/300 = 28.0% on SWE-bench Lite, roughly 28-32/300 (9-11%) on Live Lite. Best result with MiniMax M2.5 on Live Lite (text tools, budget=100): 15/300 = 5.0%. Best result with MiniMax M2.5 on full SWE-bench Verified so far: 165/500 = 33.0%. Best post-fix Verified smoke result on the 10-task Astropy slice: 6/10 = 60.0% with budget=100 and `MCODE_REACT_TIMEOUT=1800`. On that same corrected scaffold, budget=15 now reaches 5/10 = 50.0%, up from the earlier 3/10.
 
 The text-based tool calling infrastructure works and is model-agnostic. The mid-budget nudge remains the most effective single intervention (+3.7pp on Live with Qwen), and the newer MiniMax smoke runs show that timeout and verification wiring were also real bottlenecks. But the gap between our 33.0% full Verified result, even our improved 60% smoke on a narrow slice, and OpenHands' 80.2% is still fundamentally about the scaffold architecture, not model capability or tool calling mechanics. Closing that gap requires giving the agent stronger in-loop verification, better context management, and richer task guidance.
