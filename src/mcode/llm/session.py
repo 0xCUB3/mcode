@@ -7,7 +7,11 @@ from dataclasses import dataclass, field
 from pydantic import BaseModel, Field
 
 from mcode.agent.coding_agent import build_coding_agent
-from mcode.agent.verification import build_budget_warning
+from mcode.agent.verification import (
+    build_budget_warning,
+    build_submit_block_message,
+    verification_state_from_event_log,
+)
 from mcode.bench.tasks import Task
 
 
@@ -260,7 +264,12 @@ class LLMSession:
         condensed_state = getattr(agent, "condensed_state", None)
         condensation = getattr(agent, "condensation", None)
         max_retries_per_turn = int(getattr(agent, "max_retries_per_turn", 0))
+        verification_policy = getattr(agent, "verification_policy", None)
+        verification_cmds = list(
+            getattr(verification_policy, "test_cmds", getattr(agent, "verification_cmds", []))
+        )
         has_run_tests_tool = any(getattr(tool, "name", None) == "run_tests" for tool in tools)
+        require_default_verification = bool(verification_cmds)
 
         def _repo_has_changes() -> bool:
             result = subprocess.run(
@@ -277,6 +286,17 @@ class LLMSession:
                 if isinstance(content, str) and marker in content:
                     return True
             return False
+
+        def _verification_state():
+            return verification_state_from_event_log(event_log)
+
+        def _submit_block_message() -> str | None:
+            return build_submit_block_message(
+                has_changes=_repo_has_changes(),
+                has_run_tests_tool=has_run_tests_tool,
+                verification_state=_verification_state(),
+                require_default_verification=require_default_verification,
+            )
 
         def _on_turn(turn, total, ctx):
             from mellea.stdlib.components.chat import Message
@@ -310,6 +330,27 @@ class LLMSession:
         if use_text_tools:
 
             def _text_on_turn(turn, total, msgs):
+                if (
+                    total >= 12
+                    and turn >= 8
+                    and turn % 8 == 0
+                    and not _repo_has_changes()
+                    and not _messages_include_tool(msgs, "edit")
+                    and (
+                        _messages_include_tool(msgs, "read_file")
+                        or _messages_include_tool(msgs, "search_code")
+                    )
+                ):
+                    msgs.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "You have spent several turns reading/searching without "
+                                "editing. Stop exploring. Pick the single most likely file, "
+                                "make one concrete edit now, then verify it with run_tests."
+                            ),
+                        }
+                    )
                 if use_mid_nudge and total > 5 and turn == total // 2:
                     msgs.append(
                         {
@@ -346,6 +387,9 @@ class LLMSession:
                     "model_options": model_opts,
                     "loop_budget": budget,
                     "on_turn": _text_on_turn,
+                    "final_answer_guard": (
+                        lambda answer, *, messages, event_log: _submit_block_message()
+                    ),
                 }
                 if condensed_state is not None:
                     react_kwargs["condensed_state"] = condensed_state
@@ -373,7 +417,15 @@ class LLMSession:
                         )
                 except TimeoutError:
                     print(f"  [react] timed out after {timeout_s}s", flush=True)
-                return _get_diff(repo_root)
+                block_message = _submit_block_message()
+                diff = _get_diff(repo_root)
+                if diff and block_message is not None:
+                    print(
+                        f"  [react] discarding unverified diff: {block_message}",
+                        flush=True,
+                    )
+                    return ""
+                return diff
 
         else:
 
@@ -404,7 +456,15 @@ class LLMSession:
                         "  [react] budget exhausted without final_answer",
                         flush=True,
                     )
-                return _get_diff(repo_root)
+                block_message = _submit_block_message()
+                diff = _get_diff(repo_root)
+                if diff and block_message is not None:
+                    print(
+                        f"  [react] discarding unverified diff: {block_message}",
+                        flush=True,
+                    )
+                    return ""
+                return diff
 
         def _reset_repo():
             subprocess.run(["git", "checkout", "."], cwd=repo_root, capture_output=True)

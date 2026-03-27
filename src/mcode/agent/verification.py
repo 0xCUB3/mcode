@@ -18,6 +18,14 @@ class VerificationPolicy:
         }
 
 
+@dataclass(frozen=True)
+class VerificationState:
+    used_run_tests: bool = False
+    successful_run_tests: bool = False
+    used_default_run_tests: bool = False
+    successful_default_run_tests: bool = False
+
+
 def normalize_verification_commands(source: object | None) -> list[str]:
     if source is None:
         return []
@@ -101,9 +109,119 @@ def build_budget_warning(
 
     return (
         "WARNING: You have 2 turns left. If your edit is already "
-        "verified, call `final_answer` now. If not, make your best "
-        "fix and call `final_answer` immediately."
+        "verified, call `final_answer` now. If verification is still "
+        "failing or missing, do not call `final_answer` yet."
     )
+
+
+def verification_state_from_event_log(event_log: object | None) -> VerificationState:
+    if event_log is None:
+        return VerificationState()
+
+    to_dicts = getattr(event_log, "to_dicts", None)
+    if not callable(to_dicts):
+        return VerificationState()
+
+    pending_test_cmd: str | None = None
+    state = VerificationState()
+    for event in to_dicts():
+        if not isinstance(event, dict):
+            continue
+        if event.get("tool_name") != "run_tests":
+            continue
+
+        if event.get("kind") == "tool_call":
+            arguments = event.get("arguments", {})
+            if isinstance(arguments, dict):
+                pending_test_cmd = str(arguments.get("test_cmd", "")).strip().lower()
+                if pending_test_cmd == "default":
+                    state = VerificationState(
+                        used_run_tests=True,
+                        successful_run_tests=state.successful_run_tests,
+                        used_default_run_tests=True,
+                        successful_default_run_tests=state.successful_default_run_tests,
+                    )
+                else:
+                    state = VerificationState(
+                        used_run_tests=True,
+                        successful_run_tests=state.successful_run_tests,
+                        used_default_run_tests=state.used_default_run_tests,
+                        successful_default_run_tests=state.successful_default_run_tests,
+                    )
+            continue
+
+        if event.get("kind") != "tool_result":
+            continue
+
+        output = str(event.get("output", ""))
+        success = (
+            "PASSED" in output
+            and "FAILED" not in output
+            and "TIMEOUT" not in output
+            and "ERROR" not in output
+        )
+        if not success:
+            pending_test_cmd = None
+            continue
+        if pending_test_cmd == "default":
+            state = VerificationState(
+                used_run_tests=True,
+                successful_run_tests=True,
+                used_default_run_tests=True,
+                successful_default_run_tests=True,
+            )
+        else:
+            state = VerificationState(
+                used_run_tests=True,
+                successful_run_tests=True,
+                used_default_run_tests=state.used_default_run_tests,
+                successful_default_run_tests=state.successful_default_run_tests,
+            )
+        pending_test_cmd = None
+
+    return state
+
+
+def build_submit_block_message(
+    *,
+    has_changes: bool,
+    has_run_tests_tool: bool,
+    verification_state: VerificationState,
+    require_default_verification: bool,
+) -> str | None:
+    if not has_changes:
+        return (
+            "You still have no code changes. Make at least one edit before calling "
+            "`final_answer`."
+        )
+
+    if not has_run_tests_tool:
+        return None
+
+    if require_default_verification:
+        if not verification_state.used_default_run_tests:
+            return (
+                "Before calling `final_answer`, run `run_tests default` and use that "
+                "result to verify your patch."
+            )
+        if not verification_state.successful_default_run_tests:
+            return (
+                "Do not call `final_answer` yet. `run_tests default` has not passed. "
+                "Fix the code until the task-default verification succeeds."
+            )
+        return None
+
+    if not verification_state.used_run_tests:
+        return (
+            "Before calling `final_answer`, run `run_tests` with the cheapest command "
+            "that exercises your change."
+        )
+    if not verification_state.successful_run_tests:
+        return (
+            "Do not call `final_answer` yet. Your verification has not passed. Fix the "
+            "code until `run_tests` succeeds."
+        )
+    return None
 
 
 def build_verification_policy(

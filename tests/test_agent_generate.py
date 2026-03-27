@@ -7,6 +7,7 @@ import types
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
+from mellea.agent.runtime.events import ToolCallEvent, ToolResultEvent
 from mellea.backends import ModelOption
 
 from mcode.bench.results import ResultsDB
@@ -45,6 +46,16 @@ def _install_fake_runtime_modules():
         def __init__(self, *, workspace=None, events=None):
             self.workspace = workspace
             self.events = list(events or [])
+
+        def emit(self, event):
+            self.events.append(event)
+            return event
+
+        def to_dicts(self):
+            return [
+                event.as_dict() if hasattr(event, "as_dict") else dict(event)
+                for event in self.events
+            ]
 
     class FakeWorkingMemory:
         def __init__(self, summary="", facts=(), hypotheses=(), next_steps=()):
@@ -277,6 +288,127 @@ def test_generate_patch_text_nudge_demands_verification_after_edit(tmp_path, mon
     assert "you have not run verification yet" in msgs[-1]["content"]
     assert "Use `run_tests default` now" in msgs[-1]["content"]
     assert "Do not call `final_answer` yet" in msgs[-1]["content"]
+
+
+def test_generate_patch_text_watchdog_nudges_after_read_only_loop(tmp_path, monkeypatch):
+    _init_repo(tmp_path)
+
+    session = LLMSession(model_id="test", backend_name="openai", loop_budget=24)
+    session._m = MagicMock()
+    session._m.backend = MagicMock()
+
+    monkeypatch.setenv("MELLEA_TEXT_TOOLS", "1")
+
+    captured: dict = {}
+
+    async def mock_text_react(*args, **kwargs):
+        captured.update(kwargs)
+        return ("done", True)
+
+    fake_module = types.ModuleType("mellea.agent.text_react")
+    fake_module.text_react = mock_text_react
+
+    with patch.dict(
+        sys.modules,
+        {
+            **_install_fake_runtime_modules(),
+            "mellea.agent.text_react": fake_module,
+        },
+    ):
+        session.generate_patch(
+            repo="test/repo",
+            problem_statement="Fix the bug",
+            repo_root=str(tmp_path),
+            test_cmds={"test_cmds": ['python -m pytest -q tests/test_bug.py']},
+        )
+
+    msgs = captured["on_turn"](
+        8,
+        24,
+        [
+            {"role": "user", "content": "[read_file] some file"},
+            {"role": "user", "content": "[search_code] some query"},
+        ],
+    )
+    assert "spent several turns reading/searching without editing" in msgs[-1]["content"]
+    assert "make one concrete edit now" in msgs[-1]["content"]
+
+
+def test_generate_patch_discards_exhausted_unverified_diff(tmp_path, monkeypatch):
+    _init_repo(tmp_path)
+
+    session = LLMSession(model_id="test", backend_name="openai", loop_budget=9)
+    session._m = MagicMock()
+    session._m.backend = MagicMock()
+
+    monkeypatch.setenv("MELLEA_TEXT_TOOLS", "1")
+
+    async def mock_text_react(*args, **kwargs):
+        del args
+        (tmp_path / "foo.py").write_text("x = 2\n")
+        return ("ignored", False)
+
+    fake_module = types.ModuleType("mellea.agent.text_react")
+    fake_module.text_react = mock_text_react
+
+    with patch.dict(
+        sys.modules,
+        {
+            **_install_fake_runtime_modules(),
+            "mellea.agent.text_react": fake_module,
+        },
+    ):
+        result = session.generate_patch(
+            repo="test/repo",
+            problem_statement="Fix the bug",
+            repo_root=str(tmp_path),
+            test_cmds={"test_cmds": ['python -m pytest -q tests/test_bug.py']},
+        )
+
+    assert result == ""
+
+
+def test_generate_patch_keeps_exhausted_verified_diff(tmp_path, monkeypatch):
+    _init_repo(tmp_path)
+
+    session = LLMSession(model_id="test", backend_name="openai", loop_budget=9)
+    session._m = MagicMock()
+    session._m.backend = MagicMock()
+
+    monkeypatch.setenv("MELLEA_TEXT_TOOLS", "1")
+
+    async def mock_text_react(*args, **kwargs):
+        del args
+        event_log = kwargs["event_log"]
+        event_log.emit(ToolCallEvent(tool_name="run_tests", arguments={"test_cmd": "default"}))
+        event_log.emit(
+            ToolResultEvent(
+                tool_name="run_tests",
+                status="completed",
+                output="$ pytest -q tests/test_bug.py\nPASSED\n1 passed",
+            )
+        )
+        (tmp_path / "foo.py").write_text("x = 2\n")
+        return ("ignored", False)
+
+    fake_module = types.ModuleType("mellea.agent.text_react")
+    fake_module.text_react = mock_text_react
+
+    with patch.dict(
+        sys.modules,
+        {
+            **_install_fake_runtime_modules(),
+            "mellea.agent.text_react": fake_module,
+        },
+    ):
+        result = session.generate_patch(
+            repo="test/repo",
+            problem_statement="Fix the bug",
+            repo_root=str(tmp_path),
+            test_cmds={"test_cmds": ['python -m pytest -q tests/test_bug.py']},
+        )
+
+    assert "x = 2" in result
 
 
 def test_generate_patch_exposes_task_default_verification(tmp_path, monkeypatch):

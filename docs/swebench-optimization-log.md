@@ -249,6 +249,8 @@ On the 10-task Verified smoke slice (all Astropy tasks), the progression was:
 
 The important conclusion is that `MCODE_REACT_TIMEOUT=450` was a real bottleneck. Once the model-serving path was stable and we raised the outer timeout, the same 10-task slice gained one more pass and reached 60%. That is still nowhere near the published 80.2% OpenHands figure, but it is materially better than the earlier smoke runs and gives us a more honest baseline for the next larger rerun.
 
+We also reran that same 10-task, 100-turn Astropy smoke through the fully `uv`-managed server path after pushing the newer reasoning preservation, live condensation, repo customization, and line-range editing work. That `uv`-backed rerun matched the previous best at 6/10 = 60.0%, not better and not worse. The four remaining failures on that slice were `astropy__astropy-13033`, `astropy__astropy-13398`, `astropy__astropy-13977`, and `astropy__astropy-14182`. The postmortem on those four showed three deterministic scaffold failures, submitting the wrong verified target (`13033`), submitting an insufficiently verified patch (`13977`), and submitting a write-side-only fix without checking the task-default round-trip behavior (`14182`), plus one large-task trajectory failure with no patch produced at all (`13398`).
+
 ## Where things stand
 
 Best result with Qwen3.5-27B: 84/300 = 28.0% on SWE-bench Lite, roughly 28-32/300 (9-11%) on Live Lite. Best result with MiniMax M2.5 on Live Lite (text tools, budget=100): 15/300 = 5.0%. Best result with MiniMax M2.5 on full SWE-bench Verified so far: 165/500 = 33.0%. Best post-fix Verified smoke result on the 10-task Astropy slice: 6/10 = 60.0% with budget=100 and `MCODE_REACT_TIMEOUT=1800`.

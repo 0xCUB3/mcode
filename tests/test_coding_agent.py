@@ -396,7 +396,7 @@ def test_coding_agent_can_be_requested_from_session_generate_patch(
             repo_root=str(tmp_path),
         )
 
-    assert result == "diff"
+    assert result == ""
     assert build_agent.called
 
 
@@ -537,7 +537,7 @@ def test_session_generate_patch_seeds_react_context_from_runtime_state(
             repo_root=str(tmp_path),
         )
 
-    assert result == "diff"
+    assert result == ""
     assert captured["messages"] == [
         ("user", "reminder:3"),
         ("assistant", "prior reasoning"),
@@ -596,7 +596,8 @@ def test_session_generate_patch_passes_runtime_state_to_text_react(
             repo_root=str(tmp_path),
         )
 
-    assert result == "diff"
+    assert result == ""
     assert captured["event_log"] is event_log
     assert captured["condensed_state"] is condensed_state
     assert captured["max_retries_per_turn"] == 2
+    assert callable(captured["final_answer_guard"])
