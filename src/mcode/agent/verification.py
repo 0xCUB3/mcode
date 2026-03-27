@@ -127,14 +127,7 @@ def verification_state_from_event_log(event_log: object | None) -> VerificationS
     for event in to_dicts():
         if not isinstance(event, dict):
             continue
-        tool_name = event.get("tool_name")
-        if tool_name == "edit" and event.get("kind") == "tool_result":
-            output = str(event.get("output", ""))
-            if "APPLIED" in output:
-                pending_test_cmd = None
-                state = VerificationState()
-            continue
-        if tool_name != "run_tests":
+        if event.get("tool_name") != "run_tests":
             continue
 
         if event.get("kind") == "tool_call":
