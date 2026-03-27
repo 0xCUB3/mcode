@@ -127,7 +127,14 @@ def verification_state_from_event_log(event_log: object | None) -> VerificationS
     for event in to_dicts():
         if not isinstance(event, dict):
             continue
-        if event.get("tool_name") != "run_tests":
+        tool_name = event.get("tool_name")
+        if tool_name == "edit" and event.get("kind") == "tool_result":
+            output = str(event.get("output", ""))
+            if "APPLIED" in output:
+                pending_test_cmd = None
+                state = VerificationState()
+            continue
+        if tool_name != "run_tests":
             continue
 
         if event.get("kind") == "tool_call":
@@ -191,8 +198,7 @@ def build_submit_block_message(
 ) -> str | None:
     if not has_changes:
         return (
-            "You still have no code changes. Make at least one edit before calling "
-            "`final_answer`."
+            "You still have no code changes. Make at least one edit before calling `final_answer`."
         )
 
     if not has_run_tests_tool:
