@@ -39,7 +39,7 @@ build-backend = "hatchling.build"
 allow-direct-references = true
 
 [tool.uv.sources]
-mellea = { git = "https://github.com/0xCUB3/mellea", rev = "9e47b14292e0f076cf9073440d5a9f3c41cf258c" }
+mellea = { git = "https://github.com/0xCUB3/mellea", rev = "812c78ef26b8220863794ffb4e839b4388550e6f" }
 
 [tool.ruff]
 line-length = 100
