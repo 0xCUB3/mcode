@@ -14,3 +14,17 @@ def test_bluevela_setup_uses_uv_sync() -> None:
     assert "uv sync --extra swebench --extra datasets" in text
     assert "uv venv --python 3.11 venv" not in text
     assert 'uv pip install -e ".[evalplus,datasets]"' not in text
+
+
+def test_bluevela_bench_scripts_use_uv_run() -> None:
+    for name in ("run-bench.sh", "run-rerun.sh"):
+        text = (BLUEVELA_DIR / name).read_text()
+        assert "uv run python -m mcode" in text
+
+
+def test_bluevela_bench_scripts_wait_for_docker() -> None:
+    for name in ("run-bench.sh", "run-rerun.sh"):
+        text = (BLUEVELA_DIR / name).read_text()
+        assert "Docker socket did not become ready" in text
+        assert "client = docker.from_env()" in text
+        assert "client.ping()" in text

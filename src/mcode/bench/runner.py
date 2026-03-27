@@ -13,7 +13,7 @@ from rich.progress import Progress
 
 from mcode.bench.results import ResultsDB, RunSummary
 from mcode.bench.tasks import Task, load_benchmark
-from mcode.execution.sandbox import DockerSandbox
+from mcode.execution.sandbox import DockerSandbox, DockerUnavailableError
 from mcode.llm.session import LLMSession
 
 
@@ -222,7 +222,6 @@ class BenchmarkRunner:
             "hf_dataset": self.config.swebench_dataset,
             "split": self.config.swebench_split,
         }
-        run_id = self.results_db.start_run("swebench-lite", config)
 
         swe_sandbox = SWEbenchSandbox(
             namespace=self.config.swebench_namespace,
@@ -233,6 +232,7 @@ class BenchmarkRunner:
             force_rebuild=self.config.swebench_force_rebuild,
         )
         swe_sandbox.prepare_images([t.raw_instance for t in tasks])
+        run_id = self.results_db.start_run("swebench-lite", config)
 
         passed = 0
         total = 0
@@ -240,7 +240,10 @@ class BenchmarkRunner:
             t = progress.add_task("[bold]Running swebench-lite[/bold]", total=len(tasks))
             for task in tasks:
                 total += 1
-                result = self._run_swebench_task(task, swe_sandbox=swe_sandbox, run_id=run_id)
+                try:
+                    result = self._run_swebench_task(task, swe_sandbox=swe_sandbox, run_id=run_id)
+                except DockerUnavailableError:
+                    raise
                 if result["passed"]:
                     passed += 1
                 self.results_db.save_task_result(run_id, result)
@@ -273,13 +276,13 @@ class BenchmarkRunner:
             "hf_dataset": "SWE-bench-Live/SWE-bench-Live",
             "split": self.config.swebench_split,
         }
-        run_id = self.results_db.start_run("swebench-live", config)
 
         live_sandbox = SWEbenchLiveSandbox(
             mem_limit=self.config.swebench_mem_limit,
             pids_limit=self.config.swebench_pids_limit,
         )
         live_sandbox.prepare_images(tasks)
+        run_id = self.results_db.start_run("swebench-live", config)
 
         passed = 0
         total = 0
@@ -287,11 +290,14 @@ class BenchmarkRunner:
             t = progress.add_task("[bold]Running swebench-live[/bold]", total=len(tasks))
             for task in tasks:
                 total += 1
-                result = self._run_swebench_live_task(
-                    task,
-                    live_sandbox=live_sandbox,
-                    run_id=run_id,
-                )
+                try:
+                    result = self._run_swebench_live_task(
+                        task,
+                        live_sandbox=live_sandbox,
+                        run_id=run_id,
+                    )
+                except DockerUnavailableError:
+                    raise
                 if result["passed"]:
                     passed += 1
                 self.results_db.save_task_result(run_id, result)
@@ -337,6 +343,8 @@ class BenchmarkRunner:
                         command_fn=patch_context.command_fn,
                         visible_repo_root=patch_context.visible_repo_root,
                     )
+                except DockerUnavailableError:
+                    raise
                 except Exception as e:
                     elapsed_ms = int((time.time() - start) * 1000)
                     tb = traceback.format_exc()
@@ -370,6 +378,8 @@ class BenchmarkRunner:
                         "stderr": json.dumps(run.report, sort_keys=True),
                         "error": None if run.resolved else "Not resolved",
                     }
+        except DockerUnavailableError:
+            raise
         except Exception as e:
             elapsed_ms = int((time.time() - start) * 1000)
             tb = traceback.format_exc()
@@ -409,6 +419,8 @@ class BenchmarkRunner:
                         command_fn=patch_context.command_fn,
                         visible_repo_root=patch_context.visible_repo_root,
                     )
+                except DockerUnavailableError:
+                    raise
                 except Exception as e:
                     elapsed_ms = int((time.time() - start) * 1000)
                     tb = traceback.format_exc()
@@ -444,6 +456,8 @@ class BenchmarkRunner:
                         "stderr": json.dumps(inst_report, sort_keys=True),
                         "error": None if run.resolved else "Not resolved",
                     }
+        except DockerUnavailableError:
+            raise
         except Exception as e:
             elapsed_ms = int((time.time() - start) * 1000)
             tb = traceback.format_exc()

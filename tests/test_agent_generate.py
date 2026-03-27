@@ -7,11 +7,13 @@ import types
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
+import pytest
 from mellea.agent.runtime.events import ToolCallEvent, ToolResultEvent
 from mellea.backends import ModelOption
 
 from mcode.bench.results import ResultsDB
 from mcode.bench.runner import BenchConfig, BenchmarkRunner
+from mcode.execution.sandbox import DockerUnavailableError
 from mcode.llm.session import LLMSession
 
 
@@ -694,3 +696,72 @@ def test_swebench_lite_runner_reports_repo_context_failures(tmp_path):
     assert result["passed"] is False
     assert result["error"] == "RuntimeError: repo setup failed"
     assert "repo setup failed" in result["stderr"]
+
+
+def test_swebench_lite_runner_reraises_docker_unavailable(tmp_path):
+    _init_repo(tmp_path)
+
+    db = ResultsDB(tmp_path / "results.db")
+    runner = BenchmarkRunner(
+        config=BenchConfig(model_id="test", sandbox="process"),
+        results_db=db,
+    )
+
+    class FakeTask:
+        benchmark = "swebench-lite"
+        instance_id = "lite-1"
+        repo = "test/repo"
+        problem_statement = "Fix the bug"
+        hints_text = "Hint"
+        raw_instance = {}
+
+    class FakeSWEbenchSandbox:
+        @contextmanager
+        def repo_context(self, task):
+            raise DockerUnavailableError("Docker socket is unavailable")
+            yield tmp_path
+
+    with pytest.raises(DockerUnavailableError, match="Docker socket is unavailable"):
+        runner._run_swebench_task(
+            FakeTask(),
+            swe_sandbox=FakeSWEbenchSandbox(),
+            run_id=1,
+        )
+
+
+def test_swebench_lite_aborts_before_start_run_when_docker_unavailable(
+    tmp_path, monkeypatch
+):
+    _init_repo(tmp_path)
+
+    import mcode.execution.swebench as swebench_module
+    from mcode.bench import swebench_lite as lite_module
+
+    db = ResultsDB(tmp_path / "results.db")
+    runner = BenchmarkRunner(
+        config=BenchConfig(model_id="test", sandbox="process"),
+        results_db=db,
+    )
+
+    class FakeTask:
+        instance_id = "lite-1"
+        repo = "test/repo"
+        problem_statement = "Fix the bug"
+        hints_text = "Hint"
+        raw_instance = {}
+
+    class FakeSWEbenchSandbox:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def prepare_images(self, instances):
+            raise DockerUnavailableError("Docker socket is unavailable")
+
+    monkeypatch.setattr(lite_module, "load_swebench_lite", lambda *args, **kwargs: [FakeTask()])
+    monkeypatch.setattr(swebench_module, "SWEbenchSandbox", FakeSWEbenchSandbox)
+
+    with pytest.raises(DockerUnavailableError, match="Docker socket is unavailable"):
+        runner._run_swebench_lite(limit=1)
+
+    assert db.conn.execute("select count(*) from runs").fetchone()[0] == 0
+    assert db.conn.execute("select count(*) from task_results").fetchone()[0] == 0

@@ -30,14 +30,45 @@ bsub -q "${BV_QUEUE}" \
   -o "${LOG_DIR}/bench-%I.log" \
   -e "${LOG_DIR}/bench-%I.log" \
   bash -c '
-    source '"${BV_MCODE_DIR}"'/.venv/bin/activate
+    set -e
+
+    PD_RUN=/tmp/podman-mcode-$(id -u)
+    PD_GRAPH='"${BV_PODMAN_ROOT}"'/graphroot
+    rm -rf ${PD_RUN} 2>/dev/null || true
+    mkdir -p ${PD_GRAPH} ${PD_RUN}/runroot
+    export XDG_RUNTIME_DIR=${PD_RUN}
+    SOCK=${PD_RUN}/podman.sock
+    podman --cgroup-manager=cgroupfs --storage-driver=overlay \
+      --storage-opt ignore_chown_errors=true \
+      --root=${PD_GRAPH} --runroot=${PD_RUN}/runroot \
+      system service --time=0 unix://${SOCK} &
+    PODMAN_PID=$!
+    export DOCKER_HOST=unix://${SOCK}
+
+    trap "kill ${PODMAN_PID} 2>/dev/null; wait ${PODMAN_PID} 2>/dev/null" EXIT
+
+    for attempt in $(seq 1 30); do
+      if uv run python - <<'"'"'PYEOF'"'"' >/dev/null 2>&1; then
+import docker
+client = docker.from_env()
+client.ping()
+PYEOF
+        break
+      fi
+      sleep 1
+      if [[ ${attempt} -eq 30 ]]; then
+        echo "Docker socket did not become ready" >&2
+        exit 1
+      fi
+    done
+
     export OPENAI_BASE_URL='"'${OPENAI_BASE_URL}'"'
     export OPENAI_API_KEY='"'${OPENAI_API_KEY}'"'
     export MCODE_MAX_NEW_TOKENS='"'${MCODE_MAX_NEW_TOKENS}'"'
 
     SHARD_INDEX=$((LSB_JOBINDEX - 1))
 
-    mcode bench '"${BENCHMARK}"' \
+    uv run python -m mcode bench '"${BENCHMARK}"' \
       --model '"'${MODEL}'"' \
       --backend '"'${BACKEND}'"' \
       --loop-budget '"${LOOP_BUDGET}"' \

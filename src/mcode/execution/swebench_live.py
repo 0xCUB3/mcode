@@ -7,6 +7,8 @@ import threading
 import time
 from dataclasses import dataclass
 
+from mcode.execution.sandbox import ensure_docker_client, reraise_docker_unavailable
+
 
 @dataclass(frozen=True)
 class SWEbenchLiveRun:
@@ -80,17 +82,12 @@ class SWEbenchLiveSandbox:
         self._client = None
 
     def _get_client(self):
-        if self._client is not None:
-            return self._client
-        try:
-            import docker
-
-            self._client = docker.from_env(timeout=600)
-            return self._client
-        except Exception as e:
-            raise RuntimeError(
-                "Docker is required for SWE-bench Live evaluation; start Docker and retry."
-            ) from e
+        self._client = ensure_docker_client(
+            self._client,
+            scope="SWE-bench Live evaluation",
+            from_env_kwargs={"timeout": 600},
+        )
+        return self._client
 
     def prepare_images(self, tasks, *, max_workers: int = 4) -> None:
         """Pre-pull Docker images for all tasks sequentially."""
@@ -262,10 +259,19 @@ class SWEbenchLiveSandbox:
                     visible_repo_root="/testbed",
                     command_fn=command_fn,
                 )
+            except Exception as exc:
+                reraise_docker_unavailable(exc, scope="SWE-bench Live evaluation")
+                raise
             finally:
-                source_container.remove(force=True)
+                try:
+                    source_container.remove(force=True)
+                except Exception:
+                    pass
                 if exec_container is not None:
-                    exec_container.remove(force=True)
+                    try:
+                        exec_container.remove(force=True)
+                    except Exception:
+                        pass
                 shutil.rmtree(dest, ignore_errors=True)
 
         return _ctx()
@@ -429,6 +435,9 @@ class SWEbenchLiveSandbox:
                 test_output=test_output,
                 patch_sha256=patch_sha,
             )
+        except Exception as exc:
+            reraise_docker_unavailable(exc, scope="SWE-bench Live evaluation")
+            raise
         finally:
             if container is not None:
                 try:

@@ -8,6 +8,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from mcode.execution.sandbox import ensure_docker_client, reraise_docker_unavailable
+
 
 def _fq_image(name: str) -> str:
     """Fully qualify an image name for podman Docker-compat API."""
@@ -180,17 +182,8 @@ class SWEbenchSandbox:
         self._client = None
 
     def _get_client(self):
-        if self._client is not None:
-            return self._client
-        try:
-            import docker
-
-            self._client = docker.from_env()
-            return self._client
-        except Exception as e:  # pragma: no cover
-            raise RuntimeError(
-                "Docker is required for SWE-bench Lite evaluation; start Docker and retry."
-            ) from e
+        self._client = ensure_docker_client(self._client, scope="SWE-bench Lite evaluation")
+        return self._client
 
     def _effective_arch(self) -> str:
         if self.arch is not None:
@@ -362,10 +355,19 @@ class SWEbenchSandbox:
                     visible_repo_root="/testbed",
                     command_fn=command_fn,
                 )
+            except Exception as exc:
+                reraise_docker_unavailable(exc, scope="SWE-bench Lite evaluation")
+                raise
             finally:
-                source_container.remove(force=True)
+                try:
+                    source_container.remove(force=True)
+                except Exception:
+                    pass
                 if exec_container is not None:
-                    exec_container.remove(force=True)
+                    try:
+                        exec_container.remove(force=True)
+                    except Exception:
+                        pass
                 shutil.rmtree(dest, ignore_errors=True)
 
         return _ctx()
@@ -553,6 +555,9 @@ class SWEbenchSandbox:
                 test_output=test_output,
                 patch_sha256=patch_sha,
             )
+        except Exception as exc:
+            reraise_docker_unavailable(exc, scope="SWE-bench Lite evaluation")
+            raise
         finally:
             if container is not None:
                 try:

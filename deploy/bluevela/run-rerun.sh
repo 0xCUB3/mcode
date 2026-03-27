@@ -59,7 +59,21 @@ export DOCKER_HOST=unix://${SOCK}
 
 trap "kill ${PODMAN_PID} 2>/dev/null; wait ${PODMAN_PID} 2>/dev/null" EXIT
 
-source '"${BV_MCODE_DIR}"'/.venv/bin/activate
+for attempt in $(seq 1 30); do
+    if uv run python - <<'"'"'PYEOF'"'"' >/dev/null 2>&1; then
+import docker
+client = docker.from_env()
+client.ping()
+PYEOF
+        break
+    fi
+    sleep 1
+    if [[ ${attempt} -eq 30 ]]; then
+        echo "Docker socket did not become ready" >&2
+        exit 1
+    fi
+done
+
 export OPENAI_BASE_URL='"'${OPENAI_BASE_URL}'"'
 export OPENAI_API_KEY='"'${OPENAI_API_KEY}'"'
 export MCODE_MAX_NEW_TOKENS='"'${MCODE_MAX_NEW_TOKENS}'"'
@@ -74,7 +88,7 @@ RESULTS_DIR='"${BV_RESULTS_DIR}"'
 echo "=== Pre-pulling rerun images ==="
 date
 # Pull only the images we need
-python3 << PYEOF
+uv run python << PYEOF
 import json, docker
 from swebench.harness.test_spec.test_spec import make_test_spec
 from datasets import load_dataset
@@ -124,7 +138,7 @@ run_experiment() {
     echo "[${EXP_NAME}] starting on $(hostname)" >> ${LOG_DIR}/rerun-${EXP_NAME}.log
     date >> ${LOG_DIR}/rerun-${EXP_NAME}.log
 
-    python -m mcode bench swebench-lite \
+    uv run python -m mcode bench swebench-lite \
         --backend '"'${BACKEND}'"' \
         --model '"'${MODEL}'"' \
         --loop-budget ${LOOP_BUDGET} \
@@ -157,7 +171,7 @@ date
 # Print summary
 echo ""
 echo "=== RERUN RESULTS ==="
-python3 << PYEOF
+uv run python << PYEOF
 import sqlite3, glob
 for db in sorted(glob.glob("'"${BV_RESULTS_DIR}"'/rerun-*.db")):
     conn = sqlite3.connect(db)
