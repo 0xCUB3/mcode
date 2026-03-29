@@ -10,12 +10,11 @@ def test_results_db_roundtrip(tmp_path: Path) -> None:
     db_path = tmp_path / "results.db"
     rdb = ResultsDB(db_path)
     run_id = rdb.start_run(
-        "humaneval",
+        "swebench-live",
         {
             "backend_name": "ollama",
             "model_id": "test-model",
             "loop_budget": 3,
-            "retrieval": False,
             "timeout_s": 60,
             "cache_dir": str(tmp_path / "cache"),
         },
@@ -36,12 +35,11 @@ def test_results_db_roundtrip(tmp_path: Path) -> None:
         },
     )
     run_id_2 = rdb.start_run(
-        "humaneval",
+        "swebench-live",
         {
             "backend_name": "ollama",
             "model_id": "test-model",
             "loop_budget": 3,
-            "retrieval": False,
             "timeout_s": 60,
             "cache_dir": str(tmp_path / "cache"),
         },
@@ -63,7 +61,7 @@ def test_results_db_roundtrip(tmp_path: Path) -> None:
     )
 
     per_run = rdb.pass_rates_grouped(
-        benchmark="humaneval",
+        benchmark="swebench-live",
         model_id="test-model",
         backend_name="ollama",
         timeout_s=60,
@@ -76,7 +74,7 @@ def test_results_db_roundtrip(tmp_path: Path) -> None:
     assert cfg["loop_budget"] == 3
 
     grouped = rdb.pass_rates_grouped(
-        benchmark="humaneval",
+        benchmark="swebench-live",
         model_id="test-model",
         backend_name="ollama",
         timeout_s=60,
@@ -92,12 +90,11 @@ def test_run_metrics_grouped_includes_time_stats(tmp_path: Path) -> None:
     db_path = tmp_path / "results.db"
     with ResultsDB(db_path) as rdb:
         run_id = rdb.start_run(
-            "humaneval",
+            "swebench-live",
             {
                 "backend_name": "ollama",
                 "model_id": "test-model",
                 "loop_budget": 1,
-                "retrieval": False,
                 "timeout_s": 60,
                 "cache_dir": str(tmp_path / "cache"),
             },
@@ -134,7 +131,7 @@ def test_run_metrics_grouped_includes_time_stats(tmp_path: Path) -> None:
         )
 
         rows = rdb.run_metrics_grouped(
-            benchmark="humaneval",
+            benchmark="swebench-live",
             model_id="test-model",
             backend_name="ollama",
             timeout_s=60,
@@ -158,12 +155,11 @@ def test_run_metrics_grouped_aggregates_runs(tmp_path: Path) -> None:
     db_path = tmp_path / "results.db"
     with ResultsDB(db_path) as rdb:
         run_id_1 = rdb.start_run(
-            "humaneval",
+            "swebench-live",
             {
                 "backend_name": "ollama",
                 "model_id": "test-model",
                 "loop_budget": 1,
-                "retrieval": False,
                 "timeout_s": 60,
                 "cache_dir": str(tmp_path / "cache"),
             },
@@ -185,12 +181,11 @@ def test_run_metrics_grouped_aggregates_runs(tmp_path: Path) -> None:
         )
 
         run_id_2 = rdb.start_run(
-            "humaneval",
+            "swebench-live",
             {
                 "backend_name": "ollama",
                 "model_id": "test-model",
                 "loop_budget": 1,
-                "retrieval": False,
                 "timeout_s": 60,
                 "cache_dir": str(tmp_path / "cache"),
             },
@@ -212,7 +207,7 @@ def test_run_metrics_grouped_aggregates_runs(tmp_path: Path) -> None:
         )
 
         rows = rdb.run_metrics_grouped(
-            benchmark="humaneval",
+            benchmark="swebench-live",
             model_id="test-model",
             backend_name="ollama",
             timeout_s=60,
@@ -234,12 +229,11 @@ def test_run_metrics_grouped_counts_timeouts(tmp_path: Path) -> None:
     db_path = tmp_path / "results.db"
     with ResultsDB(db_path) as rdb:
         run_id = rdb.start_run(
-            "humaneval",
+            "swebench-live",
             {
                 "backend_name": "ollama",
                 "model_id": "test-model",
                 "loop_budget": 1,
-                "retrieval": False,
                 "timeout_s": 60,
                 "cache_dir": str(tmp_path / "cache"),
             },
@@ -276,7 +270,7 @@ def test_run_metrics_grouped_counts_timeouts(tmp_path: Path) -> None:
         )
 
         rows = rdb.run_metrics_grouped(
-            benchmark="humaneval",
+            benchmark="swebench-live",
             model_id="test-model",
             backend_name="ollama",
             timeout_s=60,
@@ -298,12 +292,11 @@ def test_merge_from_combines_dbs(tmp_path: Path) -> None:
 
     with ResultsDB(db_a) as rdb_a:
         run_id = rdb_a.start_run(
-            "humaneval",
+            "swebench-live",
             {
                 "backend_name": "ollama",
                 "model_id": "test-model",
                 "loop_budget": 1,
-                "retrieval": False,
                 "timeout_s": 60,
                 "cache_dir": str(tmp_path / "cache"),
             },
@@ -326,12 +319,11 @@ def test_merge_from_combines_dbs(tmp_path: Path) -> None:
 
     with ResultsDB(db_b) as rdb_b:
         run_id = rdb_b.start_run(
-            "humaneval",
+            "swebench-live",
             {
                 "backend_name": "ollama",
                 "model_id": "test-model",
                 "loop_budget": 1,
-                "retrieval": False,
                 "timeout_s": 60,
                 "cache_dir": str(tmp_path / "cache"),
             },
@@ -355,7 +347,7 @@ def test_merge_from_combines_dbs(tmp_path: Path) -> None:
     with ResultsDB(merged_db) as rdb:
         rdb.merge_from([db_a, db_b])
         rows = rdb.run_metrics_grouped(
-            benchmark="humaneval",
+            benchmark="swebench-live",
             model_id="test-model",
             backend_name="ollama",
             timeout_s=60,

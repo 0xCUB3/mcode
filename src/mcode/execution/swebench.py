@@ -324,8 +324,7 @@ class SWEbenchSandbox:
                         raise RuntimeError("Timed out preparing SWE-bench task environment")
                     if setup_exit_code != 0:
                         raise RuntimeError(
-                            "Failed to prepare SWE-bench task environment:\n"
-                            f"{setup_output}"
+                            f"Failed to prepare SWE-bench task environment:\n{setup_output}"
                         )
 
                 def command_fn(command: str) -> str:

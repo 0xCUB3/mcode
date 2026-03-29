@@ -4,19 +4,12 @@ import os
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
-from pydantic import BaseModel, Field
-
 from mcode.agent.coding_agent import build_coding_agent
 from mcode.agent.verification import (
     build_budget_warning,
     build_submit_block_message,
     verification_state_from_event_log,
 )
-from mcode.bench.tasks import Task
-
-
-class CodeOutput(BaseModel):
-    code: str = Field(..., description="Python code only, no markdown.")
 
 
 def _seed_react_context_from_runtime(*, condensed_state):
@@ -34,14 +27,10 @@ def _seed_react_context_from_runtime(*, condensed_state):
 
     if show_reminder and working_memory is not None:
         reminder = working_memory.as_message(omitted_messages=omitted_messages)
-        context = context.add(
-            Message(role=reminder["role"], content=str(reminder["content"]))
-        )
+        context = context.add(Message(role=reminder["role"], content=str(reminder["content"])))
 
     for message in recent_messages:
-        context = context.add(
-            Message(role=message["role"], content=str(message["content"]))
-        )
+        context = context.add(Message(role=message["role"], content=str(message["content"])))
 
     return context
 
@@ -201,17 +190,6 @@ class LLMSession:
                     yield self
             finally:
                 self._m = None
-
-    def generate_code(self, *, task: Task, requirements: list | None = None):
-        system_prompt = _code_system_prompt(task)
-        return self._m.instruct(
-            task.prompt,
-            format=CodeOutput,
-            strategy=self._strategy(),
-            requirements=requirements or [],
-            return_sampling_results=True,
-            model_options=self._model_options(system_prompt=system_prompt),
-        )
 
     def generate_patch(
         self,
@@ -635,13 +613,3 @@ def _get_diff(repo_root: str) -> str:
     if result.returncode != 0:
         print(f"  [diff] git diff failed: {result.stderr[:300]}", flush=True)
     return result.stdout
-
-
-def _code_system_prompt(task: Task) -> str:
-    if task.benchmark == "humaneval":
-        return (
-            "You are an expert Python programmer.\n"
-            "Complete the function defined in the prompt.\n"
-            "Keep the function name and signature exactly the same."
-        )
-    return "You are an expert Python programmer."

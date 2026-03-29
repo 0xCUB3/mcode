@@ -43,17 +43,6 @@ def _configure_mellea_logging(verbose: bool) -> None:
         return
 
 
-def _parse_bool(v: str | None) -> bool | None:
-    if v is None:
-        return None
-    lowered = v.strip().lower()
-    if lowered in {"1", "true", "yes", "y", "on"}:
-        return True
-    if lowered in {"0", "false", "no", "n", "off"}:
-        return False
-    raise typer.BadParameter("Expected a boolean (true/false).")
-
-
 def _optional_str(v: str) -> str | None:
     if v.strip().lower() in {"", "none", "null"}:
         return None
@@ -226,13 +215,8 @@ def results(
         bool,
         typer.Option("--time", help="Include time-to-solve metrics (sec/solve, solves/hour, p95)"),
     ] = False,
-    retrieval: Annotated[
-        str | None,
-        typer.Option("--retrieval", help="Filter by retrieval flag (true/false)"),
-    ] = None,
 ) -> None:
     """Query pass rates from the results DB."""
-    retrieval_bool = _parse_bool(retrieval)
     group_by_config = ("backend_name", "timeout_s", "loop_budget")
 
     db_paths = _expand_db_paths(db=db, db_glob=db_glob, db_dir=db_dir)
@@ -245,7 +229,6 @@ def results(
                     backend_name=backend,
                     timeout_s=timeout_s,
                     group_by=group_by_config,
-                    retrieval=retrieval_bool,
                     loop_budget=loop_budget,
                 )
                 rows = sorted(
@@ -259,7 +242,6 @@ def results(
                 table.add_column("model")
                 table.add_column("budget", justify="right")
                 table.add_column("timeout", justify="right")
-                table.add_column("retrieval", justify="center")
                 table.add_column("runs", justify="right")
                 table.add_column("total", justify="right")
                 table.add_column("passed", justify="right")
@@ -277,7 +259,6 @@ def results(
                         row["model_id"],
                         str(row.get("loop_budget", "")),
                         str(row["timeout_s"]),
-                        "on" if row["retrieval"] else "off",
                         str(row.get("runs", "")),
                         str(row["total"]),
                         str(row["passed"]),
@@ -300,7 +281,6 @@ def results(
                 backend_name=backend,
                 timeout_s=timeout_s,
                 group_by=group_by_config,
-                retrieval=retrieval_bool,
                 loop_budget=loop_budget,
             )
             table = Table(title="Pass rates by config")
@@ -309,7 +289,6 @@ def results(
             table.add_column("model")
             table.add_column("budget", justify="right")
             table.add_column("timeout", justify="right")
-            table.add_column("retrieval", justify="center")
             table.add_column("total", justify="right")
             table.add_column("passed", justify="right")
             table.add_column("pass_rate", justify="right")
@@ -320,7 +299,6 @@ def results(
                     row["model_id"],
                     str(row.get("loop_budget", "")),
                     str(row["timeout_s"]),
-                    "on" if row["retrieval"] else "off",
                     str(row["total"]),
                     str(row["passed"]),
                     f"{row['pass_rate']:.1%}",
@@ -335,7 +313,6 @@ def results(
                 backend_name=backend,
                 timeout_s=timeout_s,
                 group_by=(),
-                retrieval=retrieval_bool,
                 loop_budget=loop_budget,
             )
             rows = sorted(rows, key=lambda r: (r["solves_per_hour"], r["pass_rate"]), reverse=True)
@@ -347,7 +324,6 @@ def results(
             table.add_column("model")
             table.add_column("budget", justify="right")
             table.add_column("timeout", justify="right")
-            table.add_column("retrieval", justify="center")
             table.add_column("total", justify="right")
             table.add_column("passed", justify="right")
             table.add_column("timed_out", justify="right")
@@ -366,7 +342,6 @@ def results(
                     row["model_id"],
                     str(row.get("loop_budget", "")),
                     str(row["timeout_s"]),
-                    "on" if row["retrieval"] else "off",
                     str(row["total"]),
                     str(row["passed"]),
                     str(row.get("timed_out", 0)),
@@ -386,7 +361,6 @@ def results(
             backend_name=backend,
             timeout_s=timeout_s,
             group_by=(),
-            retrieval=retrieval_bool,
             loop_budget=loop_budget,
         )
         table = Table(title="Pass rates (per run)")
@@ -397,7 +371,6 @@ def results(
         table.add_column("model")
         table.add_column("budget", justify="right")
         table.add_column("timeout", justify="right")
-        table.add_column("retrieval", justify="center")
         table.add_column("total", justify="right")
         table.add_column("passed", justify="right")
         table.add_column("pass_rate", justify="right")
@@ -410,7 +383,6 @@ def results(
                 row["model_id"],
                 str(row.get("loop_budget", "")),
                 str(row["timeout_s"]),
-                "on" if row["retrieval"] else "off",
                 str(row["total"]),
                 str(row["passed"]),
                 f"{row['pass_rate']:.1%}",
@@ -424,7 +396,6 @@ def _config_label(r: dict) -> str:
         f"{r.get('backend_name', '')}:{r.get('model_id', '')}",
         f"budget={r.get('loop_budget', '')}",
         f"timeout={r.get('timeout_s', '')}",
-        "retrieval=on" if r.get("retrieval") else "retrieval=off",
     ]
     if r.get("strategy") and r["strategy"] != "repair":
         parts.append(f"strategy={r['strategy']}")
@@ -660,7 +631,6 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
         benchmark: constantValue(points, "benchmark"),
         backend: constantValue(points, "backend_name"),
         model: constantValue(points, "model_id"),
-        retrieval: constantValue(points, "retrieval"),
       }};
       function maybeAppendTitle(k, v) {{
         if (v === null || v === undefined) return;
@@ -671,7 +641,6 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
       maybeAppendTitle("benchmark", fixed.benchmark);
       maybeAppendTitle("backend", fixed.backend);
       maybeAppendTitle("model", fixed.model);
-      if (fixed.retrieval !== null) maybeAppendTitle("retrieval", fmtBool(fixed.retrieval));
 
       document.getElementById("title").textContent = finalTitle;
       const fixedTokens = [];
@@ -696,7 +665,6 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
         ["model_id", "Model"],
         ["loop_budget", "Budget"],
         ["timeout_s", "Timeout"],
-        ["retrieval", "Retrieval"],
       ];
 
       const varying = new Map();
@@ -705,7 +673,6 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
       }}
 
       function fmtValue(field, v) {{
-        if (field === "retrieval") return fmtBool(!!v);
         if (field === "timeout_s") return fmtTimeout(v);
         return String(v);
       }}
@@ -713,7 +680,6 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
       function shortToken(field, v) {{
         if (field === "loop_budget") return `budget=${{v}}`;
         if (field === "timeout_s") return `t=${{v}}s`;
-        if (field === "retrieval") return `r=${{fmtBool(!!v)}}`;
         if (field === "benchmark") return String(v);
         if (field === "backend_name") return `backend=${{v}}`;
         if (field === "model_id") return `model=${{v}}`;
@@ -759,7 +725,6 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
         "benchmark",
         "loop_budget",
         "timeout_s",
-        "retrieval",
         "model_id",
         "backend_name",
       ];
@@ -1400,16 +1365,11 @@ def report(
     backend: Annotated[str | None, typer.Option("--backend")] = None,
     loop_budget: Annotated[int | None, typer.Option("--loop-budget", min=1)] = None,
     timeout_s: Annotated[int | None, typer.Option("--timeout", min=1)] = None,
-    retrieval: Annotated[
-        str | None,
-        typer.Option("--retrieval", help="Filter by retrieval flag (true/false)"),
-    ] = None,
     per_run: Annotated[
         bool, typer.Option("--per-run", help="Plot each run separately (vs grouped)")
     ] = False,
 ) -> None:
     """Generate a lightweight HTML report (Plotly) for pass rate vs time-to-solve."""
-    retrieval_bool = _parse_bool(retrieval)
     group_by_config = ("backend_name", "timeout_s", "loop_budget")
     group_by = () if per_run else group_by_config
 
@@ -1421,7 +1381,6 @@ def report(
             backend_name=backend,
             timeout_s=timeout_s,
             group_by=group_by,
-            retrieval=retrieval_bool,
             loop_budget=loop_budget,
             include_percentiles=True,
         )
@@ -1509,7 +1468,6 @@ def _print_run_summary(
     model: str,
     loop_budget: int,
     timeout_s: int,
-    retrieval: bool,
 ) -> None:
     table = Table(title="Run summary")
     table.add_column("run_id", justify="right")
@@ -1518,7 +1476,6 @@ def _print_run_summary(
     table.add_column("model")
     table.add_column("budget", justify="right")
     table.add_column("timeout", justify="right")
-    table.add_column("retrieval", justify="center")
     table.add_column("total", justify="right")
     table.add_column("passed", justify="right")
     table.add_column("pass_rate", justify="right")
@@ -1529,649 +1486,11 @@ def _print_run_summary(
         model,
         str(loop_budget),
         str(timeout_s),
-        "on" if retrieval else "off",
         str(summary.total),
         str(summary.passed),
         f"{summary.pass_rate:.1%}",
     )
     console.print(table)
-
-
-def _bench_common(
-    benchmark: str,
-    backend: str,
-    model: str,
-    loop_budget: int,
-    temperature: float | None,
-    seed: int | None,
-    timeout_s: int,
-    retrieval: bool,
-    sandbox: str,
-    shard_count: int | None,
-    shard_index: int | None,
-    db: Path,
-    limit: int | None,
-    strategy: str = "repair",
-    s2_model: str | None = None,
-    s2_backend: str = "ollama",
-    s2_mode: str = "best_attempt",
-    lcb_cutoff: str | None = None,
-) -> None:
-    sandbox_name = sandbox.strip().lower()
-    if sandbox_name not in {"docker", "process"}:
-        raise typer.BadParameter("Unknown --sandbox. Use docker or process.")
-    strategy_name = strategy.strip().lower()
-    if strategy_name not in {"repair", "sofai", "raw"}:
-        raise typer.BadParameter("Unknown --strategy. Use repair, sofai, or raw.")
-    if strategy_name == "sofai" and not s2_model:
-        raise typer.BadParameter("--s2-model is required when --strategy=sofai.")
-
-    shard_count, shard_index = _validate_shards(shard_count=shard_count, shard_index=shard_index)
-    if sandbox_name == "process":
-        typer.echo(
-            "Note: --sandbox process runs untrusted code without isolation. "
-            "Use only in a locked-down container.",
-            err=True,
-        )
-    if shard_count and shard_count > 1 and db == DEFAULT_DB_PATH:
-        typer.echo(
-            "Note: when running shards in parallel, use a unique --db per shard to avoid SQLite "
-            "locks.",
-            err=True,
-        )
-
-    config = BenchConfig(
-        backend_name=backend,
-        model_id=model,
-        loop_budget=loop_budget,
-        temperature=temperature,
-        seed=seed,
-        strategy=strategy_name,
-        s2_model_id=s2_model,
-        s2_backend_name=s2_backend,
-        s2_solver_mode=s2_mode,
-        retrieval=retrieval,
-        timeout_s=timeout_s,
-        sandbox=sandbox_name,
-        task_shard_count=shard_count,
-        task_shard_index=shard_index,
-        lcb_cutoff=lcb_cutoff,
-    )
-    runner = BenchmarkRunner(config=config, results_db=ResultsDB(db))
-    summary = runner.run_benchmark(benchmark, limit=limit)
-    _print_run_summary(
-        summary=summary,
-        benchmark=benchmark,
-        backend=backend,
-        model=model,
-        loop_budget=loop_budget,
-        timeout_s=timeout_s,
-        retrieval=retrieval,
-    )
-
-
-@bench_app.command("humaneval")
-def bench_humaneval(
-    model: Annotated[str, typer.Option("--model", help="Mellea model id")],
-    backend: Annotated[str, typer.Option("--backend", help="Mellea backend name")] = "ollama",
-    loop_budget: Annotated[
-        int,
-        typer.Option("--loop-budget", min=1, help="Max attempts per task (with error feedback)"),
-    ] = 3,
-    temperature: Annotated[
-        float | None,
-        typer.Option("--temperature", help="Sampling temperature"),
-    ] = None,
-    seed: Annotated[
-        int | None,
-        typer.Option("--seed", help="Random seed for reproducibility"),
-    ] = None,
-    timeout_s: Annotated[
-        int,
-        typer.Option("--timeout", min=1, help="Seconds per sandbox execution attempt"),
-    ] = 60,
-    retrieval: Annotated[
-        bool,
-        typer.Option("--retrieval/--no-retrieval", help="Reserved (no effect yet)"),
-    ] = False,
-    sandbox: Annotated[
-        str,
-        typer.Option(
-            "--sandbox",
-            help="Execution sandbox for code evaluation (docker or process).",
-        ),
-    ] = "docker",
-    shard_count: Annotated[
-        int | None,
-        typer.Option("--shard-count", min=1, help="Total shards for parallel runs"),
-    ] = None,
-    shard_index: Annotated[
-        int | None,
-        typer.Option("--shard-index", min=0, help="Shard index (0..shard-count-1)"),
-    ] = None,
-    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
-    limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
-    strategy: Annotated[
-        str,
-        typer.Option("--strategy", help="Sampling strategy: repair, sofai, or raw"),
-    ] = "repair",
-    s2_model: Annotated[
-        str | None,
-        typer.Option("--s2-model", help="Model ID for SOFAI S2 solver (larger model)"),
-    ] = None,
-    s2_backend: Annotated[
-        str,
-        typer.Option("--s2-backend", help="Backend for SOFAI S2 solver"),
-    ] = "ollama",
-    s2_mode: Annotated[
-        str,
-        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
-    ] = "best_attempt",
-) -> None:
-    _bench_common(
-        benchmark="humaneval",
-        backend=backend,
-        model=model,
-        loop_budget=loop_budget,
-        temperature=temperature,
-        seed=seed,
-        timeout_s=timeout_s,
-        retrieval=retrieval,
-        sandbox=sandbox,
-        shard_count=shard_count,
-        shard_index=shard_index,
-        db=db,
-        limit=limit,
-        strategy=strategy,
-        s2_model=s2_model,
-        s2_backend=s2_backend,
-        s2_mode=s2_mode,
-    )
-
-
-@bench_app.command("mbpp")
-def bench_mbpp(
-    model: Annotated[str, typer.Option("--model", help="Mellea model id")],
-    backend: Annotated[str, typer.Option("--backend", help="Mellea backend name")] = "ollama",
-    loop_budget: Annotated[
-        int,
-        typer.Option("--loop-budget", min=1, help="Max attempts per task (with error feedback)"),
-    ] = 3,
-    temperature: Annotated[
-        float | None,
-        typer.Option("--temperature", help="Sampling temperature"),
-    ] = None,
-    seed: Annotated[
-        int | None,
-        typer.Option("--seed", help="Random seed for reproducibility"),
-    ] = None,
-    timeout_s: Annotated[
-        int,
-        typer.Option("--timeout", min=1, help="Seconds per sandbox execution attempt"),
-    ] = 60,
-    retrieval: Annotated[
-        bool,
-        typer.Option("--retrieval/--no-retrieval", help="Reserved (no effect yet)"),
-    ] = False,
-    sandbox: Annotated[
-        str,
-        typer.Option(
-            "--sandbox",
-            help="Execution sandbox for code evaluation (docker or process).",
-        ),
-    ] = "docker",
-    shard_count: Annotated[
-        int | None,
-        typer.Option("--shard-count", min=1, help="Total shards for parallel runs"),
-    ] = None,
-    shard_index: Annotated[
-        int | None,
-        typer.Option("--shard-index", min=0, help="Shard index (0..shard-count-1)"),
-    ] = None,
-    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
-    limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
-    strategy: Annotated[
-        str,
-        typer.Option("--strategy", help="Sampling strategy: repair, sofai, or raw"),
-    ] = "repair",
-    s2_model: Annotated[
-        str | None,
-        typer.Option("--s2-model", help="Model ID for SOFAI S2 solver (larger model)"),
-    ] = None,
-    s2_backend: Annotated[
-        str,
-        typer.Option("--s2-backend", help="Backend for SOFAI S2 solver"),
-    ] = "ollama",
-    s2_mode: Annotated[
-        str,
-        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
-    ] = "best_attempt",
-) -> None:
-    _bench_common(
-        benchmark="mbpp",
-        backend=backend,
-        model=model,
-        loop_budget=loop_budget,
-        temperature=temperature,
-        seed=seed,
-        timeout_s=timeout_s,
-        retrieval=retrieval,
-        sandbox=sandbox,
-        shard_count=shard_count,
-        shard_index=shard_index,
-        db=db,
-        limit=limit,
-        strategy=strategy,
-        s2_model=s2_model,
-        s2_backend=s2_backend,
-        s2_mode=s2_mode,
-    )
-
-
-@bench_app.command("humaneval+")
-def bench_humaneval_plus(
-    model: Annotated[str, typer.Option("--model", help="Mellea model id")],
-    backend: Annotated[str, typer.Option("--backend", help="Mellea backend name")] = "ollama",
-    loop_budget: Annotated[
-        int,
-        typer.Option("--loop-budget", min=1, help="Max attempts per task (with error feedback)"),
-    ] = 3,
-    temperature: Annotated[
-        float | None,
-        typer.Option("--temperature", help="Sampling temperature"),
-    ] = None,
-    seed: Annotated[
-        int | None,
-        typer.Option("--seed", help="Random seed for reproducibility"),
-    ] = None,
-    timeout_s: Annotated[
-        int,
-        typer.Option("--timeout", min=1, help="Seconds per sandbox execution attempt"),
-    ] = 60,
-    retrieval: Annotated[
-        bool,
-        typer.Option("--retrieval/--no-retrieval", help="Reserved (no effect yet)"),
-    ] = False,
-    sandbox: Annotated[
-        str,
-        typer.Option(
-            "--sandbox",
-            help="Execution sandbox for code evaluation (docker or process).",
-        ),
-    ] = "docker",
-    shard_count: Annotated[
-        int | None,
-        typer.Option("--shard-count", min=1, help="Total shards for parallel runs"),
-    ] = None,
-    shard_index: Annotated[
-        int | None,
-        typer.Option("--shard-index", min=0, help="Shard index (0..shard-count-1)"),
-    ] = None,
-    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
-    limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
-    strategy: Annotated[
-        str,
-        typer.Option("--strategy", help="Sampling strategy: repair, sofai, or raw"),
-    ] = "repair",
-    s2_model: Annotated[
-        str | None,
-        typer.Option("--s2-model", help="Model ID for SOFAI S2 solver (larger model)"),
-    ] = None,
-    s2_backend: Annotated[
-        str,
-        typer.Option("--s2-backend", help="Backend for SOFAI S2 solver"),
-    ] = "ollama",
-    s2_mode: Annotated[
-        str,
-        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
-    ] = "best_attempt",
-) -> None:
-    _bench_common(
-        benchmark="humaneval+",
-        backend=backend,
-        model=model,
-        loop_budget=loop_budget,
-        temperature=temperature,
-        seed=seed,
-        timeout_s=timeout_s,
-        retrieval=retrieval,
-        sandbox=sandbox,
-        shard_count=shard_count,
-        shard_index=shard_index,
-        db=db,
-        limit=limit,
-        strategy=strategy,
-        s2_model=s2_model,
-        s2_backend=s2_backend,
-        s2_mode=s2_mode,
-    )
-
-
-@bench_app.command("mbpp+")
-def bench_mbpp_plus(
-    model: Annotated[str, typer.Option("--model", help="Mellea model id")],
-    backend: Annotated[str, typer.Option("--backend", help="Mellea backend name")] = "ollama",
-    loop_budget: Annotated[
-        int,
-        typer.Option("--loop-budget", min=1, help="Max attempts per task (with error feedback)"),
-    ] = 3,
-    temperature: Annotated[
-        float | None,
-        typer.Option("--temperature", help="Sampling temperature"),
-    ] = None,
-    seed: Annotated[
-        int | None,
-        typer.Option("--seed", help="Random seed for reproducibility"),
-    ] = None,
-    timeout_s: Annotated[
-        int,
-        typer.Option("--timeout", min=1, help="Seconds per sandbox execution attempt"),
-    ] = 60,
-    retrieval: Annotated[
-        bool,
-        typer.Option("--retrieval/--no-retrieval", help="Reserved (no effect yet)"),
-    ] = False,
-    sandbox: Annotated[
-        str,
-        typer.Option(
-            "--sandbox",
-            help="Execution sandbox for code evaluation (docker or process).",
-        ),
-    ] = "docker",
-    shard_count: Annotated[
-        int | None,
-        typer.Option("--shard-count", min=1, help="Total shards for parallel runs"),
-    ] = None,
-    shard_index: Annotated[
-        int | None,
-        typer.Option("--shard-index", min=0, help="Shard index (0..shard-count-1)"),
-    ] = None,
-    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
-    limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
-    strategy: Annotated[
-        str,
-        typer.Option("--strategy", help="Sampling strategy: repair or sofai"),
-    ] = "repair",
-    s2_model: Annotated[
-        str | None,
-        typer.Option("--s2-model", help="Model ID for SOFAI S2 solver (larger model)"),
-    ] = None,
-    s2_backend: Annotated[
-        str,
-        typer.Option("--s2-backend", help="Backend for SOFAI S2 solver"),
-    ] = "ollama",
-    s2_mode: Annotated[
-        str,
-        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
-    ] = "best_attempt",
-) -> None:
-    _bench_common(
-        benchmark="mbpp+",
-        backend=backend,
-        model=model,
-        loop_budget=loop_budget,
-        temperature=temperature,
-        seed=seed,
-        timeout_s=timeout_s,
-        retrieval=retrieval,
-        sandbox=sandbox,
-        shard_count=shard_count,
-        shard_index=shard_index,
-        db=db,
-        limit=limit,
-        strategy=strategy,
-        s2_model=s2_model,
-        s2_backend=s2_backend,
-        s2_mode=s2_mode,
-    )
-
-
-@bench_app.command("livecodebench")
-def bench_livecodebench(
-    model: Annotated[str, typer.Option("--model", help="Mellea model id")],
-    backend: Annotated[str, typer.Option("--backend", help="Mellea backend name")] = "ollama",
-    loop_budget: Annotated[
-        int,
-        typer.Option("--loop-budget", min=1, help="Max attempts per task (with error feedback)"),
-    ] = 3,
-    temperature: Annotated[
-        float | None,
-        typer.Option("--temperature", help="Sampling temperature"),
-    ] = None,
-    seed: Annotated[
-        int | None,
-        typer.Option("--seed", help="Random seed for reproducibility"),
-    ] = None,
-    timeout_s: Annotated[
-        int,
-        typer.Option("--timeout", min=1, help="Seconds per sandbox execution attempt"),
-    ] = 60,
-    retrieval: Annotated[
-        bool,
-        typer.Option("--retrieval/--no-retrieval", help="Reserved (no effect yet)"),
-    ] = False,
-    sandbox: Annotated[
-        str,
-        typer.Option(
-            "--sandbox",
-            help="Execution sandbox for code evaluation (docker or process).",
-        ),
-    ] = "docker",
-    shard_count: Annotated[
-        int | None,
-        typer.Option("--shard-count", min=1, help="Total shards for parallel runs"),
-    ] = None,
-    shard_index: Annotated[
-        int | None,
-        typer.Option("--shard-index", min=0, help="Shard index (0..shard-count-1)"),
-    ] = None,
-    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
-    limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
-    strategy: Annotated[
-        str,
-        typer.Option("--strategy", help="Sampling strategy: repair or sofai"),
-    ] = "repair",
-    s2_model: Annotated[
-        str | None,
-        typer.Option("--s2-model", help="Model ID for SOFAI S2 solver (larger model)"),
-    ] = None,
-    s2_backend: Annotated[
-        str,
-        typer.Option("--s2-backend", help="Backend for SOFAI S2 solver"),
-    ] = "ollama",
-    s2_mode: Annotated[
-        str,
-        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
-    ] = "best_attempt",
-    lcb_cutoff: Annotated[
-        str | None,
-        typer.Option(
-            "--lcb-cutoff",
-            help="Contamination cutoff date (YYYY-MM-DD). Only tasks released before this date.",
-        ),
-    ] = None,
-) -> None:
-    """Run LiveCodeBench code generation benchmark."""
-    _bench_common(
-        benchmark="livecodebench",
-        backend=backend,
-        model=model,
-        loop_budget=loop_budget,
-        temperature=temperature,
-        seed=seed,
-        timeout_s=timeout_s,
-        retrieval=retrieval,
-        sandbox=sandbox,
-        shard_count=shard_count,
-        shard_index=shard_index,
-        db=db,
-        limit=limit,
-        strategy=strategy,
-        s2_model=s2_model,
-        s2_backend=s2_backend,
-        s2_mode=s2_mode,
-        lcb_cutoff=lcb_cutoff,
-    )
-
-
-@bench_app.command("bigcodebench-complete")
-def bench_bigcodebench_complete(
-    model: Annotated[str, typer.Option("--model", help="Mellea model id")],
-    backend: Annotated[str, typer.Option("--backend", help="Mellea backend name")] = "ollama",
-    loop_budget: Annotated[
-        int,
-        typer.Option("--loop-budget", min=1, help="Max attempts per task (with error feedback)"),
-    ] = 3,
-    temperature: Annotated[
-        float | None,
-        typer.Option("--temperature", help="Sampling temperature"),
-    ] = None,
-    seed: Annotated[
-        int | None,
-        typer.Option("--seed", help="Random seed for reproducibility"),
-    ] = None,
-    timeout_s: Annotated[
-        int,
-        typer.Option("--timeout", min=1, help="Seconds per sandbox execution attempt"),
-    ] = 60,
-    retrieval: Annotated[
-        bool,
-        typer.Option("--retrieval/--no-retrieval", help="Reserved (no effect yet)"),
-    ] = False,
-    sandbox: Annotated[
-        str,
-        typer.Option(
-            "--sandbox",
-            help="Execution sandbox for code evaluation (docker or process).",
-        ),
-    ] = "docker",
-    shard_count: Annotated[
-        int | None,
-        typer.Option("--shard-count", min=1, help="Total shards for parallel runs"),
-    ] = None,
-    shard_index: Annotated[
-        int | None,
-        typer.Option("--shard-index", min=0, help="Shard index (0..shard-count-1)"),
-    ] = None,
-    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
-    limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
-    strategy: Annotated[
-        str,
-        typer.Option("--strategy", help="Sampling strategy: repair or sofai"),
-    ] = "repair",
-    s2_model: Annotated[
-        str | None,
-        typer.Option("--s2-model", help="Model ID for SOFAI S2 solver (larger model)"),
-    ] = None,
-    s2_backend: Annotated[
-        str,
-        typer.Option("--s2-backend", help="Backend for SOFAI S2 solver"),
-    ] = "ollama",
-    s2_mode: Annotated[
-        str,
-        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
-    ] = "best_attempt",
-) -> None:
-    """Run BigCodeBench complete (docstring completion) benchmark."""
-    _bench_common(
-        benchmark="bigcodebench-complete",
-        backend=backend,
-        model=model,
-        loop_budget=loop_budget,
-        temperature=temperature,
-        seed=seed,
-        timeout_s=timeout_s,
-        retrieval=retrieval,
-        sandbox=sandbox,
-        shard_count=shard_count,
-        shard_index=shard_index,
-        db=db,
-        limit=limit,
-        strategy=strategy,
-        s2_model=s2_model,
-        s2_backend=s2_backend,
-        s2_mode=s2_mode,
-    )
-
-
-@bench_app.command("bigcodebench-instruct")
-def bench_bigcodebench_instruct(
-    model: Annotated[str, typer.Option("--model", help="Mellea model id")],
-    backend: Annotated[str, typer.Option("--backend", help="Mellea backend name")] = "ollama",
-    loop_budget: Annotated[
-        int,
-        typer.Option("--loop-budget", min=1, help="Max attempts per task (with error feedback)"),
-    ] = 3,
-    temperature: Annotated[
-        float | None,
-        typer.Option("--temperature", help="Sampling temperature"),
-    ] = None,
-    seed: Annotated[
-        int | None,
-        typer.Option("--seed", help="Random seed for reproducibility"),
-    ] = None,
-    timeout_s: Annotated[
-        int,
-        typer.Option("--timeout", min=1, help="Seconds per sandbox execution attempt"),
-    ] = 60,
-    retrieval: Annotated[
-        bool,
-        typer.Option("--retrieval/--no-retrieval", help="Reserved (no effect yet)"),
-    ] = False,
-    sandbox: Annotated[
-        str,
-        typer.Option(
-            "--sandbox",
-            help="Execution sandbox for code evaluation (docker or process).",
-        ),
-    ] = "docker",
-    shard_count: Annotated[
-        int | None,
-        typer.Option("--shard-count", min=1, help="Total shards for parallel runs"),
-    ] = None,
-    shard_index: Annotated[
-        int | None,
-        typer.Option("--shard-index", min=0, help="Shard index (0..shard-count-1)"),
-    ] = None,
-    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
-    limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
-    strategy: Annotated[
-        str,
-        typer.Option("--strategy", help="Sampling strategy: repair or sofai"),
-    ] = "repair",
-    s2_model: Annotated[
-        str | None,
-        typer.Option("--s2-model", help="Model ID for SOFAI S2 solver (larger model)"),
-    ] = None,
-    s2_backend: Annotated[
-        str,
-        typer.Option("--s2-backend", help="Backend for SOFAI S2 solver"),
-    ] = "ollama",
-    s2_mode: Annotated[
-        str,
-        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
-    ] = "best_attempt",
-) -> None:
-    """Run BigCodeBench instruct (natural language) benchmark."""
-    _bench_common(
-        benchmark="bigcodebench-instruct",
-        backend=backend,
-        model=model,
-        loop_budget=loop_budget,
-        temperature=temperature,
-        seed=seed,
-        timeout_s=timeout_s,
-        retrieval=retrieval,
-        sandbox=sandbox,
-        shard_count=shard_count,
-        shard_index=shard_index,
-        db=db,
-        limit=limit,
-        strategy=strategy,
-        s2_model=s2_model,
-        s2_backend=s2_backend,
-        s2_mode=s2_mode,
-    )
 
 
 @bench_app.command("swebench-live")
@@ -2269,7 +1588,6 @@ def bench_swebench_live(
         s2_model_id=s2_model,
         s2_backend_name=s2_backend,
         s2_solver_mode=s2_mode,
-        retrieval=False,
         timeout_s=timeout_s,
         swebench_split=split,
         swebench_mem_limit=mem_limit,
@@ -2288,7 +1606,6 @@ def bench_swebench_live(
         model=model,
         loop_budget=loop_budget,
         timeout_s=timeout_s,
-        retrieval=False,
     )
 
 
@@ -2409,7 +1726,6 @@ def bench_swebench_lite(
         s2_model_id=s2_model,
         s2_backend_name=s2_backend,
         s2_solver_mode=s2_mode,
-        retrieval=False,
         timeout_s=timeout_s,
         swebench_split=split,
         swebench_namespace=_optional_str(namespace),
@@ -2433,5 +1749,4 @@ def bench_swebench_lite(
         model=model,
         loop_budget=loop_budget,
         timeout_s=timeout_s,
-        retrieval=False,
     )

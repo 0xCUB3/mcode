@@ -53,7 +53,6 @@ class ResultsDB:
               model_id TEXT NOT NULL,
               loop_budget INTEGER NOT NULL,
               timeout_s INTEGER NOT NULL,
-              retrieval INTEGER NOT NULL,
               config_json TEXT NOT NULL
             )
             """
@@ -104,10 +103,9 @@ class ResultsDB:
               model_id,
               loop_budget,
               timeout_s,
-              retrieval,
               config_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 now,
@@ -116,7 +114,6 @@ class ResultsDB:
                 config["model_id"],
                 config.get("loop_budget", 3),
                 config["timeout_s"],
-                1 if config.get("retrieval", False) else 0,
                 json.dumps(config, sort_keys=True, default=str),
             ),
         )
@@ -155,7 +152,6 @@ class ResultsDB:
         backend_name: str | None = None,
         timeout_s: int | None = None,
         group_by: Sequence[str],
-        retrieval: bool | None = None,
         loop_budget: int | None = None,
     ) -> list[dict]:
         group_map = {
@@ -180,9 +176,6 @@ class ResultsDB:
         if timeout_s is not None:
             where.append("r.timeout_s = ?")
             params.append(int(timeout_s))
-        if retrieval is not None:
-            where.append("r.retrieval = ?")
-            params.append(1 if retrieval else 0)
         if loop_budget is not None:
             where.append("r.loop_budget = ?")
             params.append(int(loop_budget))
@@ -195,7 +188,6 @@ class ResultsDB:
                 r.benchmark AS benchmark,
                 r.backend_name AS backend_name,
                 r.model_id AS model_id,
-                r.retrieval AS retrieval,
                 r.config_json AS config_json,
                 r.loop_budget AS loop_budget,
                 r.timeout_s AS timeout_s,
@@ -219,7 +211,6 @@ class ResultsDB:
                         "benchmark": str(row["benchmark"]),
                         "backend_name": str(row["backend_name"]),
                         "model_id": str(row["model_id"]),
-                        "retrieval": bool(int(row["retrieval"])),
                         "loop_budget": int(row["loop_budget"]),
                         "timeout_s": int(row["timeout_s"]),
                         "config_json": str(row["config_json"]),
@@ -236,7 +227,6 @@ class ResultsDB:
             "r.backend_name",
             "r.model_id",
             "r.timeout_s",
-            "r.retrieval",
             "r.loop_budget",
         ]
         group_cols = list(dict.fromkeys([*base_group_cols, *group_exprs]))
@@ -245,7 +235,6 @@ class ResultsDB:
             r.benchmark AS benchmark,
             r.backend_name AS backend_name,
             r.model_id AS model_id,
-            r.retrieval AS retrieval,
             r.loop_budget AS loop_budget,
             r.timeout_s AS timeout_s,
             COUNT(*) AS total,
@@ -271,7 +260,6 @@ class ResultsDB:
                     "benchmark": str(row["benchmark"]),
                     "backend_name": str(row["backend_name"]),
                     "model_id": str(row["model_id"]),
-                    "retrieval": bool(int(row["retrieval"])),
                     "loop_budget": int(row["loop_budget"]),
                     "timeout_s": int(row["timeout_s"]),
                     "total": total,
@@ -289,7 +277,6 @@ class ResultsDB:
         backend_name: str | None = None,
         timeout_s: int | None = None,
         group_by: Sequence[str],
-        retrieval: bool | None = None,
         loop_budget: int | None = None,
         include_percentiles: bool = True,
     ) -> list[dict]:
@@ -315,9 +302,6 @@ class ResultsDB:
         if timeout_s is not None:
             where.append("r.timeout_s = ?")
             params.append(int(timeout_s))
-        if retrieval is not None:
-            where.append("r.retrieval = ?")
-            params.append(1 if retrieval else 0)
         if loop_budget is not None:
             where.append("r.loop_budget = ?")
             params.append(int(loop_budget))
@@ -330,7 +314,6 @@ class ResultsDB:
                 r.benchmark AS benchmark,
                 r.backend_name AS backend_name,
                 r.model_id AS model_id,
-                r.retrieval AS retrieval,
                 r.loop_budget AS loop_budget,
                 r.timeout_s AS timeout_s,
                 COUNT(*) AS total,
@@ -382,7 +365,6 @@ class ResultsDB:
                         "benchmark": str(row["benchmark"]),
                         "backend_name": str(row["backend_name"]),
                         "model_id": str(row["model_id"]),
-                        "retrieval": bool(int(row["retrieval"])),
                         "loop_budget": int(row["loop_budget"]),
                         "timeout_s": int(row["timeout_s"]),
                         "total": total,
@@ -410,7 +392,6 @@ class ResultsDB:
             "r.backend_name",
             "r.model_id",
             "r.timeout_s",
-            "r.retrieval",
             "r.loop_budget",
         ]
         group_cols = list(dict.fromkeys([*base_group_cols, *group_exprs]))
@@ -419,7 +400,6 @@ class ResultsDB:
             r.benchmark AS benchmark,
             r.backend_name AS backend_name,
             r.model_id AS model_id,
-            r.retrieval AS retrieval,
             r.loop_budget AS loop_budget,
             r.timeout_s AS timeout_s,
             COUNT(DISTINCT r.id) AS runs,
@@ -448,7 +428,6 @@ class ResultsDB:
                 r.backend_name AS backend_name,
                 r.model_id AS model_id,
                 r.timeout_s AS timeout_s,
-                r.retrieval AS retrieval,
                 r.loop_budget AS loop_budget,
                 tr.time_ms AS time_ms
               FROM runs r
@@ -463,7 +442,6 @@ class ResultsDB:
                     str(dr["backend_name"]),
                     str(dr["model_id"]),
                     int(dr["timeout_s"]),
-                    bool(int(dr["retrieval"])),
                     int(dr["loop_budget"]),
                 )
                 times_by_key.setdefault(key, []).append(int(dr["time_ms"]))
@@ -486,7 +464,6 @@ class ResultsDB:
                 str(row["backend_name"]),
                 str(row["model_id"]),
                 int(row["timeout_s"]),
-                bool(int(row["retrieval"])),
                 int(row["loop_budget"]),
             )
             p = time_stats.get(key) if include_percentiles else None
@@ -498,7 +475,6 @@ class ResultsDB:
                     "benchmark": str(row["benchmark"]),
                     "backend_name": str(row["backend_name"]),
                     "model_id": str(row["model_id"]),
-                    "retrieval": bool(int(row["retrieval"])),
                     "loop_budget": int(row["loop_budget"]),
                     "timeout_s": int(row["timeout_s"]),
                     "runs": int(row["runs"] or 0),
@@ -551,7 +527,6 @@ class ResultsDB:
                   model_id,
                   loop_budget,
                   timeout_s,
-                  retrieval,
                   config_json
                 FROM runs
                 ORDER BY id
@@ -568,10 +543,9 @@ class ResultsDB:
                       model_id,
                       loop_budget,
                       timeout_s,
-                      retrieval,
                       config_json
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         str(run["timestamp"]),
@@ -580,7 +554,6 @@ class ResultsDB:
                         str(run["model_id"]),
                         int(run["loop_budget"]),
                         int(run["timeout_s"]),
-                        int(run["retrieval"]),
                         str(run["config_json"]),
                     ),
                 )
@@ -820,7 +793,6 @@ def export_csv(
         "model_id",
         "loop_budget",
         "timeout_s",
-        "retrieval",
         "total",
         "passed",
         "pass_rate",
@@ -836,7 +808,6 @@ def export_csv(
         "model_id",
         "loop_budget",
         "timeout_s",
-        "retrieval",
         "task_id",
         "passed",
         "attempts_used",
@@ -894,7 +865,6 @@ def export_csv(
                             "model_id": str(r["model_id"]),
                             "loop_budget": int(r["loop_budget"]),
                             "timeout_s": int(r["timeout_s"]),
-                            "retrieval": int(r["retrieval"]),
                             "total": total,
                             "passed": passed,
                             "pass_rate": f"{pass_rate:.6f}",
@@ -933,7 +903,6 @@ def export_csv(
                             "model_id": str(r["model_id"]),
                             "loop_budget": int(r["loop_budget"]),
                             "timeout_s": int(r["timeout_s"]),
-                            "retrieval": int(r["retrieval"]),
                             "task_id": str(tr["task_id"]),
                             "passed": int(tr["passed"]),
                             "attempts_used": int(tr["attempts_used"]),

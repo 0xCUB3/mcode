@@ -43,6 +43,8 @@ bsub -q "${BV_QUEUE}" \
   -o "${LOG_DIR}/swb-live-%I.log" \
   -e "${LOG_DIR}/swb-live-%I.log" \
   bash -c '
+    set -e
+
     PD='"${BV_PODMAN_ROOT}"'
     mkdir -p ${PD}/graphroot ${PD}/runroot
 
@@ -54,17 +56,34 @@ bsub -q "${BV_QUEUE}" \
         --root=${PD}/graphroot --runroot=${PD}/runroot \
         system service --time=0 unix://${SOCK} &
     PODMAN_PID=$!
-    sleep 2
+    export DOCKER_HOST="unix://${SOCK}"
 
-    source '"${BV_MCODE_DIR}"'/.venv/bin/activate
+    trap "kill ${PODMAN_PID} 2>/dev/null; wait ${PODMAN_PID} 2>/dev/null" EXIT
+
+    cd '"${BV_MCODE_DIR}"'
+
+    for attempt in $(seq 1 30); do
+      if uv run python - <<'"'"'PYEOF'"'"' >/dev/null 2>&1; then
+import docker
+client = docker.from_env()
+client.ping()
+PYEOF
+        break
+      fi
+      sleep 1
+      if [[ ${attempt} -eq 30 ]]; then
+        echo "Docker socket did not become ready" >&2
+        exit 1
+      fi
+    done
+
     export OPENAI_BASE_URL='"'${OPENAI_BASE_URL}'"'
     export OPENAI_API_KEY='"'${OPENAI_API_KEY}'"'
     export MCODE_MAX_NEW_TOKENS='"'${MCODE_MAX_NEW_TOKENS}'"'
-    export DOCKER_HOST="unix://${SOCK}"
 
     SHARD_INDEX=$((LSB_JOBINDEX - 1))
 
-    mcode bench swebench-live \
+    uv run mcode bench swebench-live \
       --model '"'${MODEL}'"' \
       --backend '"'${BACKEND}'"' \
       --loop-budget '"${LOOP_BUDGET}"' \
@@ -77,8 +96,6 @@ bsub -q "${BV_QUEUE}" \
       --shard-index ${SHARD_INDEX} \
       --db '"${BV_RESULTS_DIR}"'/swebench-live-shard-${SHARD_INDEX}.db \
       '"${LIMIT_FLAG}"'
-
-    kill ${PODMAN_PID} 2>/dev/null || true
   '
 
 echo "Array job submitted. Monitor with: bjobs -J swb-live"

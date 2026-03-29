@@ -55,7 +55,7 @@ for i in $(seq 1 60); do
     echo "vLLM server starting on: ${VLLM_HOST}:${VLLM_PORT}"
     echo "Check logs: tail -f ${VLLM_LOG}"
     echo ""
-    echo "Once the model is loaded, run: ./run-bench.sh"
+    echo "Once the model is loaded, run: ./run-swebench-live.sh"
     exit 0
   fi
   sleep 5
