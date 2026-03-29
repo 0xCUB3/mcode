@@ -40,28 +40,8 @@ def test_cli_bench_swebench_help() -> None:
     assert "sofai, or raw" in help_text
 
 
-def test_cli_bench_humaneval_plus_help() -> None:
-    _invoke_help("bench", "humaneval+", "--help")
-
-
-def test_cli_bench_mbpp_plus_help() -> None:
-    _invoke_help("bench", "mbpp+", "--help")
-
-
 def test_cli_report_help() -> None:
     _invoke_help("report", "--help")
-
-
-def test_cli_bench_livecodebench_help() -> None:
-    _invoke_help("bench", "livecodebench", "--help")
-
-
-def test_cli_bench_bigcodebench_complete_help() -> None:
-    _invoke_help("bench", "bigcodebench-complete", "--help")
-
-
-def test_cli_bench_bigcodebench_instruct_help() -> None:
-    _invoke_help("bench", "bigcodebench-instruct", "--help")
 
 
 def test_cli_bench_swebench_live_help() -> None:

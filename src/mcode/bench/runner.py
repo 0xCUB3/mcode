@@ -12,8 +12,7 @@ from pathlib import Path
 from rich.progress import Progress
 
 from mcode.bench.results import ResultsDB, RunSummary
-from mcode.bench.tasks import Task, load_benchmark
-from mcode.execution.sandbox import DockerSandbox, DockerUnavailableError
+from mcode.execution.sandbox import DockerUnavailableError
 from mcode.llm.session import LLMSession
 
 
@@ -38,9 +37,7 @@ class BenchConfig:
     s2_model_id: str | None = None
     s2_backend_name: str = "ollama"
     s2_solver_mode: str = "best_attempt"
-    retrieval: bool = False
     timeout_s: int = 60
-    sandbox: str = "docker"
     task_shard_count: int | None = None
     task_shard_index: int | None = None
     cache_dir: Path = field(default_factory=_default_cache_dir)
@@ -52,7 +49,6 @@ class BenchConfig:
     swebench_mem_limit: str = "4g"
     swebench_pids_limit: int = 512
     swebench_dataset: str = "SWE-bench/SWE-bench_Lite"
-    lcb_cutoff: str | None = None
     n_samples: int = 1
 
 
@@ -89,7 +85,6 @@ class BenchmarkRunner:
             s2_backend_name=config.s2_backend_name,
             s2_solver_mode=config.s2_solver_mode,
         )
-        self.sandbox = _make_sandbox(config)
 
     def run_benchmark(
         self,
@@ -105,96 +100,7 @@ class BenchmarkRunner:
         if name in {"swebench-live", "swebench_live"}:
             self.llm.check_available()
             return self._run_swebench_live(limit=limit, task_ids=task_ids)
-
-        self.sandbox.check_available()
-        self.sandbox.ensure_image()
-        self.llm.check_available()
-
-        tasks = load_benchmark(
-            name,
-            cache_dir=self.config.cache_dir,
-            limit=limit,
-            cutoff=self.config.lcb_cutoff,
-        )
-        tasks = _apply_task_shard(tasks, self.config.task_shard_count, self.config.task_shard_index)
-        config = _augment_run_config(asdict(self.config))
-        config["planned_task_count"] = len(tasks)
-        config["dataset"] = _dataset_metadata(name, cache_dir=self.config.cache_dir) or {}
-        run_id = self.results_db.start_run(name, config)
-
-        passed = 0
-        total = 0
-        with Progress() as progress:
-            t = progress.add_task(f"[bold]Running {name}[/bold]", total=len(tasks))
-            for task in tasks:
-                total += 1
-                result = self.run_task(task)
-                if result["passed"]:
-                    passed += 1
-                self.results_db.save_task_result(run_id, result)
-                progress.advance(t, 1)
-
-        return RunSummary(run_id=run_id, total=total, passed=passed)
-
-    def run_task(self, task: Task) -> dict:
-        from mellea.stdlib.requirements.requirement import Requirement, simple_validate
-
-        start = time.time()
-        last_run_detail: dict = {}
-
-        def _sandbox_test(raw_json: str) -> bool | tuple[bool, str]:
-            nonlocal last_run_detail
-            code = _extract_from_json(raw_json, "code")
-            combined = _combine_for_eval(task, code)
-            run = self.sandbox.run_python(combined, timeout_s=self.config.timeout_s)
-            last_run_detail = {
-                "exit_code": run.exit_code,
-                "timed_out": run.timed_out,
-                "stdout": _truncate_text(run.stdout),
-                "stderr": _truncate_text(run.stderr),
-                "error": _truncate_text(run.error),
-            }
-            if run.success:
-                return True
-            return (False, (run.stderr or "")[:4000] or "Test failed")
-
-        req = Requirement(
-            validation_fn=simple_validate(_sandbox_test),
-            check_only=True,
-        )
-        try:
-            with self.llm.open():
-                result = self.llm.generate_code(task=task, requirements=[req])
-        except Exception as e:
-            elapsed_ms = int((time.time() - start) * 1000)
-            tb = traceback.format_exc()
-            # Prevent a single dependency/backend failure from killing the whole benchmark shard.
-            return {
-                "task_id": task.task_id,
-                "passed": False,
-                "attempts_used": 0,
-                "time_ms": elapsed_ms,
-                "exit_code": None,
-                "timed_out": False,
-                "stdout": None,
-                "stderr": (tb[-8000:] if tb else None),
-                "error": f"{type(e).__name__}: {e}",
-                "code_sha256": None,
-                **last_run_detail,
-            }
-        elapsed_ms = int((time.time() - start) * 1000)
-
-        code = _extract_from_json(result.value or "", "code")
-        sha = hashlib.sha256(code.encode("utf-8", errors="ignore")).hexdigest() if code else None
-
-        return {
-            "task_id": task.task_id,
-            "passed": result.success,
-            "attempts_used": len(result.sample_generations),
-            "time_ms": elapsed_ms,
-            "code_sha256": sha,
-            **last_run_detail,
-        }
+        raise ValueError(f"Unknown benchmark: {benchmark}")
 
     def _run_swebench_lite(
         self,
@@ -490,108 +396,6 @@ def _truncate(s: str, max_chars: int = 8000) -> str:
     return s if len(s) <= max_chars else s[-max_chars:]
 
 
-def _truncate_text(value: str | None, *, max_chars: int = 8000) -> str | None:
-    if value is None:
-        return None
-    if len(value) <= max_chars:
-        return value
-    return value[:max_chars]
-
-
-def _extract_from_json(raw: str, key: str) -> str:
-    try:
-        val = json.loads(raw).get(key, raw)
-        return val if val is not None else ""
-    except (json.JSONDecodeError, AttributeError, TypeError):
-        return raw
-
-
-def _combine_for_eval(task: Task, code: str) -> str:
-    if task.benchmark == "humaneval":
-        entry = task.entry_point
-        if not entry:
-            raise ValueError(f"HumanEval task missing entry_point: {task.task_id}")
-        return (
-            f"{code}\n\n"
-            f"{task.test_code}\n\n"
-            "def __mcode_main():\n"
-            f"    check({entry})\n\n"
-            "if __name__ == '__main__':\n"
-            "    __mcode_main()\n"
-        )
-
-    if task.benchmark == "mbpp":
-        return f"{code}\n\n# --- mbpp tests ---\n{task.test_code}\n"
-
-    if task.benchmark == "humaneval+":
-        entry = task.entry_point
-        if not entry:
-            raise ValueError(f"HumanEval+ task missing entry_point: {task.task_id}")
-        return (
-            f"{code}\n\n"
-            f"{task.test_code}\n\n"
-            "def __mcode_main():\n"
-            f"    check({entry})\n\n"
-            "if __name__ == '__main__':\n"
-            "    __mcode_main()\n"
-        )
-
-    if task.benchmark == "mbpp+":
-        return f"{code}\n\n# --- mbpp tests ---\n{task.test_code}\n"
-
-    if task.benchmark == "livecodebench":
-        # Embed code and test data using repr() to avoid triple-quote injection issues.
-        code_repr = repr(code)
-        test_repr = repr(task.test_code)
-        return (
-            "import json as _json, sys, io\n\n"
-            f"{code}\n\n"
-            "# --- livecodebench stdin/stdout harness ---\n"
-            f"_test_cases = _json.loads({test_repr})\n"
-            "_inputs = _test_cases.get('inputs', [])\n"
-            "_outputs = _test_cases.get('outputs', [])\n"
-            "_failed = 0\n"
-            "for _i, (_inp, _exp) in enumerate(zip(_inputs, _outputs)):\n"
-            "    _old_stdin, _old_stdout = sys.stdin, sys.stdout\n"
-            "    sys.stdin = io.StringIO(_inp)\n"
-            "    sys.stdout = _capture = io.StringIO()\n"
-            "    try:\n"
-            f"        exec(compile({code_repr}, '<solution>', 'exec'))\n"
-            "    finally:\n"
-            "        sys.stdin, sys.stdout = _old_stdin, _old_stdout\n"
-            "    _got = _capture.getvalue().rstrip()\n"
-            "    _want = str(_exp).rstrip()\n"
-            "    if _got != _want:\n"
-            "        print(f'FAIL case {_i}: expected {repr(_want)}, got {repr(_got)}',\n"
-            "              file=sys.stderr)\n"
-            "        _failed += 1\n"
-            "if _failed:\n"
-            "    raise SystemExit(f'{_failed}/{len(_inputs)} test cases failed')\n"
-        )
-
-    if task.benchmark.startswith("bigcodebench"):
-        return (
-            f"{code}\n\n"
-            f"{task.test_code}\n\n"
-            "if __name__ == '__main__':\n"
-            "    import unittest\n"
-            "    unittest.main(argv=[''])\n"
-        )
-
-    raise ValueError(f"Unsupported benchmark for eval: {task.benchmark!r}")
-
-
-def _make_sandbox(config: BenchConfig):
-    name = config.sandbox.strip().lower()
-    if name == "docker":
-        return DockerSandbox()
-    if name == "process":
-        from mcode.execution.process_sandbox import ProcessSandbox
-
-        return ProcessSandbox()
-    raise ValueError(f"Unknown sandbox: {config.sandbox!r}")
-
-
 def _apply_task_shard(tasks: list, shard_count: int | None, shard_index: int | None) -> list:
     if shard_count is None and shard_index is None:
         return tasks
@@ -649,53 +453,3 @@ def _runtime_metadata() -> dict[str, str]:
     meta["python_version"] = sys.version.split()[0]
     meta["platform"] = platform.platform()
     return meta
-
-
-def _sha256_path(path: Path) -> str | None:
-    if not path.exists():
-        return None
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _dataset_metadata(benchmark: str, *, cache_dir: Path) -> dict[str, str | None] | None:
-    name = benchmark.lower().strip()
-    if name in {"humaneval", "human-eval"}:
-        from mcode.bench.humaneval import HUMANEVAL_URL
-
-        path = cache_dir / "humaneval" / "HumanEval.jsonl.gz"
-        return {
-            "name": "HumanEval",
-            "url": HUMANEVAL_URL,
-            "sha256": _sha256_path(path),
-        }
-    if name == "mbpp":
-        from mcode.bench.mbpp import MBPP_URL
-
-        path = cache_dir / "mbpp" / "mbpp.jsonl"
-        return {
-            "name": "MBPP",
-            "url": MBPP_URL,
-            "sha256": _sha256_path(path),
-        }
-    if name == "humaneval+":
-        return {"name": "HumanEval+", "source": "evalplus"}
-    if name == "mbpp+":
-        return {"name": "MBPP+", "source": "evalplus"}
-    if name == "livecodebench":
-        return {
-            "name": "LiveCodeBench",
-            "source": "livecodebench/code_generation_lite",
-            "version_tag": "release_v2",
-        }
-    if name.startswith("bigcodebench"):
-        return {
-            "name": "BigCodeBench",
-            "source": "bigcode/bigcodebench",
-            "split": "v0.1.4",
-            "variant": name.replace("bigcodebench-", ""),
-        }
-    return None

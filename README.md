@@ -1,221 +1,99 @@
 # mCode
 
-mCode is a lightweight benchmarking harness for coding tasks through [Mellea](https://mellea.ai), which will eventually become an agentic coding tool tailored for small LLMs.
+mCode is a SWE-bench-focused benchmark harness for agentic coding runs through [Mellea](https://mellea.ai).
 
-- Benchmarks: HumanEval, MBPP (SWE-bench Lite optional; local Docker on Apple Silicon can be finicky)
-- LLM interface: Mellea (default backend: `ollama`)
-- Results: SQLite (default: `experiments/results/results.db`)
+- Benchmarks: `swebench-lite`, `swebench-live`
+- LLM interface: Mellea
+- Results: SQLite in `experiments/results/results.db` by default
 
 ## Install
 
-Two good options:
-
-### Option A: project virtualenv (best for development)
+For development:
 
 ```bash
 uv sync --extra dev
 uv run mcode --help
 ```
 
-### Option B: global tool
+To sync against the pinned fork revision in `pyproject.toml`:
 
 ```bash
-uv tool install -e .
-uv tool update-shell
-# restart your shell
-mcode --help
+uv run mcode deps sync --extra swebench --extra datasets
 ```
 
-To sync against the pinned fork revision in `pyproject.toml`, use:
+If you want to override that temporarily with a local checkout, set
+`MCODE_MELLEA_PATH=/path/to/mellea-fork` before running the command.
 
-```bash
-uv run mcode deps sync
-```
-
-That keeps the committed lockfile portable and verifies that `mcode` can import the expected
-`mellea` runtime modules. If you want to override that with a local checkout temporarily, set
-`MCODE_MELLEA_PATH=/path/to/mellea-fork` before running the command. Add benchmark extras as
-needed, for example `uv run mcode deps sync --extra swebench --extra datasets`.
-
-## Run benchmarks
-
-HumanEval / MBPP:
-
-```bash
-mcode bench humaneval --model granite3.3:8b --loop-budget 5
-mcode bench mbpp --model granite3.3:8b --loop-budget 5
-```
-
-Quick smoke test (first N tasks only):
-
-```bash
-mcode bench humaneval --model granite3.3:8b --limit 10
-```
-
-### What the key flags mean
-
-- `--loop-budget`: mellea retry budget per task (stops early on the first passing attempt; uses `RepairTemplateStrategy` for error feedback when > 1).
-- `--timeout`: seconds per execution attempt.
-- `--limit`: run the first N tasks.
-- `--shard-count/--shard-index`: split tasks across multiple runs for parallelism.
-- `--strategy`: sampling strategy (`repair` or `sofai`; default: `repair`).
-- `--s2-model`: model ID for the SOFAI S2 (slow/large) solver. Required when `--strategy=sofai`.
-- `--s2-backend`: backend for the S2 solver (default: `ollama`).
-- `--s2-mode`: what context the S2 solver sees: `fresh_start`, `continue_chat`, or `best_attempt` (default).
-- `--sandbox`:
-  - `docker` (default): runs code in a Docker container (network disabled).
-  - `process`: runs code directly as a local subprocess (useful inside locked-down containers / k8s Jobs).
-    This is not safe isolation; prefer `docker` when you can.
-- `--retrieval`: reserved flag; currently non-functional.
-
-### SOFAI strategy
-
-SOFAI is a two-tier strategy from mellea 0.3.1. A fast S1 model retries with repair feedback (like `--strategy repair`). If S1 fails, a larger S2 model gets one shot at solving the task.
-
-```bash
-mcode bench mbpp \
-  --model granite4:latest \
-  --strategy sofai \
-  --s2-model granite4:32b \
-  --loop-budget 5
-```
-
-S2 solver modes:
-- `best_attempt` (default): S2 sees the original task + S1's best attempt + failure feedback.
-- `continue_chat`: S2 sees the full S1 conversation history.
-- `fresh_start`: S2 sees only the original task (clean slate).
-
-### Parallel / Kubernetes runs
-
-Sharding is the simplest “plug-and-play” speedup: run the same command N times with different
-`--shard-index` values.
-
-```bash
-mcode bench humaneval --model granite3.3:8b --loop-budget 5 --shard-count 10 --shard-index 0 --db /results/shard-0.db
-```
-
-On Kubernetes, run HumanEval/MBPP inside Jobs with `--sandbox process` (Docker-in-Docker is usually not available).
-
-There’s a minimal container + k8s/OpenShift setup in:
-
-- `Dockerfile`
-- `deploy/k8s/bench.env` (knobs)
-- `deploy/k8s/mcode-bench-indexed-job.yaml` (indexed sharded Job)
-- `deploy/k8s/run-bench.sh` (recommended submit script)
-
-## SWE-bench Lite (optional)
-
-SWE-bench Lite is much heavier than HumanEval/MBPP and has compatibility issues with Apple ARM: it evaluates patches against real repos inside
-Docker images.
-
-Install the extra:
-
-```bash
-uv run mcode deps sync --extra swebench
-```
-
-If you installed `mcode` via `uv tool`, install the extra there too:
-
-```bash
-uv tool install -e '.[swebench]'
-```
-
-Run a small slice:
+## Run SWE-bench Lite
 
 ```bash
 mcode bench swebench-lite --model granite3.3:8b --limit 5
 ```
 
-On OpenShift (x86_64), you can avoid local Docker entirely and run one Pod per SWE-bench instance:
+Useful flags:
 
-```bash
-# gold-patch smoke test (first N instances)
-MODE=gold LIMIT=5 PARALLELISM=2 ./deploy/k8s/run-swebench-lite.sh
-```
+- `--loop-budget`: retry budget for the agent
+- `--timeout`: eval timeout per task
+- `--limit`: run the first N tasks
+- `--shard-count/--shard-index`: shard a run across multiple workers
+- `--strategy`: `repair`, `sofai`, or `raw`
+- `--n-samples`: number of patch samples to generate per task
 
-If you see `ImageNotFound` while pulling `swebench/...` images, force local builds:
+If you need to force local image builds instead of pulling prebuilt images:
 
 ```bash
 mcode bench swebench-lite --namespace "" --model granite3.3:8b --limit 5
 ```
 
-If image building OOMs, try `--max-workers 1` and increase Docker Desktop memory.
-
-## SWE-bench Live (optional)
-
-[Microsoft SWE-bench-Live](https://github.com/purdueNLP/SWE-bench-Live) is a growing, multi-language benchmark with 1,565+ instances across 164 repos and 8 languages. Unlike SWE-bench Lite, it uses prebuilt Docker images from the `starryzhang` namespace, so there's no local image building.
-
-Install the extra:
-
-```bash
-uv run mcode deps sync --extra datasets
-```
-
-Run a small slice:
+## Run SWE-bench Live
 
 ```bash
 mcode bench swebench-live --model granite3.3:8b --limit 5
 ```
 
-On OpenShift (x86_64), run one Pod per instance:
+`swebench-live` uses prebuilt evaluation images, so it does not need the lite image-build settings.
+
+## Results
+
+Per-run summaries:
 
 ```bash
-# gold-patch smoke test (first N instances)
-MODE=gold LIMIT=5 PARALLELISM=2 ./deploy/k8s/run-swebench-live.sh
+mcode results --benchmark swebench-live
+mcode results --benchmark swebench-live --time
 ```
 
-## View results
+HTML report:
 
 ```bash
-mcode results --benchmark humaneval
-mcode results --benchmark humaneval --model granite3.3:8b
-mcode results --benchmark humaneval --time
-
-# Aggregate shard DBs copied from k8s
-mcode results --db-dir ./results --benchmark humaneval --time
-
-# Lightweight HTML report (pass rate vs time-to-solve)
-mcode report --db-dir ./results --benchmark humaneval --out ./results/report.html
+mcode report --db-dir ./results --benchmark swebench-live --out ./results/report.html
 ```
 
-## Export results (CSV) + charts
+Merge shard DBs:
 
-Export one or more results DBs to CSV (runs + per-task rows):
+```bash
+mcode merge-shards --out ./results/merged.db ./results/swebench-live-shard-0.db ./results/swebench-live-shard-1.db
+```
+
+CSV export:
 
 ```bash
 uv run mcode export-csv -i experiments/results --out-dir experiments/results --prefix mcode
 ```
 
-By default, CSV export omits very large fields (`stdout`/`stderr`/`error`). If you want them:
+## Blue Vela
 
-```bash
-uv run mcode export-csv -i experiments/results --out-dir experiments/results --prefix mcode --include-logs
-```
+The maintained Blue Vela path is under `deploy/bluevela/`:
 
-If you ran an OpenShift suite (`experiments/results/suite-...`), you can generate a legible summary chart:
+- `setup.sh`
+- `start-vllm.sh`
+- `run-swebench-live.sh`
+- `stop-vllm.sh`
+- `fetch-results.sh`
 
-```bash
-python scripts/make_suite_chart.py experiments/results/suite-<timestamp>
-```
+See `deploy/bluevela/README.md` for the remote workflow.
 
-## Command cookbook
+## Notes
 
-For OpenShift/Kubernetes “do the thing” commands, see:
-
-- `docs/COMMANDS.md`
-
-Canonical benchmark + report docs (including OpenShift sweep workflow): `docs/benchmarking.md`.
-If you want durable notes per run (and a snapshot of the HTML report), add an entry under `research/`.
-
-For long OpenShift runs, use `--run-id` and `--resume` with `deploy/k8s/oc_bench_sweep.py` so you can reconnect after network drops.
-
-## FAQ
-
-### SWE-bench Lite prints Hugging Face `404 Not Found` messages. Is that bad?
-
-Usually no. The HF client probes for optional files via `HEAD` requests; `404` is expected as long
-as the dataset downloads and instances load.
-
-### SWE-bench Lite fails with `base_image_tag cannot be None`
-
-This usually means you’re running an older `mcode`. Reinstall/update and retry.
+- `docs/COMMANDS.md` has the higher-level command cookbook.
+- `docs/benchmarking.md` and `docs/swebench-optimization-log.md` hold the project benchmarking notes.
+- `research/` is the place for durable run notes and comparisons.

@@ -1,21 +1,64 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 from mcode.bench.results import ResultsDB
+
+
+def test_start_run_supports_legacy_runs_table(tmp_path: Path) -> None:
+    db_path = tmp_path / "legacy-results.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE runs (
+              id INTEGER PRIMARY KEY,
+              timestamp TEXT NOT NULL,
+              benchmark TEXT NOT NULL,
+              model_id TEXT NOT NULL,
+              loop_budget INTEGER NOT NULL,
+              timeout_s INTEGER NOT NULL,
+              retrieval INTEGER NOT NULL,
+              config_json TEXT NOT NULL
+            )
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    with ResultsDB(db_path) as rdb:
+        run_id = rdb.start_run(
+            "swebench-live",
+            {
+                "backend_name": "ollama",
+                "model_id": "test-model",
+                "loop_budget": 3,
+                "timeout_s": 60,
+                "cache_dir": str(tmp_path / "cache"),
+            },
+        )
+        row = rdb.conn.execute(
+            "SELECT backend_name, retrieval FROM runs WHERE id = ?",
+            (run_id,),
+        ).fetchone()
+
+    assert row is not None
+    assert row["backend_name"] == "ollama"
+    assert row["retrieval"] == 0
 
 
 def test_results_db_roundtrip(tmp_path: Path) -> None:
     db_path = tmp_path / "results.db"
     rdb = ResultsDB(db_path)
     run_id = rdb.start_run(
-        "humaneval",
+        "swebench-live",
         {
             "backend_name": "ollama",
             "model_id": "test-model",
             "loop_budget": 3,
-            "retrieval": False,
             "timeout_s": 60,
             "cache_dir": str(tmp_path / "cache"),
         },
@@ -36,12 +79,11 @@ def test_results_db_roundtrip(tmp_path: Path) -> None:
         },
     )
     run_id_2 = rdb.start_run(
-        "humaneval",
+        "swebench-live",
         {
             "backend_name": "ollama",
             "model_id": "test-model",
             "loop_budget": 3,
-            "retrieval": False,
             "timeout_s": 60,
             "cache_dir": str(tmp_path / "cache"),
         },
@@ -63,7 +105,7 @@ def test_results_db_roundtrip(tmp_path: Path) -> None:
     )
 
     per_run = rdb.pass_rates_grouped(
-        benchmark="humaneval",
+        benchmark="swebench-live",
         model_id="test-model",
         backend_name="ollama",
         timeout_s=60,
@@ -76,7 +118,7 @@ def test_results_db_roundtrip(tmp_path: Path) -> None:
     assert cfg["loop_budget"] == 3
 
     grouped = rdb.pass_rates_grouped(
-        benchmark="humaneval",
+        benchmark="swebench-live",
         model_id="test-model",
         backend_name="ollama",
         timeout_s=60,
@@ -92,12 +134,11 @@ def test_run_metrics_grouped_includes_time_stats(tmp_path: Path) -> None:
     db_path = tmp_path / "results.db"
     with ResultsDB(db_path) as rdb:
         run_id = rdb.start_run(
-            "humaneval",
+            "swebench-live",
             {
                 "backend_name": "ollama",
                 "model_id": "test-model",
                 "loop_budget": 1,
-                "retrieval": False,
                 "timeout_s": 60,
                 "cache_dir": str(tmp_path / "cache"),
             },
@@ -134,7 +175,7 @@ def test_run_metrics_grouped_includes_time_stats(tmp_path: Path) -> None:
         )
 
         rows = rdb.run_metrics_grouped(
-            benchmark="humaneval",
+            benchmark="swebench-live",
             model_id="test-model",
             backend_name="ollama",
             timeout_s=60,
@@ -158,12 +199,11 @@ def test_run_metrics_grouped_aggregates_runs(tmp_path: Path) -> None:
     db_path = tmp_path / "results.db"
     with ResultsDB(db_path) as rdb:
         run_id_1 = rdb.start_run(
-            "humaneval",
+            "swebench-live",
             {
                 "backend_name": "ollama",
                 "model_id": "test-model",
                 "loop_budget": 1,
-                "retrieval": False,
                 "timeout_s": 60,
                 "cache_dir": str(tmp_path / "cache"),
             },
@@ -185,12 +225,11 @@ def test_run_metrics_grouped_aggregates_runs(tmp_path: Path) -> None:
         )
 
         run_id_2 = rdb.start_run(
-            "humaneval",
+            "swebench-live",
             {
                 "backend_name": "ollama",
                 "model_id": "test-model",
                 "loop_budget": 1,
-                "retrieval": False,
                 "timeout_s": 60,
                 "cache_dir": str(tmp_path / "cache"),
             },
@@ -212,7 +251,7 @@ def test_run_metrics_grouped_aggregates_runs(tmp_path: Path) -> None:
         )
 
         rows = rdb.run_metrics_grouped(
-            benchmark="humaneval",
+            benchmark="swebench-live",
             model_id="test-model",
             backend_name="ollama",
             timeout_s=60,
@@ -234,12 +273,11 @@ def test_run_metrics_grouped_counts_timeouts(tmp_path: Path) -> None:
     db_path = tmp_path / "results.db"
     with ResultsDB(db_path) as rdb:
         run_id = rdb.start_run(
-            "humaneval",
+            "swebench-live",
             {
                 "backend_name": "ollama",
                 "model_id": "test-model",
                 "loop_budget": 1,
-                "retrieval": False,
                 "timeout_s": 60,
                 "cache_dir": str(tmp_path / "cache"),
             },
@@ -276,7 +314,7 @@ def test_run_metrics_grouped_counts_timeouts(tmp_path: Path) -> None:
         )
 
         rows = rdb.run_metrics_grouped(
-            benchmark="humaneval",
+            benchmark="swebench-live",
             model_id="test-model",
             backend_name="ollama",
             timeout_s=60,
@@ -298,12 +336,11 @@ def test_merge_from_combines_dbs(tmp_path: Path) -> None:
 
     with ResultsDB(db_a) as rdb_a:
         run_id = rdb_a.start_run(
-            "humaneval",
+            "swebench-live",
             {
                 "backend_name": "ollama",
                 "model_id": "test-model",
                 "loop_budget": 1,
-                "retrieval": False,
                 "timeout_s": 60,
                 "cache_dir": str(tmp_path / "cache"),
             },
@@ -326,12 +363,11 @@ def test_merge_from_combines_dbs(tmp_path: Path) -> None:
 
     with ResultsDB(db_b) as rdb_b:
         run_id = rdb_b.start_run(
-            "humaneval",
+            "swebench-live",
             {
                 "backend_name": "ollama",
                 "model_id": "test-model",
                 "loop_budget": 1,
-                "retrieval": False,
                 "timeout_s": 60,
                 "cache_dir": str(tmp_path / "cache"),
             },
@@ -355,7 +391,7 @@ def test_merge_from_combines_dbs(tmp_path: Path) -> None:
     with ResultsDB(merged_db) as rdb:
         rdb.merge_from([db_a, db_b])
         rows = rdb.run_metrics_grouped(
-            benchmark="humaneval",
+            benchmark="swebench-live",
             model_id="test-model",
             backend_name="ollama",
             timeout_s=60,

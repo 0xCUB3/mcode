@@ -4,19 +4,12 @@ import os
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
-from pydantic import BaseModel, Field
-
 from mcode.agent.coding_agent import build_coding_agent
 from mcode.agent.verification import (
     build_budget_warning,
     build_submit_block_message,
     verification_state_from_event_log,
 )
-from mcode.bench.tasks import Task
-
-
-class CodeOutput(BaseModel):
-    code: str = Field(..., description="Python code only, no markdown.")
 
 
 def _seed_react_context_from_runtime(*, condensed_state):
@@ -34,14 +27,10 @@ def _seed_react_context_from_runtime(*, condensed_state):
 
     if show_reminder and working_memory is not None:
         reminder = working_memory.as_message(omitted_messages=omitted_messages)
-        context = context.add(
-            Message(role=reminder["role"], content=str(reminder["content"]))
-        )
+        context = context.add(Message(role=reminder["role"], content=str(reminder["content"])))
 
     for message in recent_messages:
-        context = context.add(
-            Message(role=message["role"], content=str(message["content"]))
-        )
+        context = context.add(Message(role=message["role"], content=str(message["content"])))
 
     return context
 
@@ -95,29 +84,6 @@ class LLMSession:
         # Disable streaming to avoid tool call argument loss in vLLM.
         opts[ModelOption.STREAM] = False
         return opts
-
-    def _strategy(self):
-        from mellea.stdlib.sampling import RepairTemplateStrategy
-
-        budget = max(1, self.loop_budget)
-
-        if self.strategy_name == "sofai":
-            from mellea.stdlib.sampling import SOFAISamplingStrategy
-
-            if self._s2_session is None:
-                raise RuntimeError(
-                    "SOFAI strategy requires an active S2 session. "
-                    "Make sure s2_model_id is set and open() has been called."
-                )
-            return SOFAISamplingStrategy(
-                s1_solver_backend=self._m.backend,
-                s2_solver_backend=self._s2_session.backend,
-                s2_solver_mode=self.s2_solver_mode,
-                loop_budget=budget,
-                feedback_strategy="first_error",
-            )
-
-        return RepairTemplateStrategy(loop_budget=budget)
 
     def check_available(self) -> None:
         if self.strategy_name == "raw":
@@ -201,17 +167,6 @@ class LLMSession:
                     yield self
             finally:
                 self._m = None
-
-    def generate_code(self, *, task: Task, requirements: list | None = None):
-        system_prompt = _code_system_prompt(task)
-        return self._m.instruct(
-            task.prompt,
-            format=CodeOutput,
-            strategy=self._strategy(),
-            requirements=requirements or [],
-            return_sampling_results=True,
-            model_options=self._model_options(system_prompt=system_prompt),
-        )
 
     def generate_patch(
         self,
@@ -635,13 +590,3 @@ def _get_diff(repo_root: str) -> str:
     if result.returncode != 0:
         print(f"  [diff] git diff failed: {result.stderr[:300]}", flush=True)
     return result.stdout
-
-
-def _code_system_prompt(task: Task) -> str:
-    if task.benchmark == "humaneval":
-        return (
-            "You are an expert Python programmer.\n"
-            "Complete the function defined in the prompt.\n"
-            "Keep the function name and signature exactly the same."
-        )
-    return "You are an expert Python programmer."

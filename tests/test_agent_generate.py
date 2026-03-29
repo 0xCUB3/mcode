@@ -154,8 +154,9 @@ def test_generate_patch_uses_react(tmp_path):
     async def mock_react(*args, **kwargs):
         return (mock_result, mock_ctx)
 
-    with patch.dict(sys.modules, _install_fake_runtime_modules()), patch(
-        "mellea.stdlib.frameworks.react.react", mock_react
+    with (
+        patch.dict(sys.modules, _install_fake_runtime_modules()),
+        patch("mellea.stdlib.frameworks.react.react", mock_react),
     ):
         result = session.generate_patch(
             repo="test/repo",
@@ -244,7 +245,7 @@ def test_generate_patch_text_nudge_blocks_empty_diff_final_answer(tmp_path, monk
             repo="test/repo",
             problem_statement="Fix the bug",
             repo_root=str(tmp_path),
-            test_cmds={"test_cmds": ['python -m pytest -q tests/test_bug.py']},
+            test_cmds={"test_cmds": ["python -m pytest -q tests/test_bug.py"]},
         )
 
     msgs = captured["on_turn"](7, 9, [])
@@ -281,7 +282,7 @@ def test_generate_patch_text_nudge_demands_verification_after_edit(tmp_path, mon
             repo="test/repo",
             problem_statement="Fix the bug",
             repo_root=str(tmp_path),
-            test_cmds={"test_cmds": ['python -m pytest -q tests/test_bug.py']},
+            test_cmds={"test_cmds": ["python -m pytest -q tests/test_bug.py"]},
         )
 
     (tmp_path / "foo.py").write_text("x = 2\n")
@@ -321,7 +322,7 @@ def test_generate_patch_text_watchdog_nudges_after_read_only_loop(tmp_path, monk
             repo="test/repo",
             problem_statement="Fix the bug",
             repo_root=str(tmp_path),
-            test_cmds={"test_cmds": ['python -m pytest -q tests/test_bug.py']},
+            test_cmds={"test_cmds": ["python -m pytest -q tests/test_bug.py"]},
         )
 
     msgs = captured["on_turn"](
@@ -364,7 +365,7 @@ def test_generate_patch_discards_exhausted_unverified_diff(tmp_path, monkeypatch
             repo="test/repo",
             problem_statement="Fix the bug",
             repo_root=str(tmp_path),
-            test_cmds={"test_cmds": ['python -m pytest -q tests/test_bug.py']},
+            test_cmds={"test_cmds": ["python -m pytest -q tests/test_bug.py"]},
         )
 
     assert result == ""
@@ -407,7 +408,7 @@ def test_generate_patch_keeps_exhausted_verified_diff(tmp_path, monkeypatch):
             repo="test/repo",
             problem_statement="Fix the bug",
             repo_root=str(tmp_path),
-            test_cmds={"test_cmds": ['python -m pytest -q tests/test_bug.py']},
+            test_cmds={"test_cmds": ["python -m pytest -q tests/test_bug.py"]},
         )
 
     assert "x = 2" in result
@@ -440,24 +441,20 @@ def test_generate_patch_exposes_task_default_verification(tmp_path, monkeypatch)
         captured["goal"] = kwargs["goal"]
         return (mock_result, mock_ctx)
 
-    with patch.dict(sys.modules, _install_fake_runtime_modules()), patch(
-        "mcode.agent.coding_agent.make_agent_tools", fake_make_agent_tools
-    ), patch(
-        "mellea.stdlib.frameworks.react.react", mock_react
+    with (
+        patch.dict(sys.modules, _install_fake_runtime_modules()),
+        patch("mcode.agent.coding_agent.make_agent_tools", fake_make_agent_tools),
+        patch("mellea.stdlib.frameworks.react.react", mock_react),
     ):
         result = session.generate_patch(
             repo="test/repo",
             problem_statement="Fix the bug",
             repo_root=str(tmp_path),
-            test_cmds={
-                "test_cmds": [f'{sys.executable} -c "print(\'default verification\')"']
-            },
+            test_cmds={"test_cmds": [f"{sys.executable} -c \"print('default verification')\""]},
         )
 
     assert isinstance(result, str)
-    assert captured["test_cmds"] == [
-        f'{sys.executable} -c "print(\'default verification\')"'
-    ]
+    assert captured["test_cmds"] == [f"{sys.executable} -c \"print('default verification')\""]
     assert captured["test_fn"] is None
     assert captured["command_fn"] is None
     assert captured["workspace"].cwd == str(tmp_path)
@@ -492,10 +489,10 @@ def test_generate_patch_keeps_shell_verification_without_task_defaults(tmp_path,
         captured["goal"] = kwargs["goal"]
         return (mock_result, mock_ctx)
 
-    with patch.dict(sys.modules, _install_fake_runtime_modules()), patch(
-        "mcode.agent.coding_agent.make_agent_tools", fake_make_agent_tools
-    ), patch(
-        "mellea.stdlib.frameworks.react.react", mock_react
+    with (
+        patch.dict(sys.modules, _install_fake_runtime_modules()),
+        patch("mcode.agent.coding_agent.make_agent_tools", fake_make_agent_tools),
+        patch("mellea.stdlib.frameworks.react.react", mock_react),
     ):
         result = session.generate_patch(
             repo="test/repo",
@@ -517,7 +514,7 @@ def test_swebench_live_runner_passes_task_metadata_to_generate_patch(tmp_path, m
 
     db = ResultsDB(tmp_path / "results.db")
     runner = BenchmarkRunner(
-        config=BenchConfig(model_id="test", sandbox="process", n_samples=3),
+        config=BenchConfig(model_id="test", n_samples=3),
         results_db=db,
     )
 
@@ -536,7 +533,7 @@ def test_swebench_live_runner_passes_task_metadata_to_generate_patch(tmp_path, m
         repo = "test/repo"
         problem_statement = "Fix the bug"
         hints_text = "Hint"
-        test_cmds = [f'{sys.executable} -c "print(\'live verification\')"']
+        test_cmds = [f"{sys.executable} -c \"print('live verification')\""]
         raw_instance = {"test_cmds": test_cmds}
 
     class FakeLiveSandbox:
@@ -565,7 +562,7 @@ def test_swebench_lite_runner_passes_task_metadata_to_generate_patch(tmp_path):
 
     db = ResultsDB(tmp_path / "results.db")
     runner = BenchmarkRunner(
-        config=BenchConfig(model_id="test", sandbox="process", n_samples=3),
+        config=BenchConfig(model_id="test", n_samples=3),
         results_db=db,
     )
 
@@ -612,7 +609,7 @@ def test_swebench_lite_runner_passes_repo_command_executor_to_generate_patch(tmp
 
     db = ResultsDB(tmp_path / "results.db")
     runner = BenchmarkRunner(
-        config=BenchConfig(model_id="test", sandbox="process", n_samples=3),
+        config=BenchConfig(model_id="test", n_samples=3),
         results_db=db,
     )
 
@@ -669,7 +666,7 @@ def test_swebench_lite_runner_reports_repo_context_failures(tmp_path):
 
     db = ResultsDB(tmp_path / "results.db")
     runner = BenchmarkRunner(
-        config=BenchConfig(model_id="test", sandbox="process"),
+        config=BenchConfig(model_id="test"),
         results_db=db,
     )
 
@@ -703,7 +700,7 @@ def test_swebench_lite_runner_reraises_docker_unavailable(tmp_path):
 
     db = ResultsDB(tmp_path / "results.db")
     runner = BenchmarkRunner(
-        config=BenchConfig(model_id="test", sandbox="process"),
+        config=BenchConfig(model_id="test"),
         results_db=db,
     )
 
@@ -729,9 +726,7 @@ def test_swebench_lite_runner_reraises_docker_unavailable(tmp_path):
         )
 
 
-def test_swebench_lite_aborts_before_start_run_when_docker_unavailable(
-    tmp_path, monkeypatch
-):
+def test_swebench_lite_aborts_before_start_run_when_docker_unavailable(tmp_path, monkeypatch):
     _init_repo(tmp_path)
 
     import mcode.execution.swebench as swebench_module
@@ -739,7 +734,7 @@ def test_swebench_lite_aborts_before_start_run_when_docker_unavailable(
 
     db = ResultsDB(tmp_path / "results.db")
     runner = BenchmarkRunner(
-        config=BenchConfig(model_id="test", sandbox="process"),
+        config=BenchConfig(model_id="test"),
         results_db=db,
     )
 

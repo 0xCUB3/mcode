@@ -179,17 +179,11 @@ def build_agent_runtime(
             ),
             metadata={
                 "repo": repo,
-                **(
-                    {"display_cwd": visible_repo_root}
-                    if visible_repo_root is not None
-                    else {}
-                ),
+                **({"display_cwd": visible_repo_root} if visible_repo_root is not None else {}),
             },
         )
         event_log = runtime_module.EventLog(workspace=workspace)
-        condensed_state = memory_module.CondensedState(
-            working_memory=memory_module.WorkingMemory()
-        )
+        condensed_state = memory_module.CondensedState(working_memory=memory_module.WorkingMemory())
         condensation = loops_module.CondensationConfig(
             working_memory=memory_module.WorkingMemory(),
             max_messages=int(os.environ.get("MCODE_CONDENSE_MAX_MESSAGES", "24")),

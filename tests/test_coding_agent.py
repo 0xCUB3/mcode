@@ -91,11 +91,17 @@ def _install_fake_runtime_modules():
     memory_module.WorkingMemory = FakeWorkingMemory
     loops_module.CondensationConfig = FakeCondensationConfig
 
-    return {
-        "mellea.agent.runtime": runtime_module,
-        "mellea.agent.runtime.memory": memory_module,
-        "mellea.agent.runtime.loops": loops_module,
-    }, FakeWorkspace, FakeEventLog, FakeCondensedState, FakeCondensationConfig
+    return (
+        {
+            "mellea.agent.runtime": runtime_module,
+            "mellea.agent.runtime.memory": memory_module,
+            "mellea.agent.runtime.loops": loops_module,
+        },
+        FakeWorkspace,
+        FakeEventLog,
+        FakeCondensedState,
+        FakeCondensationConfig,
+    )
 
 
 def test_build_coding_agent_assembles_prompt_and_tools_without_benchmark_path(
@@ -127,18 +133,18 @@ def test_build_coding_agent_assembles_prompt_and_tools_without_benchmark_path(
 
     monkeypatch.setenv("MELLEA_TEXT_TOOLS", "0")
 
-    with patch.dict(sys.modules, _install_fake_runtime_modules()[0]), patch(
-        "mcode.agent.coding_agent.build_repo_map", return_value="repo map"
-    ), patch("mcode.agent.coding_agent.make_agent_tools", fake_make_agent_tools):
+    with (
+        patch.dict(sys.modules, _install_fake_runtime_modules()[0]),
+        patch("mcode.agent.coding_agent.build_repo_map", return_value="repo map"),
+        patch("mcode.agent.coding_agent.make_agent_tools", fake_make_agent_tools),
+    ):
         assembly = build_coding_agent(
             session=session,
             repo="test/repo",
             problem_statement="Fix the bug",
             hints_text="Hint text",
             repo_root=str(tmp_path),
-            test_cmds={
-                "test_cmds": [f'{sys.executable} -c "print(\'default verification\')"']
-            },
+            test_cmds={"test_cmds": [f"{sys.executable} -c \"print('default verification')\""]},
         )
 
     assert assembly.goal.startswith("Fix this bug in test/repo")
@@ -148,17 +154,13 @@ def test_build_coding_agent_assembles_prompt_and_tools_without_benchmark_path(
     assert "Keep verification cheap" in assembly.goal
     assert assembly.tools == ["tool-a"]
     assert captured["repo_root"] == str(tmp_path)
-    assert captured["test_cmds"] == [
-        f'{sys.executable} -c "print(\'default verification\')"'
-    ]
+    assert captured["test_cmds"] == [f"{sys.executable} -c \"print('default verification')\""]
     assert captured["test_fn"] is None
     assert captured["command_fn"] is None
     assert captured["workspace"] is assembly.workspace
 
 
-def test_build_coding_agent_assembles_mellea_runtime_and_keeps_mcode_policy(
-    tmp_path, monkeypatch
-):
+def test_build_coding_agent_assembles_mellea_runtime_and_keeps_mcode_policy(tmp_path, monkeypatch):
     from mcode.agent import coding_agent as coding_agent_module
 
     session = LLMSession(model_id="test", backend_name="openai", loop_budget=4)
@@ -180,12 +182,14 @@ def test_build_coding_agent_assembles_mellea_runtime_and_keeps_mcode_policy(
         prompt_block="\n\nVerification:\nUse mcode verification policy.",
     )
 
-    with patch.dict(sys.modules, runtime_modules), patch.object(
-        coding_agent_module, "build_repo_map", return_value="repo map"
-    ), patch.object(coding_agent_module, "make_agent_tools", return_value=["tool-a"]), patch.object(
-        coding_agent_module, "build_coding_policy", return_value=fake_policy
-    ), patch.object(
-        coding_agent_module, "build_verification_policy", return_value=fake_verification
+    with (
+        patch.dict(sys.modules, runtime_modules),
+        patch.object(coding_agent_module, "build_repo_map", return_value="repo map"),
+        patch.object(coding_agent_module, "make_agent_tools", return_value=["tool-a"]),
+        patch.object(coding_agent_module, "build_coding_policy", return_value=fake_policy),
+        patch.object(
+            coding_agent_module, "build_verification_policy", return_value=fake_verification
+        ),
     ):
         assembly = coding_agent_module.build_coding_agent(
             session=session,
@@ -206,9 +210,7 @@ def test_build_coding_agent_assembles_mellea_runtime_and_keeps_mcode_policy(
     assert assembly.condensation.max_messages > 0
 
 
-def test_build_coding_agent_can_expose_visible_repo_root_to_runtime_state(
-    tmp_path, monkeypatch
-):
+def test_build_coding_agent_can_expose_visible_repo_root_to_runtime_state(tmp_path, monkeypatch):
     from mcode.agent import coding_agent as coding_agent_module
 
     session = LLMSession(model_id="test", backend_name="openai", loop_budget=4)
@@ -228,12 +230,14 @@ def test_build_coding_agent_can_expose_visible_repo_root_to_runtime_state(
         prompt_block="",
     )
 
-    with patch.dict(sys.modules, runtime_modules), patch.object(
-        coding_agent_module, "build_repo_map", return_value="repo map"
-    ), patch.object(coding_agent_module, "make_agent_tools", return_value=["tool-a"]), patch.object(
-        coding_agent_module, "build_coding_policy", return_value=fake_policy
-    ), patch.object(
-        coding_agent_module, "build_verification_policy", return_value=fake_verification
+    with (
+        patch.dict(sys.modules, runtime_modules),
+        patch.object(coding_agent_module, "build_repo_map", return_value="repo map"),
+        patch.object(coding_agent_module, "make_agent_tools", return_value=["tool-a"]),
+        patch.object(coding_agent_module, "build_coding_policy", return_value=fake_policy),
+        patch.object(
+            coding_agent_module, "build_verification_policy", return_value=fake_verification
+        ),
     ):
         assembly = coding_agent_module.build_coding_agent(
             session=session,
@@ -308,8 +312,7 @@ def test_build_coding_policy_can_include_repo_customization():
     )
 
     assert (
-        "Repository-specific guidance:\n"
-        "Repo note: use `bin/test -q` for narrow checks."
+        "Repository-specific guidance:\nRepo note: use `bin/test -q` for narrow checks."
     ) in policy.goal
 
 
@@ -318,12 +321,10 @@ def test_build_verification_policy_prefers_task_default_checks(tmp_path):
 
     policy = build_verification_policy(
         repo_root=str(tmp_path),
-        test_cmds={
-            "verification_cmds": [f'{sys.executable} -c "print(\'default verification\')"']
-        },
+        test_cmds={"verification_cmds": [f"{sys.executable} -c \"print('default verification')\""]},
     )
 
-    assert policy.test_cmds == [f'{sys.executable} -c "print(\'default verification\')"']
+    assert policy.test_cmds == [f"{sys.executable} -c \"print('default verification')\""]
     assert "Start with `run_tests default`" in policy.prompt_block
     assert "Keep verification cheap" in policy.prompt_block
     assert policy.test_fn is None
@@ -356,9 +357,7 @@ def test_build_verification_policy_preserves_explicit_test_fn(tmp_path):
     assert policy.test_fn is custom_test_fn
 
 
-def test_coding_agent_can_be_requested_from_session_generate_patch(
-    tmp_path, monkeypatch
-):
+def test_coding_agent_can_be_requested_from_session_generate_patch(tmp_path, monkeypatch):
     from mcode.llm import session as session_module
 
     monkeypatch.setenv("MELLEA_TEXT_TOOLS", "0")
@@ -385,11 +384,13 @@ def test_coding_agent_can_be_requested_from_session_generate_patch(
     async def fake_react(*args, **kwargs):
         return (types.SimpleNamespace(value="done"), MagicMock())
 
-    with patch.object(session_module, "build_coding_agent", build_agent, create=True), patch(
-        "mellea.agent.tools.make_agent_tools", return_value=[]
-    ), patch("mellea.agent.repomap.build_repo_map", return_value="repo map"), patch(
-        "mellea.stdlib.frameworks.react.react", fake_react
-    ), patch.object(session_module, "_get_diff", return_value="diff"):
+    with (
+        patch.object(session_module, "build_coding_agent", build_agent, create=True),
+        patch("mellea.agent.tools.make_agent_tools", return_value=[]),
+        patch("mellea.agent.repomap.build_repo_map", return_value="repo map"),
+        patch("mellea.stdlib.frameworks.react.react", fake_react),
+        patch.object(session_module, "_get_diff", return_value="diff"),
+    ):
         result = session.generate_patch(
             repo="test/repo",
             problem_statement="Fix the bug",
@@ -415,9 +416,7 @@ def test_load_repo_customization_prefers_repo_md(tmp_path):
     assert customization.source_path == customization_dir / "repo.md"
 
 
-def test_build_coding_agent_includes_repo_customization_text(
-    tmp_path, monkeypatch
-):
+def test_build_coding_agent_includes_repo_customization_text(tmp_path, monkeypatch):
     from mcode.agent import coding_agent as coding_agent_module
 
     session = LLMSession(model_id="test", backend_name="openai", loop_budget=4)
@@ -446,22 +445,25 @@ def test_build_coding_agent_includes_repo_customization_text(
             },
         )
 
-    with patch.dict(sys.modules, runtime_modules), patch.object(
-        coding_agent_module, "build_repo_map", return_value="repo map"
-    ), patch.object(
-        coding_agent_module, "make_agent_tools", return_value=["tool-a"]
-    ), patch.object(
-        coding_agent_module, "build_coding_policy", side_effect=fake_build_coding_policy
-    ), patch.object(
-        coding_agent_module,
-        "build_verification_policy",
-        return_value=fake_verification,
-    ), patch.object(
-        coding_agent_module,
-        "load_repo_customization",
-        return_value=types.SimpleNamespace(
-            text="Repo note: use `bin/test -q` first.",
-            source_path=tmp_path / ".mcode" / "repo.md",
+    with (
+        patch.dict(sys.modules, runtime_modules),
+        patch.object(coding_agent_module, "build_repo_map", return_value="repo map"),
+        patch.object(coding_agent_module, "make_agent_tools", return_value=["tool-a"]),
+        patch.object(
+            coding_agent_module, "build_coding_policy", side_effect=fake_build_coding_policy
+        ),
+        patch.object(
+            coding_agent_module,
+            "build_verification_policy",
+            return_value=fake_verification,
+        ),
+        patch.object(
+            coding_agent_module,
+            "load_repo_customization",
+            return_value=types.SimpleNamespace(
+                text="Repo note: use `bin/test -q` first.",
+                source_path=tmp_path / ".mcode" / "repo.md",
+            ),
         ),
     ):
         coding_agent_module.build_coding_agent(
@@ -474,9 +476,7 @@ def test_build_coding_agent_includes_repo_customization_text(
     assert captured["repo_customization_text"] == "Repo note: use `bin/test -q` first."
 
 
-def test_session_generate_patch_seeds_react_context_from_runtime_state(
-    tmp_path, monkeypatch
-):
+def test_session_generate_patch_seeds_react_context_from_runtime_state(tmp_path, monkeypatch):
     from mcode.llm import session as session_module
 
     monkeypatch.setenv("MELLEA_TEXT_TOOLS", "0")
@@ -523,14 +523,15 @@ def test_session_generate_patch_seeds_react_context_from_runtime_state(
     async def fake_react(*args, **kwargs):
         context_items = kwargs["context"].view_for_generation()
         captured["messages"] = [
-            (message.role, message.content)
-            for message in (context_items or [])
+            (message.role, message.content) for message in (context_items or [])
         ]
         return (types.SimpleNamespace(value="done"), MagicMock())
 
-    with patch.object(session_module, "build_coding_agent", build_agent, create=True), patch(
-        "mellea.stdlib.frameworks.react.react", fake_react
-    ), patch.object(session_module, "_get_diff", return_value="diff"):
+    with (
+        patch.object(session_module, "build_coding_agent", build_agent, create=True),
+        patch("mellea.stdlib.frameworks.react.react", fake_react),
+        patch.object(session_module, "_get_diff", return_value="diff"),
+    ):
         result = session.generate_patch(
             repo="test/repo",
             problem_statement="Fix the bug",
@@ -545,9 +546,7 @@ def test_session_generate_patch_seeds_react_context_from_runtime_state(
     ]
 
 
-def test_session_generate_patch_passes_runtime_state_to_text_react(
-    tmp_path, monkeypatch
-):
+def test_session_generate_patch_passes_runtime_state_to_text_react(tmp_path, monkeypatch):
     from mcode.llm import session as session_module
 
     monkeypatch.setenv("MELLEA_TEXT_TOOLS", "1")
@@ -587,9 +586,11 @@ def test_session_generate_patch_passes_runtime_state_to_text_react(
     fake_module = types.ModuleType("mellea.agent.text_react")
     fake_module.text_react = fake_text_react
 
-    with patch.object(session_module, "build_coding_agent", build_agent, create=True), patch.dict(
-        sys.modules, {"mellea.agent.text_react": fake_module}
-    ), patch.object(session_module, "_get_diff", return_value="diff"):
+    with (
+        patch.object(session_module, "build_coding_agent", build_agent, create=True),
+        patch.dict(sys.modules, {"mellea.agent.text_react": fake_module}),
+        patch.object(session_module, "_get_diff", return_value="diff"),
+    ):
         result = session.generate_patch(
             repo="test/repo",
             problem_statement="Fix the bug",
