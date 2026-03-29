@@ -7,32 +7,36 @@ import pytest
 from mcode import uv_setup
 
 
-def test_sync_uv_environment_prefers_sibling_mellea_fork(tmp_path):
+def test_sync_uv_environment_uses_env_override_for_local_mellea(tmp_path):
     project_root = tmp_path / "mcode"
     site_packages = project_root / ".venv" / "lib" / "python3.12" / "site-packages"
     site_packages.mkdir(parents=True)
     (project_root / "pyproject.toml").write_text("[project]\nname='mcode'\n")
-    sibling_fork = tmp_path / "mellea-fork"
-    sibling_fork.mkdir()
-    (sibling_fork / "pyproject.toml").write_text("[project]\nname='mellea'\n")
+    local_mellea = tmp_path / "vendor" / "mellea-custom"
+    local_mellea.mkdir(parents=True)
+    (local_mellea / "pyproject.toml").write_text("[project]\nname='mellea'\n")
 
     commands: list[list[str]] = []
 
     def fake_run(cmd: list[str], *, cwd: Path) -> None:
         commands.append(cmd)
 
-    selection = uv_setup.sync_uv_environment(project_root, run_command=fake_run)
+    selection = uv_setup.sync_uv_environment(
+        project_root,
+        env={"MCODE_MELLEA_PATH": str(local_mellea)},
+        run_command=fake_run,
+    )
 
     override = site_packages / uv_setup.MANAGED_MELLEA_PTH_NAME
     assert selection.source == "local"
-    assert selection.local_path == sibling_fork.resolve()
+    assert selection.local_path == local_mellea.resolve()
     assert override.read_text() == (
         "# Managed by mcode deps sync. Do not edit by hand.\n"
-        f'import sys; sys.path.insert(0, {str(sibling_fork.resolve())!r})\n'
+        f"import sys; sys.path.insert(0, {str(local_mellea.resolve())!r})\n"
     )
     assert commands[0] == ["uv", "sync"]
     assert commands[1][:4] == ["uv", "run", "python", "-c"]
-    assert str(sibling_fork.resolve()) in commands[1][4]
+    assert str(local_mellea.resolve()) in commands[1][4]
 
 
 def test_sync_uv_environment_passes_through_uv_sync_args(tmp_path):
@@ -109,6 +113,18 @@ def test_find_local_mellea_uses_env_override(tmp_path):
     )
 
     assert resolved == override.resolve()
+
+
+def test_find_local_mellea_does_not_auto_use_sibling_checkout(tmp_path):
+    project_root = tmp_path / "mcode"
+    project_root.mkdir()
+    sibling_fork = tmp_path / "mellea-fork"
+    sibling_fork.mkdir()
+    (sibling_fork / "pyproject.toml").write_text("[project]\nname='mellea'\n")
+
+    resolved = uv_setup.find_local_mellea(project_root)
+
+    assert resolved is None
 
 
 def test_sync_uv_environment_uses_empty_sync_args_by_default(tmp_path):

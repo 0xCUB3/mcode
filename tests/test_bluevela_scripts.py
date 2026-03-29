@@ -9,9 +9,9 @@ def test_bluevela_scripts_use_dotvenv() -> None:
         assert "venv/bin/activate" not in text.replace(".venv/bin/activate", "")
 
 
-def test_bluevela_setup_uses_uv_sync() -> None:
+def test_bluevela_setup_uses_mcode_deps_sync() -> None:
     text = (BLUEVELA_DIR / "setup.sh").read_text()
-    assert "uv sync --extra swebench --extra datasets" in text
+    assert "uv run mcode deps sync --no-dev --extra swebench --extra datasets" in text
     assert "uv venv --python 3.11 venv" not in text
     assert 'uv pip install -e ".[evalplus,datasets]"' not in text
 

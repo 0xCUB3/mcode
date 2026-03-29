@@ -26,15 +26,16 @@ uv tool update-shell
 mcode --help
 ```
 
-If you also have a sibling `../mellea-fork` checkout, prefer:
+To sync against the pinned fork revision in `pyproject.toml`, use:
 
 ```bash
 uv run mcode deps sync
 ```
 
-That keeps the committed lockfile portable, then overlays the local fork into `.venv` and verifies
-that `mcode` can import the expected `mellea` runtime modules. Add benchmark extras as needed, for
-example `uv run mcode deps sync --extra swebench --extra datasets`.
+That keeps the committed lockfile portable and verifies that `mcode` can import the expected
+`mellea` runtime modules. If you want to override that with a local checkout temporarily, set
+`MCODE_MELLEA_PATH=/path/to/mellea-fork` before running the command. Add benchmark extras as
+needed, for example `uv run mcode deps sync --extra swebench --extra datasets`.
 
 ## Run benchmarks
 

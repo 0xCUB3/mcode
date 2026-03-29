@@ -22,15 +22,9 @@ def find_local_mellea(
     env: Mapping[str, str] | None = None,
 ) -> Path | None:
     values = env if env is not None else os.environ
-    candidates: list[Path] = []
-
     override = values.get("MCODE_MELLEA_PATH")
     if override:
-        candidates.append(Path(override).expanduser())
-
-    candidates.append(project_root.parent / "mellea-fork")
-
-    for candidate in candidates:
+        candidate = Path(override).expanduser()
         if (candidate / "pyproject.toml").is_file():
             return candidate.resolve()
     return None
@@ -95,10 +89,7 @@ def _find_site_packages(project_root: Path) -> Path:
 
 
 def _render_local_override(local_mellea: Path) -> str:
-    return (
-        f"{MANAGED_OVERRIDE_HEADER}\n"
-        f"import sys; sys.path.insert(0, {str(local_mellea)!r})\n"
-    )
+    return f"{MANAGED_OVERRIDE_HEADER}\nimport sys; sys.path.insert(0, {str(local_mellea)!r})\n"
 
 
 def _write_local_override(site_packages: Path, local_mellea: Path) -> None:

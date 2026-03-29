@@ -19,7 +19,7 @@ cd "${MCODE_DIR}"
 
 echo "=== Syncing project environment with Python 3.11 ==="
 uv python pin 3.11
-uv sync --extra swebench --extra datasets
+uv run mcode deps sync --no-dev --extra swebench --extra datasets
 
 echo "=== Creating results directory ==="
 mkdir -p results

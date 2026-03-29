@@ -182,7 +182,7 @@ def deps_sync(
         typer.Option("--no-dev", help="Do not install the default dev extra."),
     ] = False,
 ) -> None:
-    """Sync uv dependencies, preferring a sibling mellea-fork when present."""
+    """Sync uv dependencies, using MCODE_MELLEA_PATH when you want a local mellea checkout."""
     from mcode.uv_setup import sync_uv_environment
 
     extras = list(extra or [])
