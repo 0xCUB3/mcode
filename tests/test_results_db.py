@@ -1,9 +1,53 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 from mcode.bench.results import ResultsDB
+
+
+def test_start_run_supports_legacy_runs_table(tmp_path: Path) -> None:
+    db_path = tmp_path / "legacy-results.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE runs (
+              id INTEGER PRIMARY KEY,
+              timestamp TEXT NOT NULL,
+              benchmark TEXT NOT NULL,
+              model_id TEXT NOT NULL,
+              loop_budget INTEGER NOT NULL,
+              timeout_s INTEGER NOT NULL,
+              retrieval INTEGER NOT NULL,
+              config_json TEXT NOT NULL
+            )
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    with ResultsDB(db_path) as rdb:
+        run_id = rdb.start_run(
+            "swebench-live",
+            {
+                "backend_name": "ollama",
+                "model_id": "test-model",
+                "loop_budget": 3,
+                "timeout_s": 60,
+                "cache_dir": str(tmp_path / "cache"),
+            },
+        )
+        row = rdb.conn.execute(
+            "SELECT backend_name, retrieval FROM runs WHERE id = ?",
+            (run_id,),
+        ).fetchone()
+
+    assert row is not None
+    assert row["backend_name"] == "ollama"
+    assert row["retrieval"] == 0
 
 
 def test_results_db_roundtrip(tmp_path: Path) -> None:

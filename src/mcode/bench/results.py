@@ -86,14 +86,53 @@ class ResultsDB:
         self.conn.commit()
 
     def _ensure_column(self, table: str, column: str, ddl: str) -> None:
-        cols = {row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        cols = self._table_columns(table)
         if column in cols:
             return
         self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
-    def start_run(self, benchmark: str, config: dict) -> int:
-        now = datetime.now(UTC).isoformat()
-        cursor = self.conn.execute(
+    def _table_columns(self, table: str) -> set[str]:
+        return {row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+    def _insert_run(
+        self,
+        *,
+        timestamp: str,
+        benchmark: str,
+        backend_name: str,
+        model_id: str,
+        loop_budget: int,
+        timeout_s: int,
+        config_json: str,
+    ) -> sqlite3.Cursor:
+        if "retrieval" in self._table_columns("runs"):
+            return self.conn.execute(
+                """
+                INSERT INTO runs
+                (
+                  timestamp,
+                  benchmark,
+                  backend_name,
+                  model_id,
+                  loop_budget,
+                  timeout_s,
+                  retrieval,
+                  config_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    timestamp,
+                    benchmark,
+                    backend_name,
+                    model_id,
+                    loop_budget,
+                    timeout_s,
+                    0,
+                    config_json,
+                ),
+            )
+        return self.conn.execute(
             """
             INSERT INTO runs
             (
@@ -108,14 +147,26 @@ class ResultsDB:
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                now,
+                timestamp,
                 benchmark,
-                config.get("backend_name", "ollama"),
-                config["model_id"],
-                config.get("loop_budget", 3),
-                config["timeout_s"],
-                json.dumps(config, sort_keys=True, default=str),
+                backend_name,
+                model_id,
+                loop_budget,
+                timeout_s,
+                config_json,
             ),
+        )
+
+    def start_run(self, benchmark: str, config: dict) -> int:
+        now = datetime.now(UTC).isoformat()
+        cursor = self._insert_run(
+            timestamp=now,
+            benchmark=benchmark,
+            backend_name=config.get("backend_name", "ollama"),
+            model_id=config["model_id"],
+            loop_budget=config.get("loop_budget", 3),
+            timeout_s=config["timeout_s"],
+            config_json=json.dumps(config, sort_keys=True, default=str),
         )
         self.conn.commit()
         return int(cursor.lastrowid)
@@ -533,29 +584,14 @@ class ResultsDB:
                 """
             ).fetchall()
             for run in runs:
-                cur = self.conn.execute(
-                    """
-                    INSERT INTO runs
-                    (
-                      timestamp,
-                      benchmark,
-                      backend_name,
-                      model_id,
-                      loop_budget,
-                      timeout_s,
-                      config_json
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        str(run["timestamp"]),
-                        str(run["benchmark"]),
-                        str(run["backend_name"]),
-                        str(run["model_id"]),
-                        int(run["loop_budget"]),
-                        int(run["timeout_s"]),
-                        str(run["config_json"]),
-                    ),
+                cur = self._insert_run(
+                    timestamp=str(run["timestamp"]),
+                    benchmark=str(run["benchmark"]),
+                    backend_name=str(run["backend_name"]),
+                    model_id=str(run["model_id"]),
+                    loop_budget=int(run["loop_budget"]),
+                    timeout_s=int(run["timeout_s"]),
+                    config_json=str(run["config_json"]),
                 )
                 new_run_id = int(cur.lastrowid)
                 old_run_id = int(run["id"])
