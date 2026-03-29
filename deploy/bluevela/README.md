@@ -84,6 +84,7 @@ Uses rsync to pull results from the cluster to your local machine.
 | `SHARD_COUNT` | Number of parallel shards | `4` |
 | `SWB_SPLIT` | SWE-bench Live split | `verified` |
 | `SWB_TIMEOUT` | Timeout per task | `1800` |
+| `BV_RESULTS_DIR` | Remote results directory | `/u/skula/mcode/results` |
 | `VLLM_PORT` | Port for vLLM server | `8321` |
 | `VLLM_GPU_COUNT` | GPUs allocated to vLLM | `1` |
 | `VLLM_MAX_MODEL_LEN` | Max sequence length | `32768` |
