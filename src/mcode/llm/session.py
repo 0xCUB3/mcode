@@ -85,29 +85,6 @@ class LLMSession:
         opts[ModelOption.STREAM] = False
         return opts
 
-    def _strategy(self):
-        from mellea.stdlib.sampling import RepairTemplateStrategy
-
-        budget = max(1, self.loop_budget)
-
-        if self.strategy_name == "sofai":
-            from mellea.stdlib.sampling import SOFAISamplingStrategy
-
-            if self._s2_session is None:
-                raise RuntimeError(
-                    "SOFAI strategy requires an active S2 session. "
-                    "Make sure s2_model_id is set and open() has been called."
-                )
-            return SOFAISamplingStrategy(
-                s1_solver_backend=self._m.backend,
-                s2_solver_backend=self._s2_session.backend,
-                s2_solver_mode=self.s2_solver_mode,
-                loop_budget=budget,
-                feedback_strategy="first_error",
-            )
-
-        return RepairTemplateStrategy(loop_budget=budget)
-
     def check_available(self) -> None:
         if self.strategy_name == "raw":
             # Raw mode uses OpenAI API directly, skip mellea check
