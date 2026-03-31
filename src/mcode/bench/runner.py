@@ -33,10 +33,6 @@ class BenchConfig:
     loop_budget: int = 3
     temperature: float | None = None
     seed: int | None = None
-    strategy: str = "repair"
-    s2_model_id: str | None = None
-    s2_backend_name: str = "ollama"
-    s2_solver_mode: str = "best_attempt"
     timeout_s: int = 60
     task_shard_count: int | None = None
     task_shard_index: int | None = None
@@ -80,10 +76,6 @@ class BenchmarkRunner:
             loop_budget=config.loop_budget,
             temperature=config.temperature,
             seed=config.seed,
-            strategy_name=config.strategy,
-            s2_model_id=config.s2_model_id,
-            s2_backend_name=config.s2_backend_name,
-            s2_solver_mode=config.s2_solver_mode,
         )
 
     def run_benchmark(

@@ -996,7 +996,7 @@ swebench = [
 requires-dist = [
     { name = "datasets", marker = "extra == 'datasets'", specifier = ">=2.14.0,<4.0" },
     { name = "docker", specifier = ">=7.0.0" },
-    { name = "mellea", extras = ["agent"], git = "https://github.com/0xCUB3/mellea?rev=ba361a5e8514de1e397dc334054522eead20c2f0" },
+    { name = "mellea", extras = ["agent"], git = "https://github.com/0xCUB3/mellea?rev=76303c91b0ef29ae80945c44ec0e589e9bbbd154" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4.0" },
@@ -1017,7 +1017,7 @@ wheels = [
 [[package]]
 name = "mellea"
 version = "0.4.0"
-source = { git = "https://github.com/0xCUB3/mellea?rev=ba361a5e8514de1e397dc334054522eead20c2f0#ba361a5e8514de1e397dc334054522eead20c2f0" }
+source = { git = "https://github.com/0xCUB3/mellea?rev=76303c91b0ef29ae80945c44ec0e589e9bbbd154#76303c91b0ef29ae80945c44ec0e589e9bbbd154" }
 dependencies = [
     { name = "click" },
     { name = "jinja2" },

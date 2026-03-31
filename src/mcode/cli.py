@@ -1535,22 +1535,6 @@ def bench_swebench_live(
     ] = None,
     db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
     limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
-    strategy: Annotated[
-        str,
-        typer.Option("--strategy", help="Sampling strategy: repair, sofai, or raw"),
-    ] = "repair",
-    s2_model: Annotated[
-        str | None,
-        typer.Option("--s2-model", help="Model ID for SOFAI S2 solver (larger model)"),
-    ] = None,
-    s2_backend: Annotated[
-        str,
-        typer.Option("--s2-backend", help="Backend for SOFAI S2 solver"),
-    ] = "ollama",
-    s2_mode: Annotated[
-        str,
-        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
-    ] = "best_attempt",
     n_samples: Annotated[
         int,
         typer.Option("--n-samples", min=1, help="Samples per task for majority voting"),
@@ -1564,11 +1548,6 @@ def bench_swebench_live(
     ] = None,
 ) -> None:
     """Run Microsoft SWE-bench-Live benchmark."""
-    strategy_name = strategy.strip().lower()
-    if strategy_name not in {"repair", "sofai", "raw"}:
-        raise typer.BadParameter("Unknown --strategy. Use repair, sofai, or raw.")
-    if strategy_name == "sofai" and not s2_model:
-        raise typer.BadParameter("--s2-model is required when --strategy=sofai.")
 
     shard_count, shard_index = _validate_shards(shard_count=shard_count, shard_index=shard_index)
     if shard_count and shard_count > 1 and db == DEFAULT_DB_PATH:
@@ -1584,10 +1563,6 @@ def bench_swebench_live(
         loop_budget=loop_budget,
         temperature=temperature,
         seed=seed,
-        strategy=strategy_name,
-        s2_model_id=s2_model,
-        s2_backend_name=s2_backend,
-        s2_solver_mode=s2_mode,
         timeout_s=timeout_s,
         swebench_split=split,
         swebench_mem_limit=mem_limit,
@@ -1670,22 +1645,6 @@ def bench_swebench_lite(
     ] = None,
     db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
     limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
-    strategy: Annotated[
-        str,
-        typer.Option("--strategy", help="Sampling strategy: repair, sofai, or raw"),
-    ] = "repair",
-    s2_model: Annotated[
-        str | None,
-        typer.Option("--s2-model", help="Model ID for SOFAI S2 solver (larger model)"),
-    ] = None,
-    s2_backend: Annotated[
-        str,
-        typer.Option("--s2-backend", help="Backend for SOFAI S2 solver"),
-    ] = "ollama",
-    s2_mode: Annotated[
-        str,
-        typer.Option("--s2-mode", help="SOFAI S2 mode: fresh_start|continue_chat|best_attempt"),
-    ] = "best_attempt",
     n_samples: Annotated[
         int,
         typer.Option("--n-samples", min=1, help="Samples per task for majority voting"),
@@ -1702,11 +1661,6 @@ def bench_swebench_lite(
         typer.Option("--dataset", help="HuggingFace dataset name"),
     ] = "SWE-bench/SWE-bench_Lite",
 ) -> None:
-    strategy_name = strategy.strip().lower()
-    if strategy_name not in {"repair", "sofai", "raw"}:
-        raise typer.BadParameter("Unknown --strategy. Use repair, sofai, or raw.")
-    if strategy_name == "sofai" and not s2_model:
-        raise typer.BadParameter("--s2-model is required when --strategy=sofai.")
 
     shard_count, shard_index = _validate_shards(shard_count=shard_count, shard_index=shard_index)
     if shard_count and shard_count > 1 and db == DEFAULT_DB_PATH:
@@ -1722,10 +1676,6 @@ def bench_swebench_lite(
         loop_budget=loop_budget,
         temperature=temperature,
         seed=seed,
-        strategy=strategy_name,
-        s2_model_id=s2_model,
-        s2_backend_name=s2_backend,
-        s2_solver_mode=s2_mode,
         timeout_s=timeout_s,
         swebench_split=split,
         swebench_namespace=_optional_str(namespace),

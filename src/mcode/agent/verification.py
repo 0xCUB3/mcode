@@ -182,6 +182,128 @@ def verification_state_from_event_log(event_log: object | None) -> VerificationS
     return state
 
 
+@dataclass(frozen=True)
+class _LocalToolInvocation:
+    name: str
+    status: str = "completed"
+
+
+@dataclass(frozen=True)
+class _LocalToolPhaseState:
+    turn: int
+    budget: int
+    invocations: tuple[_LocalToolInvocation, ...] = ()
+
+    @property
+    def has_edit(self) -> bool:
+        return any(call.name == "edit" for call in self.invocations)
+
+
+def tool_phase_state_from_event_log(
+    event_log: object | None,
+    *,
+    turn: int,
+    budget: int,
+):
+    try:
+        from mellea.agent.strategy import ToolInvocation, ToolPhaseState
+    except ImportError:
+        ToolInvocation = _LocalToolInvocation
+        ToolPhaseState = _LocalToolPhaseState
+
+    if event_log is None:
+        return ToolPhaseState(turn=turn, budget=budget)
+
+    to_dicts = getattr(event_log, "to_dicts", None)
+    if not callable(to_dicts):
+        return ToolPhaseState(turn=turn, budget=budget)
+
+    invocations: list[ToolInvocation] = []
+    for event in to_dicts():
+        if not isinstance(event, dict):
+            continue
+        if event.get("kind") != "tool_result":
+            continue
+        tool_name = event.get("tool_name")
+        if not isinstance(tool_name, str) or not tool_name:
+            continue
+        status = str(event.get("status", "completed") or "completed")
+        invocations.append(ToolInvocation(tool_name, status=status))
+
+    return ToolPhaseState(
+        turn=turn,
+        budget=budget,
+        invocations=tuple(invocations),
+    )
+
+
+def build_phase_guidance(
+    *,
+    has_changes: bool,
+    has_run_tests_tool: bool,
+    verification_state: VerificationState,
+    phase_state,
+    require_default_verification: bool,
+) -> str | None:
+    if not has_changes and not phase_state.has_edit:
+        return (
+            "Phase: diagnose, then edit. Stop widening the search. Pick the single most likely "
+            "file and make one concrete edit this turn."
+        )
+
+    if not has_run_tests_tool or not has_changes:
+        return None
+
+    if require_default_verification and not verification_state.used_default_run_tests:
+        return (
+            "Phase: verify. Run `run_tests default` now. Do not call `final_answer` before the "
+            "task-default verification runs."
+        )
+
+    if not require_default_verification and not verification_state.used_run_tests:
+        return (
+            "Phase: verify. Run `run_tests` with the cheapest command that exercises your "
+            "change before you keep editing or submit."
+        )
+
+    if not verification_state.successful_run_tests:
+        return (
+            "Phase: repair and re-verify. Your current verification has not passed yet. Keep "
+            "iterating until `run_tests` succeeds."
+        )
+
+    return None
+
+
+def build_tool_gate_message(
+    tool_name: str,
+    *,
+    available_tools: list[str],
+    has_changes: bool,
+    has_run_tests_tool: bool,
+    verification_state: VerificationState,
+    require_default_verification: bool,
+) -> str | None:
+    if tool_name == "final_answer":
+        return build_submit_block_message(
+            has_changes=has_changes,
+            has_run_tests_tool=has_run_tests_tool,
+            verification_state=verification_state,
+            require_default_verification=require_default_verification,
+        )
+
+    if tool_name in available_tools:
+        return None
+
+    if tool_name == "bash":
+        return (
+            "Bash is an escape hatch here. Use `read_file`, `search_code`, `edit`, and "
+            "`run_tests` for the main loop unless you truly need a shell-only command."
+        )
+
+    return None
+
+
 def build_submit_block_message(
     *,
     has_changes: bool,

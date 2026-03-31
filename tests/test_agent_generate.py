@@ -22,6 +22,7 @@ def _install_fake_runtime_modules():
     memory_module = types.ModuleType("mellea.agent.runtime.memory")
     loops_module = types.ModuleType("mellea.agent.runtime.loops")
     workspace_module = types.ModuleType("mellea.agent.runtime.workspace")
+    strategy_module = types.ModuleType("mellea.agent.strategy")
     runtime_module.__path__ = []
 
     class FakeSafetyPolicy:
@@ -93,6 +94,28 @@ def _install_fake_runtime_modules():
             self.preserve_recent = preserve_recent
             self.preserve_head = preserve_head
 
+    class ToolInvocation:
+        def __init__(self, name, status="completed"):
+            self.name = name
+            self.status = status
+
+    class ToolPhaseState:
+        def __init__(self, *, turn, budget, invocations=()):
+            self.turn = turn
+            self.budget = budget
+            self.invocations = tuple(invocations)
+
+    def get_available_tools(
+        all_tool_names,
+        turn,
+        budget,
+        state=None,
+        policy=None,
+        phases=(0.4, 0.8, 1.0),
+    ):
+        del turn, budget, state, policy, phases
+        return list(all_tool_names)
+
     runtime_module.EventLog = FakeEventLog
     runtime_module.SafetyPolicy = FakeSafetyPolicy
     runtime_module.SessionMetadata = FakeSessionMetadata
@@ -111,12 +134,16 @@ def _install_fake_runtime_modules():
             "requires an absolute path."
         )
     )
+    strategy_module.ToolInvocation = ToolInvocation
+    strategy_module.ToolPhaseState = ToolPhaseState
+    strategy_module.get_available_tools = get_available_tools
 
     return {
         "mellea.agent.runtime": runtime_module,
         "mellea.agent.runtime.memory": memory_module,
         "mellea.agent.runtime.loops": loops_module,
         "mellea.agent.runtime.workspace": workspace_module,
+        "mellea.agent.strategy": strategy_module,
     }
 
 
@@ -139,24 +166,26 @@ def _init_repo(tmp_path):
     )
 
 
-def test_generate_patch_uses_react(tmp_path):
+def test_generate_patch_uses_text_react(tmp_path):
     _init_repo(tmp_path)
 
     session = LLMSession(model_id="test", backend_name="ollama")
+    session._m = MagicMock()
+    session._m.backend = MagicMock()
 
-    mock_mellea = MagicMock()
-    session._m = mock_mellea
+    async def mock_text_react(*args, **kwargs):
+        del args, kwargs
+        return ("done", True)
 
-    mock_result = MagicMock()
-    mock_result.value = "done"
-    mock_ctx = MagicMock()
+    fake_module = types.ModuleType("mellea.agent.text_react")
+    fake_module.text_react = mock_text_react
 
-    async def mock_react(*args, **kwargs):
-        return (mock_result, mock_ctx)
-
-    with (
-        patch.dict(sys.modules, _install_fake_runtime_modules()),
-        patch("mellea.stdlib.frameworks.react.react", mock_react),
+    with patch.dict(
+        sys.modules,
+        {
+            **_install_fake_runtime_modules(),
+            "mellea.agent.text_react": fake_module,
+        },
     ):
         result = session.generate_patch(
             repo="test/repo",
@@ -216,14 +245,12 @@ def test_generate_patch_passes_model_options_to_text_react(tmp_path, monkeypatch
     }
 
 
-def test_generate_patch_text_nudge_blocks_empty_diff_final_answer(tmp_path, monkeypatch):
+def test_generate_patch_turn_guidance_pushes_to_first_edit(tmp_path, monkeypatch):
     _init_repo(tmp_path)
 
     session = LLMSession(model_id="test", backend_name="openai", loop_budget=9)
     session._m = MagicMock()
     session._m.backend = MagicMock()
-
-    monkeypatch.setenv("MELLEA_TEXT_TOOLS", "1")
 
     captured: dict = {}
 
@@ -249,18 +276,16 @@ def test_generate_patch_text_nudge_blocks_empty_diff_final_answer(tmp_path, monk
         )
 
     msgs = captured["on_turn"](7, 9, [])
-    assert "working tree still has no code changes" in msgs[-1]["content"]
-    assert "Do not call `final_answer` yet" in msgs[-1]["content"]
+    assert "Phase: diagnose, then edit." in msgs[-1]["content"]
+    assert "make one concrete edit this turn" in msgs[-1]["content"]
 
 
-def test_generate_patch_text_nudge_demands_verification_after_edit(tmp_path, monkeypatch):
+def test_generate_patch_turn_guidance_demands_verification_after_edit(tmp_path, monkeypatch):
     _init_repo(tmp_path)
 
     session = LLMSession(model_id="test", backend_name="openai", loop_budget=9)
     session._m = MagicMock()
     session._m.backend = MagicMock()
-
-    monkeypatch.setenv("MELLEA_TEXT_TOOLS", "1")
 
     captured: dict = {}
 
@@ -288,19 +313,16 @@ def test_generate_patch_text_nudge_demands_verification_after_edit(tmp_path, mon
     (tmp_path / "foo.py").write_text("x = 2\n")
 
     msgs = captured["on_turn"](7, 9, [])
-    assert "you have not run verification yet" in msgs[-1]["content"]
-    assert "Use `run_tests default` now" in msgs[-1]["content"]
-    assert "Do not call `final_answer` yet" in msgs[-1]["content"]
+    assert "Phase: verify." in msgs[-1]["content"]
+    assert "run_tests default" in msgs[-1]["content"]
 
 
-def test_generate_patch_text_watchdog_nudges_after_read_only_loop(tmp_path, monkeypatch):
+def test_generate_patch_turn_guidance_stays_in_diagnose_phase_on_read_churn(tmp_path, monkeypatch):
     _init_repo(tmp_path)
 
     session = LLMSession(model_id="test", backend_name="openai", loop_budget=24)
     session._m = MagicMock()
     session._m.backend = MagicMock()
-
-    monkeypatch.setenv("MELLEA_TEXT_TOOLS", "1")
 
     captured: dict = {}
 
@@ -333,8 +355,7 @@ def test_generate_patch_text_watchdog_nudges_after_read_only_loop(tmp_path, monk
             {"role": "user", "content": "[search_code] some query"},
         ],
     )
-    assert "spent several turns reading/searching without editing" in msgs[-1]["content"]
-    assert "make one concrete edit now" in msgs[-1]["content"]
+    assert "Phase: diagnose, then edit." in msgs[-1]["content"]
 
 
 def test_generate_patch_discards_exhausted_unverified_diff(tmp_path, monkeypatch):
@@ -433,18 +454,22 @@ def test_generate_patch_exposes_task_default_verification(tmp_path, monkeypatch)
         captured["workspace"] = workspace
         return []
 
-    mock_result = MagicMock()
-    mock_result.value = "done"
-    mock_ctx = MagicMock()
-
-    async def mock_react(*args, **kwargs):
+    async def mock_text_react(*args, **kwargs):
         captured["goal"] = kwargs["goal"]
-        return (mock_result, mock_ctx)
+        return ("done", True)
+
+    fake_module = types.ModuleType("mellea.agent.text_react")
+    fake_module.text_react = mock_text_react
 
     with (
-        patch.dict(sys.modules, _install_fake_runtime_modules()),
+        patch.dict(
+            sys.modules,
+            {
+                **_install_fake_runtime_modules(),
+                "mellea.agent.text_react": fake_module,
+            },
+        ),
         patch("mcode.agent.coding_agent.make_agent_tools", fake_make_agent_tools),
-        patch("mellea.stdlib.frameworks.react.react", mock_react),
     ):
         result = session.generate_patch(
             repo="test/repo",
@@ -481,23 +506,28 @@ def test_generate_patch_keeps_shell_verification_without_task_defaults(tmp_path,
         captured["workspace"] = workspace
         return []
 
-    mock_result = MagicMock()
-    mock_result.value = "done"
-    mock_ctx = MagicMock()
-
-    async def mock_react(*args, **kwargs):
+    async def mock_text_react(*args, **kwargs):
         captured["goal"] = kwargs["goal"]
-        return (mock_result, mock_ctx)
+        return ("done", True)
+
+    fake_module = types.ModuleType("mellea.agent.text_react")
+    fake_module.text_react = mock_text_react
 
     with (
-        patch.dict(sys.modules, _install_fake_runtime_modules()),
+        patch.dict(
+            sys.modules,
+            {
+                **_install_fake_runtime_modules(),
+                "mellea.agent.text_react": fake_module,
+            },
+        ),
         patch("mcode.agent.coding_agent.make_agent_tools", fake_make_agent_tools),
-        patch("mellea.stdlib.frameworks.react.react", mock_react),
     ):
         result = session.generate_patch(
             repo="test/repo",
             problem_statement="Fix the bug",
             repo_root=str(tmp_path),
+            test_cmds=None,
         )
 
     assert isinstance(result, str)

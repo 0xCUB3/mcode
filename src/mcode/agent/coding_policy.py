@@ -6,31 +6,14 @@ _BASE_SYSTEM_PROMPT = (
     "You are an expert software engineer fixing a bug in an open-source repository. "
     "You MUST edit existing source files to fix the bug. Do NOT create new files. "
     "Do NOT write test scripts. Only modify the existing code that contains the bug.\n\n"
-    "WORKFLOW:\n"
-    "1. EXPLORE: Read the issue carefully, inspect the repo, and locate the real source file.\n"
-    "2. DIAGNOSE: Identify the root cause before editing.\n"
-    "3. EDIT: Make the smallest source change that fixes the bug.\n"
-    "4. VERIFY: Use the available verification path to check the edit.\n"
-    "5. SUBMIT: Call final_answer only after the code is changed "
-    "and verification has been attempted."
-)
-
-_EXPLORATION_SYSTEM_PROMPT = (
-    "You are an expert software engineer fixing a bug in an open-source repository. "
-    "You MUST edit existing source files to fix the bug. Do NOT create new files. "
-    "Do NOT write test scripts. Only modify the existing code that contains the bug.\n\n"
-    "WORKFLOW:\n"
-    "1. EXPLORE: Read the issue carefully. Search the codebase to find the relevant code. "
-    "Read multiple files to understand the context. Do NOT edit anything yet.\n"
-    "2. DIAGNOSE: Before making any edit, explain the root cause in your reasoning. "
-    "If you cannot explain exactly why the current code is wrong, keep reading.\n"
-    "3. EDIT: Make the minimal fix. Change the fewest lines possible. Prefer fixing the root "
-    "cause over adding workarounds.\n"
-    "4. VERIFY: Review your edit and run the cheapest useful verification.\n"
-    "5. SUBMIT: Call final_answer only after the code is changed "
-    "and verification has been attempted.\n\n"
-    "Do NOT jump to editing after reading just one file. Understand the problem fully first."
-)
+    "PHASES:\n"
+    "1. DIAGNOSE: Use read/search/find tools to isolate the real root cause. Avoid wandering.\n"
+    "2. EDIT: Once you know the target, make one concrete edit in the existing source.\n"
+    "3. VERIFY: After the first edit, switch quickly to run_tests and keep verification narrow.\n"
+    "4. SUBMIT: Call final_answer only after code changed and verification was attempted.\n\n"
+    "Use bash only as an escape hatch when the structured coding tools cannot express the "
+    "command you need."
+ )
 
 
 @dataclass(frozen=True)
@@ -45,8 +28,8 @@ class CodingPolicy:
         }
 
 
-def build_system_prompt(*, explore_prompt: bool) -> str:
-    return _EXPLORATION_SYSTEM_PROMPT if explore_prompt else _BASE_SYSTEM_PROMPT
+def build_system_prompt() -> str:
+    return _BASE_SYSTEM_PROMPT
 
 
 def build_goal(
@@ -69,7 +52,7 @@ def build_goal(
         f"Fix this bug in {repo} by editing the existing source code.\n\n"
         f"Issue:\n{problem_statement.strip()}"
         f"{repo_map_block}{hints_block}{customization_block}{verification_prompt}\n\n"
-        "Only edit existing files. Do not create new files or test scripts."
+        "Do not open a second solving path. Diagnose, edit, verify, then submit."
     )
 
 
@@ -81,10 +64,9 @@ def build_coding_policy(
     repo_map_text: str = "",
     repo_customization_text: str = "",
     verification_prompt: str = "",
-    explore_prompt: bool = False,
 ) -> CodingPolicy:
     return CodingPolicy(
-        system_prompt=build_system_prompt(explore_prompt=explore_prompt),
+        system_prompt=build_system_prompt(),
         goal=build_goal(
             repo=repo,
             problem_statement=problem_statement,

@@ -34,10 +34,10 @@ def test_cli_help() -> None:
 
 
 def test_cli_bench_swebench_help() -> None:
-    help_text = _invoke_help("bench", "swebench-lite", "--help")
-    assert "n_samples" in _command_option_names("bench", "swebench-lite")
-    assert "Sampling strategy: repair," in help_text
-    assert "sofai, or raw" in help_text
+    _invoke_help("bench", "swebench-lite", "--help")
+    option_names = _command_option_names("bench", "swebench-lite")
+    assert "n_samples" in option_names
+    assert "strategy" not in option_names
 
 
 def test_cli_report_help() -> None:

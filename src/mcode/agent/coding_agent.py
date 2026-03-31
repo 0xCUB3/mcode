@@ -20,9 +20,6 @@ class CodingAgentAssembly:
     model_options: dict
     loop_budget: int
     timeout_s: int
-    use_text_tools: bool
-    use_budget_warning: bool
-    use_mid_nudge: bool
     workspace: object = None
     event_log: object = None
     condensed_state: object = None
@@ -60,10 +57,6 @@ def build_coding_agent(
 ) -> CodingAgentAssembly:
     budget = max(1, session.loop_budget)
     timeout_s = int(os.environ.get("MCODE_REACT_TIMEOUT", str(budget * 30)))
-    explore_prompt = os.environ.get("MCODE_EXPLORE_PROMPT", "0") == "1"
-    use_text_tools = os.environ.get("MELLEA_TEXT_TOOLS", "0") == "1"
-    use_budget_warning = os.environ.get("MCODE_BUDGET_WARNING", "1") == "1"
-    use_mid_nudge = os.environ.get("MCODE_MID_NUDGE", "0") == "1"
 
     verification_policy = build_verification_policy(
         repo_root=repo_root,
@@ -86,7 +79,6 @@ def build_coding_agent(
         repo_map_text=repo_map_text,
         repo_customization_text=repo_customization.text,
         verification_prompt=verification_policy.prompt_block,
-        explore_prompt=explore_prompt,
     )
     prompt_inputs_fn = getattr(coding_policy, "prompt_inputs", None)
     if callable(prompt_inputs_fn):
@@ -128,9 +120,6 @@ def build_coding_agent(
         model_options=session._model_options(system_prompt=prompt_inputs["system_prompt"]),
         loop_budget=budget,
         timeout_s=timeout_s,
-        use_text_tools=use_text_tools,
-        use_budget_warning=use_budget_warning,
-        use_mid_nudge=use_mid_nudge,
         workspace=workspace,
         event_log=event_log,
         condensed_state=condensed_state,

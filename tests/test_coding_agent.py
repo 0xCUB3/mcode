@@ -296,8 +296,8 @@ def test_build_coding_policy_composes_shell_first_goal():
     assert "Repository structure:\nrepo map" in policy.goal
     assert "Additional context:\nHint text" in policy.goal
     assert "Use the cheapest shell command." in policy.goal
-    assert "WORKFLOW:" in policy.system_prompt
-    assert "EXPLORE" in policy.system_prompt
+    assert "PHASES:" in policy.system_prompt
+    assert "DIAGNOSE" in policy.system_prompt
     assert "VERIFY" in policy.system_prompt
     assert "SUBMIT" in policy.system_prompt
 
@@ -360,8 +360,6 @@ def test_build_verification_policy_preserves_explicit_test_fn(tmp_path):
 def test_coding_agent_can_be_requested_from_session_generate_patch(tmp_path, monkeypatch):
     from mcode.llm import session as session_module
 
-    monkeypatch.setenv("MELLEA_TEXT_TOOLS", "0")
-
     session = LLMSession(model_id="test", backend_name="ollama")
     session._m = MagicMock()
     session._m.backend = MagicMock()
@@ -373,23 +371,22 @@ def test_coding_agent_can_be_requested_from_session_generate_patch(tmp_path, mon
         model_options={},
         loop_budget=1,
         timeout_s=1,
-        use_text_tools=False,
-        use_budget_warning=False,
-        use_mid_nudge=False,
         system_prompt="system",
         verification_cmds=[],
         verification_test_fn=lambda cmd="default": "",
     )
 
-    async def fake_react(*args, **kwargs):
-        return (types.SimpleNamespace(value="done"), MagicMock())
+    async def fake_text_react(*args, **kwargs):
+        del args, kwargs
+        return ("done", True)
+
+    fake_module = types.ModuleType("mellea.agent.text_react")
+    fake_module.text_react = fake_text_react
 
     with (
         patch.object(session_module, "build_coding_agent", build_agent, create=True),
-        patch("mellea.agent.tools.make_agent_tools", return_value=[]),
-        patch("mellea.agent.repomap.build_repo_map", return_value="repo map"),
-        patch("mellea.stdlib.frameworks.react.react", fake_react),
-        patch.object(session_module, "_get_diff", return_value="diff"),
+        patch.dict(sys.modules, {"mellea.agent.text_react": fake_module}),
+        patch.object(session_module, "_get_diff", return_value=""),
     ):
         result = session.generate_patch(
             repo="test/repo",
@@ -398,6 +395,7 @@ def test_coding_agent_can_be_requested_from_session_generate_patch(tmp_path, mon
         )
 
     assert result == ""
+    assert build_agent.called
     assert build_agent.called
 
 
@@ -479,27 +477,11 @@ def test_build_coding_agent_includes_repo_customization_text(tmp_path, monkeypat
 def test_session_generate_patch_seeds_react_context_from_runtime_state(tmp_path, monkeypatch):
     from mcode.llm import session as session_module
 
-    monkeypatch.setenv("MELLEA_TEXT_TOOLS", "0")
-
     session = LLMSession(model_id="test", backend_name="ollama")
     session._m = MagicMock()
     session._m.backend = MagicMock()
 
-    _, _, _, FakeCondensedState, _ = _install_fake_runtime_modules()
-    condensed_state = FakeCondensedState(
-        working_memory=types.SimpleNamespace(
-            as_message=lambda *, omitted_messages=0: {
-                "role": "user",
-                "content": f"reminder:{omitted_messages}",
-            }
-        ),
-        recent_messages=(
-            {"role": "assistant", "content": "prior reasoning"},
-            {"role": "user", "content": "latest observation"},
-        ),
-        omitted_messages=3,
-    )
-
+    condensed_state = types.SimpleNamespace(label="memory")
     build_agent = MagicMock()
     build_agent.return_value = types.SimpleNamespace(
         goal="assembled",
@@ -507,9 +489,6 @@ def test_session_generate_patch_seeds_react_context_from_runtime_state(tmp_path,
         model_options={},
         loop_budget=1,
         timeout_s=1,
-        use_text_tools=False,
-        use_budget_warning=False,
-        use_mid_nudge=False,
         system_prompt="system",
         verification_cmds=[],
         verification_test_fn=lambda cmd="default": "",
@@ -520,17 +499,17 @@ def test_session_generate_patch_seeds_react_context_from_runtime_state(tmp_path,
 
     captured: dict[str, object] = {}
 
-    async def fake_react(*args, **kwargs):
-        context_items = kwargs["context"].view_for_generation()
-        captured["messages"] = [
-            (message.role, message.content) for message in (context_items or [])
-        ]
-        return (types.SimpleNamespace(value="done"), MagicMock())
+    async def fake_text_react(*args, **kwargs):
+        captured.update(kwargs)
+        return ("done", True)
+
+    fake_module = types.ModuleType("mellea.agent.text_react")
+    fake_module.text_react = fake_text_react
 
     with (
         patch.object(session_module, "build_coding_agent", build_agent, create=True),
-        patch("mellea.stdlib.frameworks.react.react", fake_react),
-        patch.object(session_module, "_get_diff", return_value="diff"),
+        patch.dict(sys.modules, {"mellea.agent.text_react": fake_module}),
+        patch.object(session_module, "_get_diff", return_value=""),
     ):
         result = session.generate_patch(
             repo="test/repo",
@@ -539,17 +518,11 @@ def test_session_generate_patch_seeds_react_context_from_runtime_state(tmp_path,
         )
 
     assert result == ""
-    assert captured["messages"] == [
-        ("user", "reminder:3"),
-        ("assistant", "prior reasoning"),
-        ("user", "latest observation"),
-    ]
+    assert captured["condensed_state"] is condensed_state
 
 
 def test_session_generate_patch_passes_runtime_state_to_text_react(tmp_path, monkeypatch):
     from mcode.llm import session as session_module
-
-    monkeypatch.setenv("MELLEA_TEXT_TOOLS", "1")
 
     session = LLMSession(model_id="test", backend_name="ollama")
     session._m = MagicMock()
@@ -565,9 +538,6 @@ def test_session_generate_patch_passes_runtime_state_to_text_react(tmp_path, mon
         model_options={},
         loop_budget=3,
         timeout_s=1,
-        use_text_tools=True,
-        use_budget_warning=False,
-        use_mid_nudge=False,
         system_prompt="system",
         verification_cmds=[],
         verification_test_fn=lambda cmd="default": "",
@@ -589,7 +559,7 @@ def test_session_generate_patch_passes_runtime_state_to_text_react(tmp_path, mon
     with (
         patch.object(session_module, "build_coding_agent", build_agent, create=True),
         patch.dict(sys.modules, {"mellea.agent.text_react": fake_module}),
-        patch.object(session_module, "_get_diff", return_value="diff"),
+        patch.object(session_module, "_get_diff", return_value=""),
     ):
         result = session.generate_patch(
             repo="test/repo",
@@ -601,4 +571,4 @@ def test_session_generate_patch_passes_runtime_state_to_text_react(tmp_path, mon
     assert captured["event_log"] is event_log
     assert captured["condensed_state"] is condensed_state
     assert captured["max_retries_per_turn"] == 2
-    assert callable(captured["final_answer_guard"])
+    assert callable(captured["tool_gate"])
