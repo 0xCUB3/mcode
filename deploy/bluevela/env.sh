@@ -14,6 +14,16 @@ BV_GROUP=${BV_GROUP:-grp_runtime}
 BV_SHARED_DIR=${BV_SHARED_DIR:-/proj/dmfexp/skula}
 BV_PODMAN_ROOT=${BV_PODMAN_ROOT:-${BV_SHARED_DIR}/podman}
 
+# Hugging Face auth and cache
+BV_HF_ENV=${BV_HF_ENV:-${BV_HOME}/.config/mcode/hf-env.sh}
+HF_HOME=${HF_HOME:-${BV_SHARED_DIR}/hf-cache}
+HF_HUB_CACHE=${HF_HUB_CACHE:-${HF_HOME}/hub}
+HF_DATASETS_CACHE=${HF_DATASETS_CACHE:-${HF_HOME}/datasets}
+if [[ -f "${BV_HF_ENV}" ]]; then
+  # shellcheck disable=SC1090
+  source "${BV_HF_ENV}"
+fi
+
 # Model
 MODEL=${MODEL:-Qwen/Qwen3.5-27B}
 VLLM_PORT=${VLLM_PORT:-8321}
@@ -26,5 +36,4 @@ BACKEND=${BACKEND:-openai}
 OPENAI_API_KEY=${OPENAI_API_KEY:-dummy}
 MCODE_MAX_NEW_TOKENS=${MCODE_MAX_NEW_TOKENS:-4096}
 LOOP_BUDGET=${LOOP_BUDGET:-15}
-STRATEGY=${STRATEGY:-repair}
 SHARD_COUNT=${SHARD_COUNT:-7}

@@ -19,7 +19,7 @@ This installs dependencies and configures the environment.
 
 ### 1. Configure
 
-Edit `env.sh` to set your run parameters:
+Edit `env.sh` to set your run parameters. For Hugging Face auth and shared cache, the launchers now automatically source `/u/skula/.config/mcode/hf-env.sh` when it exists.
 
 ```bash
 MODEL=meta-llama/Llama-3.1-70B-Instruct
@@ -88,3 +88,6 @@ Uses rsync to pull results from the cluster to your local machine.
 | `VLLM_PORT` | Port for vLLM server | `8321` |
 | `VLLM_GPU_COUNT` | GPUs allocated to vLLM | `1` |
 | `VLLM_MAX_MODEL_LEN` | Max sequence length | `32768` |
+
+
+The benchmark and vLLM launchers will reuse the shared Hugging Face cache under `/proj/dmfexp/skula/hf-cache`. If you need to override the secret/bootstrap path, set `BV_HF_ENV` before invoking the scripts.

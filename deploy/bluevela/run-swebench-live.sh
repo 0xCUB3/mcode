@@ -80,22 +80,28 @@ PYEOF
     export OPENAI_BASE_URL='"'${OPENAI_BASE_URL}'"'
     export OPENAI_API_KEY='"'${OPENAI_API_KEY}'"'
     export MCODE_MAX_NEW_TOKENS='"'${MCODE_MAX_NEW_TOKENS}'"'
+    export HF_HOME='"'${HF_HOME}'"'
+    export HF_HUB_CACHE='"'${HF_HUB_CACHE}'"'
+    export HF_DATASETS_CACHE='"'${HF_DATASETS_CACHE}'"'
+    if [[ -n '"'${HF_TOKEN:-}'"' ]]; then
+      export HF_TOKEN='"'${HF_TOKEN}'"'
+      export HUGGINGFACE_HUB_TOKEN='"'${HF_TOKEN}'"'
+    fi
 
     SHARD_INDEX=$((LSB_JOBINDEX - 1))
 
     uv run mcode bench swebench-live \
       --model '"'${MODEL}'"' \
       --backend '"'${BACKEND}'"' \
-      --loop-budget '"${LOOP_BUDGET}"' \
-      --timeout '"${SWB_TIMEOUT}"' \
-      --strategy '"${STRATEGY}"' \
-      --split '"${SWB_SPLIT}"' \
-      --mem-limit '"${SWB_MEM_LIMIT}"' \
-      --pids-limit '"${SWB_PIDS_LIMIT}"' \
-      --shard-count '"${SHARD_COUNT}"' \
+      --loop-budget '"'${LOOP_BUDGET}'"' \
+      --timeout '"'${SWB_TIMEOUT}'"' \
+      --split '"'${SWB_SPLIT}'"' \
+      --mem-limit '"'${SWB_MEM_LIMIT}'"' \
+      --pids-limit '"'${SWB_PIDS_LIMIT}'"' \
+      --shard-count '"'${SHARD_COUNT}'"' \
       --shard-index ${SHARD_INDEX} \
-      --db '"${BV_RESULTS_DIR}"'/swebench-live-shard-${SHARD_INDEX}.db \
-      '"${LIMIT_FLAG}"'
+      --db '"'${BV_RESULTS_DIR}'"'/swebench-live-shard-${SHARD_INDEX}.db \
+      '"'${LIMIT_FLAG}'"'
   '
 
 echo "Array job submitted. Monitor with: bjobs -J swb-live"

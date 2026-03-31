@@ -26,3 +26,23 @@ def test_bluevela_bench_scripts_wait_for_docker() -> None:
     assert "Docker socket did not become ready" in text
     assert "client = docker.from_env()" in text
     assert "client.ping()" in text
+
+
+
+def test_bluevela_live_launcher_sources_hf_env() -> None:
+    text = (BLUEVELA_DIR / "env.sh").read_text()
+    assert "BV_HF_ENV" in text
+    assert "HF_DATASETS_CACHE" in text
+    assert 'source "${BV_HF_ENV}"' in text
+
+
+def test_bluevela_live_launcher_drops_strategy_flag() -> None:
+    text = (BLUEVELA_DIR / "run-swebench-live.sh").read_text()
+    assert "--strategy" not in text
+    assert "HF_DATASETS_CACHE" in text
+
+
+def test_bluevela_vllm_launcher_uses_shared_hf_home() -> None:
+    text = (BLUEVELA_DIR / "start-vllm.sh").read_text()
+    assert 'HF_CACHE="${HF_HOME}"' in text
+    assert "HUGGINGFACE_HUB_TOKEN" in text

@@ -6,7 +6,7 @@ source "${SCRIPT_DIR}/env.sh"
 
 VLLM_HOST_FILE="${BV_MCODE_DIR}/vllm_host.txt"
 VLLM_LOG="${BV_MCODE_DIR}/results/vllm.log"
-HF_CACHE="${BV_SHARED_DIR}/hf-cache"
+HF_CACHE="${HF_HOME}"
 
 rm -f "${VLLM_HOST_FILE}"
 mkdir -p "$(dirname "${VLLM_LOG}")" "${HF_CACHE}"
@@ -35,7 +35,9 @@ bsub -q "${BV_QUEUE}" \
       --ipc=host \
       --net=host \
       --storage-opt ignore_chown_errors=true \
-      -v '"${HF_CACHE}"':/root/.cache/huggingface \
+      -e HF_TOKEN='"'${HF_TOKEN:-}'"' \
+      -e HUGGINGFACE_HUB_TOKEN='"'${HF_TOKEN:-}'"' \
+      -v '"'${HF_CACHE}'"':/root/.cache/huggingface \
       '"${VLLM_IMAGE}"' \
       --model '"${MODEL}"' \
       --port '"${VLLM_PORT}"' \
