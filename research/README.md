@@ -17,6 +17,8 @@ Short notes for benchmark runs and parameter sweeps. Each entry should include:
 - `2026-02-15-sofai-compare-granite4`: SOFAI (8B S1 + 32B S2) vs repair-only comparison on MBPP (`budget=3,5`, `timeout=90,120`, `limit=500`).
 - `2026-02-20-benchmark-expansion-granite4`: EvalPlus, LiveCodeBench, BigCodeBench expansion sweeps (granite4, loop_budget=1,3,5, timeout=60,120).
 - `2026-03-06-swebench-live-qwen35`: SWE-bench Live Lite (300 instances), Qwen3.5-35B-A3B on Blue Vela. Two runs: budget=3 (6/300, 2.0%) and budget=15 (9/300, 3.0%).
+- `2026-03-31-swebench-optimization-log`: running SWE-bench optimization history, moved out of `docs/` so the long-form benchmark log lives under `research/`.
+- `2026-03-31-swebench-verified-minimax25-harness-redesign`: SWE-bench Verified (500 instances), MiniMax-M2.5 on Blue Vela after the harness redesign. Final result: 187/500 (37.4%) with shared HF auth/cache and the new single-path text-react runtime.
 
 ## Entry template
 

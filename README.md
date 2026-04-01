@@ -95,5 +95,5 @@ See `deploy/bluevela/README.md` for the remote workflow.
 ## Notes
 
 - `docs/COMMANDS.md` has the higher-level command cookbook.
-- `docs/benchmarking.md` and `docs/swebench-optimization-log.md` hold the project benchmarking notes.
-- `research/` is the place for durable run notes and comparisons.
+- `docs/benchmarking.md` covers the benchmarking workflow.
+- `research/` is the canonical home for durable benchmark run notes, optimization history, and rendered reports. Start with `research/2026-03-31-swebench-optimization-log/README.md` for the running SWE-bench optimization history.

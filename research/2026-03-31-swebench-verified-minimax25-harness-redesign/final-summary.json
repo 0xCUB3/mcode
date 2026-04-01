@@ -1,0 +1,49 @@
+{
+  "total": 500,
+  "passed": 187,
+  "pass_rate": 0.374,
+  "shards": [
+    {
+      "db": "live-m25-verified-full-main-20260331-b15-hf-shard-0.db",
+      "total": 72,
+      "passed": 20,
+      "pass_rate": 0.2777777777777778
+    },
+    {
+      "db": "live-m25-verified-full-main-20260331-b15-hf-shard-1.db",
+      "total": 72,
+      "passed": 23,
+      "pass_rate": 0.3194444444444444
+    },
+    {
+      "db": "live-m25-verified-full-main-20260331-b15-hf-shard-2.db",
+      "total": 72,
+      "passed": 33,
+      "pass_rate": 0.4583333333333333
+    },
+    {
+      "db": "live-m25-verified-full-main-20260331-b15-hf-shard-3.db",
+      "total": 71,
+      "passed": 27,
+      "pass_rate": 0.38028169014084506
+    },
+    {
+      "db": "live-m25-verified-full-main-20260331-b15-hf-shard-4.db",
+      "total": 71,
+      "passed": 30,
+      "pass_rate": 0.4225352112676056
+    },
+    {
+      "db": "live-m25-verified-full-main-20260331-b15-hf-shard-5.db",
+      "total": 71,
+      "passed": 26,
+      "pass_rate": 0.36619718309859156
+    },
+    {
+      "db": "live-m25-verified-full-main-20260331-b15-hf-shard-6.db",
+      "total": 71,
+      "passed": 28,
+      "pass_rate": 0.39436619718309857
+    }
+  ]
+}
