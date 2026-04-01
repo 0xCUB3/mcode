@@ -1,10 +1,10 @@
 # SWE-bench optimization log
 
-> Current status: the old `docs/swebench-optimization-log.md` file moved here so the full benchmark history lives under `research/` with the run artifacts.
+This is the running notebook for the SWE-bench work that used to live in `docs/swebench-optimization-log.md`. I moved it under `research/` so the history, the reports, and the actual run artifacts all sit in one place instead of being split between docs and benchmark outputs.
 
-> Latest full-result entry: `research/2026-03-31-swebench-verified-minimax25-harness-redesign/README.md` with the 187/500 MiniMax-M2.5 Verified run on Blue Vela.
+If you only want the newest full-result write-up, start with `research/2026-03-31-swebench-verified-minimax25-harness-redesign/README.md`. That entry has the current 187/500 MiniMax-M2.5 Verified run on Blue Vela and the harness changes that produced it.
 
-
+The rest of this file is the longer trail of experiments, regressions, dead ends, and fixes that led up to that run. A lot of the early notes are still written like a lab notebook. I left them that way on purpose because the false starts are part of the useful history.
 
 We started with Qwen3.5-35B-A3B on a 25-task smoke suite, tried a bunch of things, then scaled up to Qwen3.5-27B on the full 300-task benchmarks.
 
@@ -274,6 +274,6 @@ After confirming that smoke result, we launched a comparable full Verified rerun
 
 ## Where things stand
 
-Best result with Qwen3.5-27B: 84/300 = 28.0% on SWE-bench Lite, roughly 28-32/300 (9-11%) on Live Lite. Best result with MiniMax M2.5 on Live Lite (text tools, budget=100): 15/300 = 5.0%. Best result with MiniMax M2.5 on full SWE-bench Verified so far: 165/500 = 33.0%. Best post-fix Verified smoke result on the 10-task Astropy slice: 6/10 = 60.0% with budget=100 and `MCODE_REACT_TIMEOUT=1800`. On that same corrected scaffold, budget=15 now reaches 5/10 = 50.0%, up from the earlier 3/10.
+The numbers in this file are still useful, but they are no longer the last word. The older best MiniMax Verified result here was 165/500. The newer Blue Vela run in `research/2026-03-31-swebench-verified-minimax25-harness-redesign/README.md` pushed that to 187/500, or 37.4%, on the redesigned harness.
 
-The text-based tool calling infrastructure works and is model-agnostic. The mid-budget nudge remains the most effective single intervention (+3.7pp on Live with Qwen), and the newer MiniMax smoke runs show that timeout and verification wiring were also real bottlenecks. But the gap between our 33.0% full Verified result, even our improved 60% smoke on a narrow slice, and OpenHands' 80.2% is still fundamentally about the scaffold architecture, not model capability or tool calling mechanics. Closing that gap requires giving the agent stronger in-loop verification, better context management, and richer task guidance.
+The broader lesson has stayed pretty consistent through all these iterations. Text-based tool calling was the right move, and the biggest gains have come from better loop control and better verification behavior, not from piling on more prompt tricks. The remaining gap to OpenHands still looks like a scaffold problem more than a raw model problem. Stronger in-loop verification, better context handling, and cleaner execution flow still matter more than another round of reminder text.
