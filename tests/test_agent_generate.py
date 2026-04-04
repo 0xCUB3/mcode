@@ -23,6 +23,7 @@ def _install_fake_runtime_modules():
     loops_module = types.ModuleType("mellea.agent.runtime.loops")
     workspace_module = types.ModuleType("mellea.agent.runtime.workspace")
     strategy_module = types.ModuleType("mellea.agent.strategy")
+    capabilities_module = types.ModuleType("mellea.agent.capabilities")
     runtime_module.__path__ = []
 
     class FakeSafetyPolicy:
@@ -100,10 +101,28 @@ def _install_fake_runtime_modules():
             self.status = status
 
     class ToolPhaseState:
-        def __init__(self, *, turn, budget, invocations=()):
+        def __init__(
+            self,
+            *,
+            turn,
+            budget,
+            invocations=(),
+            malformed_tool_calls=0,
+            final_answer_blocks=0,
+        ):
             self.turn = turn
             self.budget = budget
             self.invocations = tuple(invocations)
+            self.malformed_tool_calls = malformed_tool_calls
+            self.final_answer_blocks = final_answer_blocks
+
+        @property
+        def has_edit(self):
+            return any(call.name == "edit" for call in self.invocations)
+
+        @property
+        def progress(self):
+            return self.turn / max(1, self.budget)
 
     def get_available_tools(
         all_tool_names,
@@ -115,6 +134,50 @@ def _install_fake_runtime_modules():
     ):
         del turn, budget, state, policy, phases
         return list(all_tool_names)
+
+    class FakeOrchestratorContract:
+        def __init__(self, *, tool_names, default_verification_commands=()):
+            self.tool_names = tuple(tool_names)
+            self.default_verification_commands = tuple(default_verification_commands)
+
+        @classmethod
+        def from_tool_names(cls, tool_names, *, default_verification_commands=(), **kwargs):
+            del kwargs
+            return cls(
+                tool_names=tool_names,
+                default_verification_commands=default_verification_commands,
+            )
+
+        @property
+        def verification_required(self):
+            return bool(self.default_verification_commands)
+
+        def route_for_tool(self, tool_name):
+            family = {
+                "search_code": "repository_exploration",
+                "read_file": "repository_exploration",
+                "find_file": "repository_exploration",
+                "list_dir": "repository_exploration",
+                "edit": "editing",
+                "run_tests": "verification",
+                "bash": "shell",
+                "final_answer": "submission",
+            }.get(tool_name, "other")
+            return types.SimpleNamespace(requested_family=family, mode="bundled_tool_fallback")
+
+        def snapshot(self):
+            family_by_tool = {
+                name: self.route_for_tool(name).requested_family for name in self.tool_names
+            }
+            return {
+                "phases": ["diagnose", "edit", "verify", "submit"],
+                "tool_names": list(self.tool_names),
+                "family_by_tool": family_by_tool,
+                "adapter_families": [],
+                "default_verification_commands": list(self.default_verification_commands),
+                "verification_required": self.verification_required,
+                "fallback_route": "bundled_tool_fallback",
+            }
 
     runtime_module.EventLog = FakeEventLog
     runtime_module.SafetyPolicy = FakeSafetyPolicy
@@ -137,6 +200,7 @@ def _install_fake_runtime_modules():
     strategy_module.ToolInvocation = ToolInvocation
     strategy_module.ToolPhaseState = ToolPhaseState
     strategy_module.get_available_tools = get_available_tools
+    capabilities_module.OrchestratorContract = FakeOrchestratorContract
 
     return {
         "mellea.agent.runtime": runtime_module,
@@ -144,6 +208,7 @@ def _install_fake_runtime_modules():
         "mellea.agent.runtime.loops": loops_module,
         "mellea.agent.runtime.workspace": workspace_module,
         "mellea.agent.strategy": strategy_module,
+        "mellea.agent.capabilities": capabilities_module,
     }
 
 
@@ -276,8 +341,8 @@ def test_generate_patch_turn_guidance_pushes_to_first_edit(tmp_path, monkeypatch
         )
 
     msgs = captured["on_turn"](7, 9, [])
-    assert "Phase: diagnose, then edit." in msgs[-1]["content"]
-    assert "make one concrete edit this turn" in msgs[-1]["content"]
+    assert "Phase: edit now." in msgs[-1]["content"]
+    assert "Stop broad search" in msgs[-1]["content"]
 
 
 def test_generate_patch_turn_guidance_demands_verification_after_edit(tmp_path, monkeypatch):
@@ -535,7 +600,7 @@ def test_generate_patch_keeps_shell_verification_without_task_defaults(tmp_path,
     assert captured["test_fn"] is None
     assert captured["command_fn"] is None
     assert captured["workspace"].cwd == str(tmp_path)
-    assert "cheapest shell command" in captured["goal"]
+    assert "cheapest plain command" in captured["goal"]
     assert "Avoid full-suite runs unless necessary" in captured["goal"]
 
 
@@ -756,6 +821,64 @@ def test_swebench_lite_runner_reraises_docker_unavailable(tmp_path):
         )
 
 
+def test_generate_patch_records_scaffold_metrics(tmp_path):
+    _init_repo(tmp_path)
+
+    session = LLMSession(model_id="test", backend_name="openai", loop_budget=9)
+    session._m = MagicMock()
+    session._m.backend = MagicMock()
+
+    async def mock_text_react(*args, **kwargs):
+        del args
+        kwargs["on_turn"](2, 9, [])
+        kwargs["tool_gate"]("edit", {}, messages=(), event_log=kwargs["event_log"])
+        (tmp_path / "foo.py").write_text("x = 2\n")
+        kwargs["on_turn"](3, 9, [])
+        kwargs["tool_gate"](
+            "run_tests",
+            {"test_cmd": "default"},
+            messages=(),
+            event_log=kwargs["event_log"],
+        )
+        event_log = kwargs["event_log"]
+        event_log.emit(ToolCallEvent(tool_name="run_tests", arguments={"test_cmd": "default"}))
+        event_log.emit(
+            ToolResultEvent(
+                tool_name="run_tests",
+                status="completed",
+                output="$ pytest -q tests/test_bug.py\nPASSED\n1 passed",
+            )
+        )
+        return ("done", True)
+
+    fake_module = types.ModuleType("mellea.agent.text_react")
+    fake_module.text_react = mock_text_react
+
+    with patch.dict(
+        sys.modules,
+        {
+            **_install_fake_runtime_modules(),
+            "mellea.agent.text_react": fake_module,
+        },
+    ):
+        patch_text = session.generate_patch(
+            repo="test/repo",
+            problem_statement="Fix the bug",
+            repo_root=str(tmp_path),
+            test_cmds={"test_cmds": ["pytest -q tests/test_bug.py"]},
+        )
+
+    metrics = session.last_patch_metrics
+    assert "x = 2" in patch_text
+    assert metrics is not None
+    assert metrics["turns_to_first_edit"] == 2
+    assert metrics["turns_to_first_verification"] == 3
+    assert metrics["zero_edit"] is False
+    assert metrics["zero_verification"] is False
+    assert metrics["verification_succeeded"] is True
+    assert metrics["terminal_reason"] == "submitted"
+
+
 def test_swebench_lite_aborts_before_start_run_when_docker_unavailable(tmp_path, monkeypatch):
     _init_repo(tmp_path)
 
@@ -790,3 +913,62 @@ def test_swebench_lite_aborts_before_start_run_when_docker_unavailable(tmp_path,
 
     assert db.conn.execute("select count(*) from runs").fetchone()[0] == 0
     assert db.conn.execute("select count(*) from task_results").fetchone()[0] == 0
+
+
+def test_generate_patch_records_blocked_verification_commands(tmp_path):
+    _init_repo(tmp_path)
+
+    session = LLMSession(model_id="test", backend_name="openai", loop_budget=9)
+    session._m = MagicMock()
+    session._m.backend = MagicMock()
+
+    async def mock_text_react(*args, **kwargs):
+        del args
+        kwargs["on_turn"](4, 9, [])
+        kwargs["tool_gate"]("edit", {}, messages=(), event_log=kwargs["event_log"])
+        (tmp_path / "foo.py").write_text("x = 2\n")
+        event_log = kwargs["event_log"]
+        event_log.emit(
+            ToolCallEvent(
+                tool_name="run_tests",
+                arguments={
+                    "test_cmd": "python -m pytest -q tests/test_bug.py | head -20",
+                },
+            )
+        )
+        event_log.emit(
+            ToolResultEvent(
+                tool_name="run_tests",
+                status="completed",
+                output=(
+                    "$ python -m pytest -q tests/test_bug.py | head -20\n"
+                    "BLOCKED\n"
+                    "Run a plain verification command inside `run_tests`. Do not use "
+                    "pipes, redirection, or command chaining."
+                ),
+            )
+        )
+        return ("done", False)
+
+    fake_module = types.ModuleType("mellea.agent.text_react")
+    fake_module.text_react = mock_text_react
+
+    with patch.dict(
+        sys.modules,
+        {
+            **_install_fake_runtime_modules(),
+            "mellea.agent.text_react": fake_module,
+        },
+    ):
+        result = session.generate_patch(
+            repo="test/repo",
+            problem_statement="Fix the bug",
+            repo_root=str(tmp_path),
+            test_cmds={"test_cmds": ["pytest -q tests/test_bug.py"]},
+        )
+
+    metrics = session.last_patch_metrics
+    assert result == ""
+    assert metrics is not None
+    assert metrics["blocked_verification_commands"] == 1
+    assert metrics["terminal_reason"] == "unverified_diff_discarded"

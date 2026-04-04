@@ -212,13 +212,13 @@ class BenchmarkRunner:
         repo_root: Path | str,
         command_fn: Callable[[str], str] | None = None,
         visible_repo_root: str | None = None,
-    ) -> str:
+    ) -> tuple[str, dict[str, object] | None]:
         verification_metadata = getattr(task, "raw_instance", None)
         if verification_metadata is None:
             verification_metadata = getattr(task, "test_cmds", None)
 
         with self.llm.open():
-            return self.llm.generate_patch(
+            patch = self.llm.generate_patch(
                 repo=task.repo,
                 problem_statement=task.problem_statement,
                 hints_text=task.hints_text or "",
@@ -228,6 +228,7 @@ class BenchmarkRunner:
                 command_fn=command_fn,
                 visible_repo_root=visible_repo_root,
             )
+            return patch, self.llm.last_patch_metrics
 
     def _run_swebench_live_task(self, task, *, live_sandbox, run_id: int) -> dict:
         start = time.time()
@@ -235,7 +236,7 @@ class BenchmarkRunner:
             with live_sandbox.repo_context(task) as repo_context:
                 patch_context = _coerce_patch_repo_context(repo_context)
                 try:
-                    patch = self._generate_task_patch(
+                    patch, scaffold_metrics = self._generate_task_patch(
                         task,
                         repo_root=patch_context.repo_root,
                         command_fn=patch_context.command_fn,
@@ -257,10 +258,15 @@ class BenchmarkRunner:
                         "stderr": (_truncate(tb, max_chars=8000) if tb else None),
                         "error": f"{type(e).__name__}: {e}",
                         "code_sha256": None,
+                        **_scaffold_metrics(
+                            scaffold_metrics if "scaffold_metrics" in locals() else None,
+                            terminal_reason="infra_failure",
+                        ),
                     }
                 elapsed_ms = int((time.time() - start) * 1000)
 
                 has_patch = bool(patch and patch.strip())
+                scaffold_result = _scaffold_metrics(scaffold_metrics)
                 last_detail: dict = {}
                 if has_patch:
                     run = live_sandbox.evaluate_patch(
@@ -269,6 +275,10 @@ class BenchmarkRunner:
                         run_id=f"mcode-{run_id}",
                         timeout_s=self.config.timeout_s,
                     )
+                    if run.resolved:
+                        scaffold_result["terminal_reason"] = "submitted"
+                    elif scaffold_result.get("verification_succeeded"):
+                        scaffold_result["terminal_reason"] = "wrong_patch_after_verification"
                     last_detail = {
                         "exit_code": None,
                         "timed_out": run.timed_out,
@@ -292,6 +302,7 @@ class BenchmarkRunner:
                 "stderr": (_truncate(tb, max_chars=8000) if tb else None),
                 "error": f"{type(e).__name__}: {e}",
                 "code_sha256": None,
+                **_scaffold_metrics(None, terminal_reason="infra_failure"),
             }
 
         sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest() if patch else None
@@ -303,6 +314,7 @@ class BenchmarkRunner:
             "time_ms": elapsed_ms,
             "code_sha256": sha,
             **last_detail,
+            **scaffold_result,
         }
 
     def _run_swebench_task(self, task, *, swe_sandbox, run_id: int) -> dict:
@@ -311,7 +323,7 @@ class BenchmarkRunner:
             with swe_sandbox.repo_context(task.raw_instance) as repo_context:
                 patch_context = _coerce_patch_repo_context(repo_context)
                 try:
-                    patch = self._generate_task_patch(
+                    patch, scaffold_metrics = self._generate_task_patch(
                         task,
                         repo_root=patch_context.repo_root,
                         command_fn=patch_context.command_fn,
@@ -333,10 +345,15 @@ class BenchmarkRunner:
                         "stderr": _truncate(tb, max_chars=8000) if tb else None,
                         "error": f"{type(e).__name__}: {e}",
                         "code_sha256": None,
+                        **_scaffold_metrics(
+                            scaffold_metrics if "scaffold_metrics" in locals() else None,
+                            terminal_reason="infra_failure",
+                        ),
                     }
                 elapsed_ms = int((time.time() - start) * 1000)
 
                 has_patch = bool(patch and patch.strip())
+                scaffold_result = _scaffold_metrics(scaffold_metrics)
                 last_detail: dict = {}
                 if has_patch:
                     run = swe_sandbox.evaluate_patch(
@@ -347,6 +364,10 @@ class BenchmarkRunner:
                         timeout_s=self.config.timeout_s,
                     )
                     inst_report = run.report.get(task.instance_id, {})
+                    if run.resolved:
+                        scaffold_result["terminal_reason"] = "submitted"
+                    elif scaffold_result.get("verification_succeeded"):
+                        scaffold_result["terminal_reason"] = "wrong_patch_after_verification"
                     last_detail = {
                         "exit_code": None,
                         "timed_out": run.timed_out,
@@ -370,6 +391,7 @@ class BenchmarkRunner:
                 "stderr": _truncate(tb, max_chars=8000) if tb else None,
                 "error": f"{type(e).__name__}: {e}",
                 "code_sha256": None,
+                **_scaffold_metrics(None, terminal_reason="infra_failure"),
             }
 
         sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest() if patch else None
@@ -381,7 +403,31 @@ class BenchmarkRunner:
             "time_ms": elapsed_ms,
             "code_sha256": sha,
             **last_detail,
+            **scaffold_result,
         }
+
+
+def _scaffold_metrics(
+    metrics: dict[str, object] | None,
+    *,
+    terminal_reason: str | None = None,
+) -> dict[str, object]:
+    out = {
+        "terminal_reason": None,
+        "turns_to_first_edit": None,
+        "turns_to_first_verification": None,
+        "zero_edit": True,
+        "zero_verification": True,
+        "verification_succeeded": False,
+        "malformed_tool_call_recoveries": 0,
+        "blocked_verification_commands": 0,
+        "blocked_submissions": 0,
+    }
+    if metrics:
+        out.update(metrics)
+    if terminal_reason is not None:
+        out["terminal_reason"] = terminal_reason
+    return out
 
 
 def _truncate(s: str, max_chars: int = 8000) -> str:

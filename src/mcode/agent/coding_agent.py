@@ -7,7 +7,11 @@ from dataclasses import dataclass
 
 from mcode.agent.coding_policy import CodingPolicy, build_coding_policy
 from mcode.agent.repo_customization import load_repo_customization
-from mcode.agent.verification import VerificationPolicy, build_verification_policy
+from mcode.agent.verification import (
+    VerificationPolicy,
+    build_run_tests_tool,
+    build_verification_policy,
+)
 
 
 @dataclass(frozen=True)
@@ -24,6 +28,7 @@ class CodingAgentAssembly:
     event_log: object = None
     condensed_state: object = None
     condensation: object = None
+    capability_contract: object = None
     max_retries_per_turn: int = 0
 
     @property
@@ -110,6 +115,13 @@ def build_coding_agent(
         workspace=workspace,
         **tool_kwargs,
     )
+    capability_contract = build_orchestrator_contract(
+        tool_names=[getattr(tool, "name", "") for tool in tools],
+        default_verification_commands=verification_policy.test_cmds,
+    )
+    workspace_metadata = getattr(workspace, "metadata", None)
+    if isinstance(workspace_metadata, dict):
+        workspace_metadata["orchestrator_contract"] = capability_contract.snapshot()
 
     return CodingAgentAssembly(
         repo=repo,
@@ -124,6 +136,7 @@ def build_coding_agent(
         event_log=event_log,
         condensed_state=condensed_state,
         condensation=condensation,
+        capability_contract=capability_contract,
     )
 
 
@@ -187,6 +200,29 @@ def build_agent_runtime(
     return workspace, event_log, condensed_state, condensation
 
 
+def build_orchestrator_contract(
+    *,
+    tool_names: list[str],
+    default_verification_commands: list[str],
+):
+    try:
+        capability_module = importlib.import_module("mellea.agent.capabilities")
+    except Exception as exc:
+        raise RuntimeError(
+            "mellea capability contract primitives are required for coding agent assembly"
+        ) from exc
+
+    try:
+        return capability_module.OrchestratorContract.from_tool_names(
+            tool_names,
+            default_verification_commands=default_verification_commands,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "failed to assemble the orchestrator capability contract from mellea primitives"
+        ) from exc
+
+
 def make_agent_tools(
     repo_root: str,
     *,
@@ -197,10 +233,30 @@ def make_agent_tools(
 ):
     from mellea.agent.tools import make_agent_tools as _make_agent_tools
 
-    return _make_agent_tools(
+    tools = _make_agent_tools(
         repo_root,
         test_cmds=test_cmds,
         test_fn=test_fn,
         command_fn=command_fn,
         workspace=workspace,
     )
+    if test_fn is not None or (not test_cmds and command_fn is None):
+        return tools
+
+    hardened_run_tests = build_run_tests_tool(
+        repo_root=repo_root,
+        test_cmds=test_cmds or [],
+        command_fn=command_fn,
+        workspace=workspace,
+    )
+    replaced = False
+    out = []
+    for tool in tools:
+        if getattr(tool, "name", "") == "run_tests":
+            out.append(hardened_run_tests)
+            replaced = True
+            continue
+        out.append(tool)
+    if not replaced:
+        out.append(hardened_run_tests)
+    return out

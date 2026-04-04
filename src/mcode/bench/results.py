@@ -10,6 +10,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+_TERMINAL_REASON_BUCKETS = (
+    "budget_exhausted",
+    "unverified_diff_discarded",
+    "wrong_patch_after_verification",
+    "infra_failure",
+    "submitted",
+)
+
 
 @dataclass(frozen=True)
 class RunSummary:
@@ -72,6 +80,15 @@ class ResultsDB:
               stderr TEXT,
               error TEXT,
               code_sha256 TEXT,
+              terminal_reason TEXT,
+              turns_to_first_edit INTEGER,
+              turns_to_first_verification INTEGER,
+              zero_edit INTEGER NOT NULL DEFAULT 1,
+              zero_verification INTEGER NOT NULL DEFAULT 1,
+              verification_succeeded INTEGER NOT NULL DEFAULT 0,
+              malformed_tool_call_recoveries INTEGER NOT NULL DEFAULT 0,
+              blocked_verification_commands INTEGER NOT NULL DEFAULT 0,
+              blocked_submissions INTEGER NOT NULL DEFAULT 0,
               FOREIGN KEY (run_id) REFERENCES runs(id)
             )
             """
@@ -83,6 +100,27 @@ class ResultsDB:
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_run_task_unique ON task_results(run_id, task_id)"
         )
         self._ensure_column("runs", "backend_name", "TEXT NOT NULL DEFAULT 'ollama'")
+        self._ensure_column("task_results", "terminal_reason", "TEXT")
+        self._ensure_column("task_results", "turns_to_first_edit", "INTEGER")
+        self._ensure_column("task_results", "turns_to_first_verification", "INTEGER")
+        self._ensure_column("task_results", "zero_edit", "INTEGER NOT NULL DEFAULT 1")
+        self._ensure_column("task_results", "zero_verification", "INTEGER NOT NULL DEFAULT 1")
+        self._ensure_column("task_results", "verification_succeeded", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column(
+            "task_results",
+            "malformed_tool_call_recoveries",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+        self._ensure_column(
+            "task_results",
+            "blocked_verification_commands",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+        self._ensure_column(
+            "task_results",
+            "blocked_submissions",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
         self.conn.commit()
 
     def _ensure_column(self, table: str, column: str, ddl: str) -> None:
@@ -176,8 +214,12 @@ class ResultsDB:
             """
             INSERT OR REPLACE INTO task_results
             (run_id, task_id, passed, attempts_used, time_ms, exit_code,
-             timed_out, stdout, stderr, error, code_sha256)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             timed_out, stdout, stderr, error, code_sha256, terminal_reason,
+             turns_to_first_edit, turns_to_first_verification, zero_edit,
+             zero_verification, verification_succeeded,
+             malformed_tool_call_recoveries, blocked_verification_commands,
+             blocked_submissions)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
@@ -191,6 +233,15 @@ class ResultsDB:
                 result.get("stderr"),
                 result.get("error"),
                 result.get("code_sha256"),
+                result.get("terminal_reason"),
+                result.get("turns_to_first_edit"),
+                result.get("turns_to_first_verification"),
+                1 if result.get("zero_edit", True) else 0,
+                1 if result.get("zero_verification", True) else 0,
+                1 if result.get("verification_succeeded", False) else 0,
+                result.get("malformed_tool_call_recoveries", 0),
+                result.get("blocked_verification_commands", 0),
+                result.get("blocked_submissions", 0),
             ),
         )
         self.conn.commit()
@@ -357,6 +408,43 @@ class ResultsDB:
             where.append("r.loop_budget = ?")
             params.append(int(loop_budget))
 
+        reason_selects = ",\n".join(
+            (
+                "                SUM(CASE WHEN tr.terminal_reason = "
+                f"'{reason}' THEN 1 ELSE 0 END) AS {reason}"
+            )
+            for reason in _TERMINAL_REASON_BUCKETS
+        )
+
+        def _scaffold_fields(row: sqlite3.Row) -> dict[str, object]:
+            zero_edit = int(row["zero_edit"] or 0)
+            zero_verification = int(row["zero_verification"] or 0)
+            verification_succeeded = int(row["verification_succeeded"] or 0)
+            malformed_tool_call_recoveries = int(row["malformed_tool_call_recoveries"] or 0)
+            blocked_verification_commands = int(row["blocked_verification_commands"] or 0)
+            blocked_submissions = int(row["blocked_submissions"] or 0)
+            return {
+                "zero_edit": zero_edit,
+                "zero_edit_rate": zero_edit / total if total else 0.0,
+                "zero_verification": zero_verification,
+                "zero_verification_rate": zero_verification / total if total else 0.0,
+                "verification_succeeded": verification_succeeded,
+                "verification_success_rate": verification_succeeded / total if total else 0.0,
+                "malformed_tool_call_recoveries": malformed_tool_call_recoveries,
+                "malformed_tool_call_recoveries_per_task": (
+                    malformed_tool_call_recoveries / total if total else 0.0
+                ),
+                "blocked_verification_commands": blocked_verification_commands,
+                "blocked_verification_commands_per_task": (
+                    blocked_verification_commands / total if total else 0.0
+                ),
+                "blocked_submissions": blocked_submissions,
+                "blocked_submissions_per_task": blocked_submissions / total if total else 0.0,
+                "turns_to_first_edit_avg": row["turns_to_first_edit_avg"],
+                "turns_to_first_verification_avg": row["turns_to_first_verification_avg"],
+                **{reason: int(row[reason] or 0) for reason in _TERMINAL_REASON_BUCKETS},
+            }
+
         if not group_by:
             sql = f"""
               SELECT
@@ -370,7 +458,16 @@ class ResultsDB:
                 COUNT(*) AS total,
                 SUM(tr.passed) AS passed,
                 SUM(tr.timed_out) AS timed_out,
-                SUM(tr.time_ms) AS time_ms_total
+                SUM(tr.time_ms) AS time_ms_total,
+                SUM(tr.zero_edit) AS zero_edit,
+                SUM(tr.zero_verification) AS zero_verification,
+                SUM(tr.verification_succeeded) AS verification_succeeded,
+                SUM(tr.malformed_tool_call_recoveries) AS malformed_tool_call_recoveries,
+                SUM(tr.blocked_verification_commands) AS blocked_verification_commands,
+                SUM(tr.blocked_submissions) AS blocked_submissions,
+                AVG(tr.turns_to_first_edit) AS turns_to_first_edit_avg,
+                AVG(tr.turns_to_first_verification) AS turns_to_first_verification_avg,
+{reason_selects}
               FROM runs r
               JOIN task_results tr ON tr.run_id = r.id
               WHERE {" AND ".join(where)}
@@ -433,6 +530,7 @@ class ResultsDB:
                         "time_s_p95": (p95_ms / 1000.0) if p95_ms is not None else None,
                         "sec_per_solve": sec_per_solve,
                         "solves_per_hour": solves_per_hour,
+                        **_scaffold_fields(row),
                     }
                 )
             return out
@@ -457,7 +555,16 @@ class ResultsDB:
             COUNT(*) AS total,
             SUM(tr.passed) AS passed,
             SUM(tr.timed_out) AS timed_out,
-            SUM(tr.time_ms) AS time_ms_total
+            SUM(tr.time_ms) AS time_ms_total,
+            SUM(tr.zero_edit) AS zero_edit,
+            SUM(tr.zero_verification) AS zero_verification,
+            SUM(tr.verification_succeeded) AS verification_succeeded,
+            SUM(tr.malformed_tool_call_recoveries) AS malformed_tool_call_recoveries,
+            SUM(tr.blocked_verification_commands) AS blocked_verification_commands,
+            SUM(tr.blocked_submissions) AS blocked_submissions,
+            AVG(tr.turns_to_first_edit) AS turns_to_first_edit_avg,
+            AVG(tr.turns_to_first_verification) AS turns_to_first_verification_avg,
+{reason_selects}
           FROM runs r
           JOIN task_results tr ON tr.run_id = r.id
           WHERE {" AND ".join(where)}
@@ -544,6 +651,7 @@ class ResultsDB:
                     "time_s_p95": (p95_ms / 1000.0) if p95_ms is not None else None,
                     "sec_per_solve": sec_per_solve,
                     "solves_per_hour": solves_per_hour,
+                    **_scaffold_fields(row),
                 }
             )
         return out
@@ -598,18 +706,7 @@ class ResultsDB:
 
                 task_rows = src.execute(
                     """
-                    SELECT
-                      task_id,
-                      passed,
-                      attempts_used,
-                      time_ms,
-                      exit_code,
-                      timed_out,
-                      stdout,
-                      stderr,
-                      error,
-                      code_sha256
-                    FROM task_results
+                    SELECT * FROM task_results
                     WHERE run_id = ?
                     ORDER BY id
                     """,
@@ -620,8 +717,12 @@ class ResultsDB:
                     """
                     INSERT OR REPLACE INTO task_results
                     (run_id, task_id, passed, attempts_used, time_ms,
-                     exit_code, timed_out, stdout, stderr, error, code_sha256)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     exit_code, timed_out, stdout, stderr, error, code_sha256,
+                     terminal_reason, turns_to_first_edit,
+                     turns_to_first_verification, zero_edit, zero_verification,
+                     verification_succeeded, malformed_tool_call_recoveries,
+                     blocked_verification_commands, blocked_submissions)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     [
                         (
@@ -630,12 +731,21 @@ class ResultsDB:
                             int(tr["passed"]),
                             int(tr["attempts_used"]),
                             int(tr["time_ms"]),
-                            tr["exit_code"],
-                            int(tr["timed_out"]),
-                            tr["stdout"],
-                            tr["stderr"],
-                            tr["error"],
-                            tr["code_sha256"],
+                            _row_value(tr, "exit_code"),
+                            int(_row_value(tr, "timed_out", 0) or 0),
+                            _row_value(tr, "stdout"),
+                            _row_value(tr, "stderr"),
+                            _row_value(tr, "error"),
+                            _row_value(tr, "code_sha256"),
+                            _row_value(tr, "terminal_reason"),
+                            _row_value(tr, "turns_to_first_edit"),
+                            _row_value(tr, "turns_to_first_verification"),
+                            int(_row_value(tr, "zero_edit", 1) or 0),
+                            int(_row_value(tr, "zero_verification", 1) or 0),
+                            int(_row_value(tr, "verification_succeeded", 0) or 0),
+                            int(_row_value(tr, "malformed_tool_call_recoveries", 0) or 0),
+                            int(_row_value(tr, "blocked_verification_commands", 0) or 0),
+                            int(_row_value(tr, "blocked_submissions", 0) or 0),
                         )
                         for tr in task_rows
                     ],
@@ -669,6 +779,13 @@ def _time_percentiles_ms(time_ms: list[int]) -> dict[str, float | None]:
         "p50_ms": _percentile(values, 0.50),
         "p95_ms": _percentile(values, 0.95),
     }
+
+
+def _row_value(row: sqlite3.Row, key: str, default=None):
+    keys = row.keys() if hasattr(row, "keys") else ()
+    if key in keys:
+        return row[key]
+    return default
 
 
 def merge_shard_dbs(*, out_path: Path, shard_paths: list[Path], force: bool = False) -> dict:
@@ -749,10 +866,7 @@ def merge_shard_dbs(*, out_path: Path, shard_paths: list[Path], force: bool = Fa
         try:
             rows = conn.execute(
                 """
-                SELECT
-                  task_id, passed, attempts_used, time_ms,
-                  exit_code, timed_out, stdout, stderr, error, code_sha256
-                FROM task_results
+                SELECT * FROM task_results
                 """
             ).fetchall()
             for r in rows:
@@ -767,12 +881,25 @@ def merge_shard_dbs(*, out_path: Path, shard_paths: list[Path], force: bool = Fa
                         "passed": bool(r["passed"]),
                         "attempts_used": int(r["attempts_used"]),
                         "time_ms": int(r["time_ms"]),
-                        "exit_code": r["exit_code"],
-                        "timed_out": bool(r["timed_out"]),
-                        "stdout": r["stdout"],
-                        "stderr": r["stderr"],
-                        "error": r["error"],
-                        "code_sha256": r["code_sha256"],
+                        "exit_code": _row_value(r, "exit_code"),
+                        "timed_out": bool(_row_value(r, "timed_out", 0)),
+                        "stdout": _row_value(r, "stdout"),
+                        "stderr": _row_value(r, "stderr"),
+                        "error": _row_value(r, "error"),
+                        "code_sha256": _row_value(r, "code_sha256"),
+                        "terminal_reason": _row_value(r, "terminal_reason"),
+                        "turns_to_first_edit": _row_value(r, "turns_to_first_edit"),
+                        "turns_to_first_verification": _row_value(r, "turns_to_first_verification"),
+                        "zero_edit": bool(_row_value(r, "zero_edit", 1)),
+                        "zero_verification": bool(_row_value(r, "zero_verification", 1)),
+                        "verification_succeeded": bool(_row_value(r, "verification_succeeded", 0)),
+                        "malformed_tool_call_recoveries": int(
+                            _row_value(r, "malformed_tool_call_recoveries", 0) or 0
+                        ),
+                        "blocked_verification_commands": int(
+                            _row_value(r, "blocked_verification_commands", 0) or 0
+                        ),
+                        "blocked_submissions": int(_row_value(r, "blocked_submissions", 0) or 0),
                     },
                 )
                 written += 1
@@ -851,6 +978,15 @@ def export_csv(
         "exit_code",
         "timed_out",
         "code_sha256",
+        "terminal_reason",
+        "turns_to_first_edit",
+        "turns_to_first_verification",
+        "zero_edit",
+        "zero_verification",
+        "verification_succeeded",
+        "malformed_tool_call_recoveries",
+        "blocked_verification_commands",
+        "blocked_submissions",
         "config_json",
     ]
     if include_logs:
@@ -911,18 +1047,7 @@ def export_csv(
 
                     tasks = conn.execute(
                         """
-                        SELECT
-                          tr.task_id,
-                          tr.passed,
-                          tr.attempts_used,
-                          tr.time_ms,
-                          tr.exit_code,
-                          tr.timed_out,
-                          tr.stdout,
-                          tr.stderr,
-                          tr.error,
-                          tr.code_sha256
-                        FROM task_results tr
+                        SELECT tr.* FROM task_results tr
                         WHERE tr.run_id = ?
                         ORDER BY tr.task_id ASC
                         """,
@@ -943,17 +1068,36 @@ def export_csv(
                             "passed": int(tr["passed"]),
                             "attempts_used": int(tr["attempts_used"]),
                             "time_ms": int(tr["time_ms"]),
-                            "exit_code": tr["exit_code"],
-                            "timed_out": int(tr["timed_out"]),
-                            "code_sha256": tr["code_sha256"],
+                            "exit_code": _row_value(tr, "exit_code"),
+                            "timed_out": int(_row_value(tr, "timed_out", 0) or 0),
+                            "code_sha256": _row_value(tr, "code_sha256"),
+                            "terminal_reason": _row_value(tr, "terminal_reason"),
+                            "turns_to_first_edit": _row_value(tr, "turns_to_first_edit"),
+                            "turns_to_first_verification": _row_value(
+                                tr, "turns_to_first_verification"
+                            ),
+                            "zero_edit": int(_row_value(tr, "zero_edit", 1) or 0),
+                            "zero_verification": int(_row_value(tr, "zero_verification", 1) or 0),
+                            "verification_succeeded": int(
+                                _row_value(tr, "verification_succeeded", 0) or 0
+                            ),
+                            "malformed_tool_call_recoveries": int(
+                                _row_value(tr, "malformed_tool_call_recoveries", 0) or 0
+                            ),
+                            "blocked_verification_commands": int(
+                                _row_value(tr, "blocked_verification_commands", 0) or 0
+                            ),
+                            "blocked_submissions": int(
+                                _row_value(tr, "blocked_submissions", 0) or 0
+                            ),
                             "config_json": config_json,
                         }
                         if include_logs:
                             row.update(
                                 {
-                                    "stdout": tr["stdout"],
-                                    "stderr": tr["stderr"],
-                                    "error": tr["error"],
+                                    "stdout": _row_value(tr, "stdout"),
+                                    "stderr": _row_value(tr, "stderr"),
+                                    "error": _row_value(tr, "error"),
                                 }
                             )
                         tasks_writer.writerow(row)

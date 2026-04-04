@@ -11,6 +11,7 @@ def _install_fake_runtime_modules():
     runtime_module = types.ModuleType("mellea.agent.runtime")
     memory_module = types.ModuleType("mellea.agent.runtime.memory")
     loops_module = types.ModuleType("mellea.agent.runtime.loops")
+    capabilities_module = types.ModuleType("mellea.agent.capabilities")
 
     class FakeSafetyPolicy:
         def __init__(self, mode, network_access=None, writable_roots=()):
@@ -83,6 +84,50 @@ def _install_fake_runtime_modules():
             self.preserve_recent = preserve_recent
             self.preserve_head = preserve_head
 
+    class FakeOrchestratorContract:
+        def __init__(self, *, tool_names, default_verification_commands=()):
+            self.tool_names = tuple(tool_names)
+            self.default_verification_commands = tuple(default_verification_commands)
+
+        @classmethod
+        def from_tool_names(cls, tool_names, *, default_verification_commands=(), **kwargs):
+            del kwargs
+            return cls(
+                tool_names=tool_names,
+                default_verification_commands=default_verification_commands,
+            )
+
+        @property
+        def verification_required(self):
+            return bool(self.default_verification_commands)
+
+        def route_for_tool(self, tool_name):
+            family = {
+                "search_code": "repository_exploration",
+                "read_file": "repository_exploration",
+                "find_file": "repository_exploration",
+                "list_dir": "repository_exploration",
+                "edit": "editing",
+                "run_tests": "verification",
+                "bash": "shell",
+                "final_answer": "submission",
+            }.get(tool_name, "other")
+            return types.SimpleNamespace(requested_family=family, mode="bundled_tool_fallback")
+
+        def snapshot(self):
+            family_by_tool = {
+                name: self.route_for_tool(name).requested_family for name in self.tool_names
+            }
+            return {
+                "phases": ["diagnose", "edit", "verify", "submit"],
+                "tool_names": list(self.tool_names),
+                "family_by_tool": family_by_tool,
+                "adapter_families": [],
+                "default_verification_commands": list(self.default_verification_commands),
+                "verification_required": self.verification_required,
+                "fallback_route": "bundled_tool_fallback",
+            }
+
     runtime_module.EventLog = FakeEventLog
     runtime_module.SafetyPolicy = FakeSafetyPolicy
     runtime_module.SessionMetadata = FakeSessionMetadata
@@ -90,12 +135,14 @@ def _install_fake_runtime_modules():
     memory_module.CondensedState = FakeCondensedState
     memory_module.WorkingMemory = FakeWorkingMemory
     loops_module.CondensationConfig = FakeCondensationConfig
+    capabilities_module.OrchestratorContract = FakeOrchestratorContract
 
     return (
         {
             "mellea.agent.runtime": runtime_module,
             "mellea.agent.runtime.memory": memory_module,
             "mellea.agent.runtime.loops": loops_module,
+            "mellea.agent.capabilities": capabilities_module,
         },
         FakeWorkspace,
         FakeEventLog,
@@ -158,6 +205,59 @@ def test_build_coding_agent_assembles_prompt_and_tools_without_benchmark_path(
     assert captured["test_fn"] is None
     assert captured["command_fn"] is None
     assert captured["workspace"] is assembly.workspace
+
+
+def test_build_coding_agent_attaches_orchestrator_contract_to_workspace(tmp_path, monkeypatch):
+    from mcode.agent import coding_agent as coding_agent_module
+
+    session = LLMSession(model_id="test", backend_name="openai", loop_budget=4)
+    session._m = MagicMock()
+    session._m.backend = MagicMock()
+
+    monkeypatch.setenv("MELLEA_TEXT_TOOLS", "1")
+
+    runtime_modules, _, _, _, _ = _install_fake_runtime_modules()
+    fake_policy = types.SimpleNamespace(
+        system_prompt="system prompt from mcode",
+        goal="goal from mcode",
+    )
+    fake_verification = types.SimpleNamespace(
+        test_cmds=["pytest -q tests/test_coding_agent.py"],
+        test_fn=None,
+        prompt_block="",
+    )
+    fake_tools = [
+        types.SimpleNamespace(name="search_code"),
+        types.SimpleNamespace(name="edit"),
+        types.SimpleNamespace(name="run_tests"),
+    ]
+
+    with (
+        patch.dict(sys.modules, runtime_modules),
+        patch.object(coding_agent_module, "build_repo_map", return_value="repo map"),
+        patch.object(coding_agent_module, "make_agent_tools", return_value=fake_tools),
+        patch.object(coding_agent_module, "build_coding_policy", return_value=fake_policy),
+        patch.object(
+            coding_agent_module, "build_verification_policy", return_value=fake_verification
+        ),
+    ):
+        assembly = coding_agent_module.build_coding_agent(
+            session=session,
+            repo="test/repo",
+            problem_statement="Fix the bug",
+            repo_root=str(tmp_path),
+        )
+
+    snapshot = assembly.capability_contract.snapshot()
+    assert snapshot["phases"] == ["diagnose", "edit", "verify", "submit"]
+    assert snapshot["family_by_tool"] == {
+        "search_code": "repository_exploration",
+        "edit": "editing",
+        "run_tests": "verification",
+    }
+    assert snapshot["default_verification_commands"] == ["pytest -q tests/test_coding_agent.py"]
+    assert assembly.workspace.metadata["orchestrator_contract"] == snapshot
+    assert assembly.capability_contract.verification_required is True
 
 
 def test_build_coding_agent_assembles_mellea_runtime_and_keeps_mcode_policy(tmp_path, monkeypatch):
@@ -336,7 +436,7 @@ def test_build_verification_policy_uses_shell_first_fallback(tmp_path):
     policy = build_verification_policy(repo_root=str(tmp_path))
 
     assert policy.test_cmds == []
-    assert "cheapest shell command" in policy.prompt_block
+    assert "cheapest plain command" in policy.prompt_block
     assert "Avoid full-suite runs unless necessary" in policy.prompt_block
     assert policy.test_fn is None
 
