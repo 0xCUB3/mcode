@@ -368,6 +368,78 @@ The rerun still had the same Blue Vela cleanup problem. The DB reached all 16 ta
 - `run-bluevela-minimax25-diagnostic-b15-after-verification-hardening/swb-diag-m25-rerun.log` - rerun Blue Vela log
 
 
+## Follow-up: same slice after diagnosis hints
+
+After the verification-hardening rerun, I made one more pass aimed at diagnosis quality instead of verification policy. I kept the same small-kernel stance. No new planner, no extra role split, no benchmark-only shim layer. The only new behavior was a lightweight candidate-file shortlist built from the existing BM25 repository ranking and injected into the goal prompt so the agent would start from a narrower set of files.
+
+HTML snapshot: [`diagnostic-swebench-report-after-diagnosis-hints.html`](https://raw.githack.com/0xCUB3/mcode/main/research/2026-04-03-adapter-aware-orchestrator-contract/diagnostic-swebench-report-after-diagnosis-hints.html) ([source](diagnostic-swebench-report-after-diagnosis-hints.html))
+
+### Rerun command
+
+```bash
+export OPENAI_BASE_URL=http://p3-r13-n2.bluevela.rmf.ibm.com:8321/v1
+export OPENAI_API_KEY=dummy
+export MCODE_MAX_NEW_TOKENS=4096
+export MCODE_CONTEXT_WINDOW=32768
+export MCODE_REACT_TIMEOUT=1800
+export MCODE_KEEP_IMAGES=1
+export MELLEA_BASH_TOOL=1
+source /u/skula/.config/mcode/hf-env.sh
+
+uv run mcode bench swebench-lite \
+  --backend openai \
+  --model MiniMaxAI/MiniMax-M2.5 \
+  --dataset princeton-nlp/SWE-bench_Verified \
+  --loop-budget 15 \
+  --timeout 300 \
+  --mem-limit 4g \
+  --pids-limit 512 \
+  --n-samples 1 \
+  --task-ids research/2026-04-03-adapter-aware-orchestrator-contract/medium-diagnostic-task-ids.txt \
+  --db research/2026-04-03-adapter-aware-orchestrator-contract/run-bluevela-minimax25-diagnostic-b15-after-diagnosis-hints/diagnostic.db
+```
+
+### Three-run comparison
+
+| Metric | Baseline | After verification hardening | After diagnosis hints |
+|-|-:|-:|-:|
+| Passed | 6 | 7 | 8 |
+| Pass rate | 37.5% | 43.75% | 50.0% |
+| Zero-edit tasks | 2 | 4 | 3 |
+| Zero-verification tasks | 4 | 5 | 4 |
+| Verification succeeded | 10 | 10 | 11 |
+| Malformed tool-call recoveries | 19 | 15 | 25 |
+| Blocked verification commands | 0 | 12 | 12 |
+| Avg turns to first edit | 8.21 | 5.25 | 5.92 |
+| Avg turns to first verification | 9.42 | 7.73 | 7.58 |
+| Budget exhausted | 2 | 5 | 3 |
+| Unverified diff discarded | 4 | 2 | 2 |
+| Wrong patch after verification | 4 | 2 | 3 |
+| Submitted | 6 | 7 | 8 |
+
+Passed tasks after diagnosis hints: `astropy__astropy-12907`, `astropy__astropy-13236`, `astropy__astropy-13453`, `astropy__astropy-13579`, `astropy__astropy-14096`, `astropy__astropy-14309`, `scikit-learn__scikit-learn-13328`, `sphinx-doc__sphinx-8120`.
+
+### What changed in behavior
+
+This pass helped the benchmark in the way I hoped. The pass count moved again, from 7 to 8, and the pass rate on the 16-task slice reached 50%. That is only one task, but on a fixed slice this small it still matters because the surrounding metrics moved in the same direction.
+
+The most useful change is that the diagnosis pass backed off the worst regression from the verification hardening run. Zero-edit tasks dropped from 4 to 3, and budget-exhausted tasks dropped from 5 to 3. That does not mean diagnosis is solved, but it does mean the shortlist is helping the model commit more often instead of freezing out.
+
+The average first edit got slightly worse than the verification-only rerun, 5.92 instead of 5.25, but it stayed far better than the original 8.21. First verification improved a bit again, from 7.73 to 7.58. That combination suggests the shortlist is not making the model reckless. It is still getting to verification earlier than the baseline, while recovering some of the diagnosis quality that the stricter loop had lost.
+
+The remaining weakness is precision after verification. `wrong_patch_after_verification` ticked back up from 2 to 3, and malformed tool-call recoveries jumped from 15 to 25. So this pass improved localization enough to get one more task over the line, but it also made some trajectories noisier. The next pass should probably focus on keeping the diagnosis shortlist while reducing tool-call churn and improving target precision inside the chosen file.
+
+Just like the earlier runs, the benchmark DB completed and the run summary printed before the podman teardown finished. I killed job `788942` after the useful work was already on disk.
+
+### Additional files
+
+- `diagnostic-swebench-report-after-diagnosis-hints.html` - third-run report ([view](https://raw.githack.com/0xCUB3/mcode/main/research/2026-04-03-adapter-aware-orchestrator-contract/diagnostic-swebench-report-after-diagnosis-hints.html))
+- `diagnostic-results-summary-after-diagnosis-hints.txt` - third-run CLI summary
+- `run-bluevela-minimax25-diagnostic-b15-after-diagnosis-hints/diagnostic.db` - third-run results DB
+- `run-bluevela-minimax25-diagnostic-b15-after-diagnosis-hints/final-summary.json` - third-run scaffold metrics and per-task outcomes
+- `run-bluevela-minimax25-diagnostic-b15-after-diagnosis-hints/swb-diag-m25-diagnosis.log` - third-run Blue Vela log
+
+
 ## References
 
 - OpenHands runtime and event architecture: https://docs.openhands.dev/usage/architecture/runtime and https://docs.openhands.dev/sdk/arch/events
