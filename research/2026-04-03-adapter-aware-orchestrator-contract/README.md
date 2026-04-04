@@ -440,6 +440,80 @@ Just like the earlier runs, the benchmark DB completed and the run summary print
 - `run-bluevela-minimax25-diagnostic-b15-after-diagnosis-hints/swb-diag-m25-diagnosis.log` - third-run Blue Vela log
 
 
+## Follow-up: same slice after within-file hints and churn reduction
+
+The next pass kept the diagnosis shortlist, but added two smaller changes on top of it. First, the prompt now includes likely definitions inside the shortlisted files instead of only file paths. Second, the runtime gets stricter about repeated discovery churn, so once the model is clearly looping on search-heavy diagnosis it loses the broad tools sooner and is pushed back toward `read_file` and `edit`.
+
+HTML snapshot: [`diagnostic-swebench-report-after-churn-reduction.html`](https://raw.githack.com/0xCUB3/mcode/main/research/2026-04-03-adapter-aware-orchestrator-contract/diagnostic-swebench-report-after-churn-reduction.html) ([source](diagnostic-swebench-report-after-churn-reduction.html))
+
+### Rerun command
+
+```bash
+export OPENAI_BASE_URL=http://p3-r13-n2.bluevela.rmf.ibm.com:8321/v1
+export OPENAI_API_KEY=dummy
+export MCODE_MAX_NEW_TOKENS=4096
+export MCODE_CONTEXT_WINDOW=32768
+export MCODE_REACT_TIMEOUT=1800
+export MCODE_KEEP_IMAGES=1
+export MELLEA_BASH_TOOL=1
+source /u/skula/.config/mcode/hf-env.sh
+
+uv run mcode bench swebench-lite \
+  --backend openai \
+  --model MiniMaxAI/MiniMax-M2.5 \
+  --dataset princeton-nlp/SWE-bench_Verified \
+  --loop-budget 15 \
+  --timeout 300 \
+  --mem-limit 4g \
+  --pids-limit 512 \
+  --n-samples 1 \
+  --task-ids research/2026-04-03-adapter-aware-orchestrator-contract/medium-diagnostic-task-ids.txt \
+  --db research/2026-04-03-adapter-aware-orchestrator-contract/run-bluevela-minimax25-diagnostic-b15-after-churn-reduction/diagnostic.db
+```
+
+### Four-run comparison
+
+| Metric | Baseline | After verification hardening | After diagnosis hints | After churn reduction |
+|-|-:|-:|-:|-:|
+| Passed | 6 | 7 | 8 | 9 |
+| Pass rate | 37.5% | 43.75% | 50.0% | 56.25% |
+| Zero-edit tasks | 2 | 4 | 3 | 2 |
+| Zero-verification tasks | 4 | 5 | 4 | 4 |
+| Verification succeeded | 10 | 10 | 11 | 12 |
+| Malformed tool-call recoveries | 19 | 15 | 25 | 10 |
+| Blocked verification commands | 0 | 12 | 12 | 17 |
+| Avg turns to first edit | 8.21 | 5.25 | 5.92 | 5.50 |
+| Avg turns to first verification | 9.42 | 7.73 | 7.58 | 6.42 |
+| Budget exhausted | 2 | 5 | 3 | 2 |
+| Unverified diff discarded | 4 | 2 | 2 | 2 |
+| Wrong patch after verification | 4 | 2 | 3 | 3 |
+| Submitted | 6 | 7 | 8 | 9 |
+
+Passed tasks after churn reduction: `astropy__astropy-12907`, `astropy__astropy-13236`, `astropy__astropy-13453`, `astropy__astropy-13579`, `astropy__astropy-14096`, `astropy__astropy-14309`, `scikit-learn__scikit-learn-13328`, `sphinx-doc__sphinx-8120`, `sympy__sympy-13877`.
+
+### What changed in behavior
+
+This was the cleanest improvement since the first verification hardening pass. The slice moved from 8 to 9 solved tasks, which puts the same 16-task diagnostic set at 56.25%. More importantly, the supporting metrics improved in the same direction instead of trading one failure mode for another.
+
+The biggest win is churn. Malformed tool-call recoveries dropped from 25 to 10, which is a much better sign than the raw pass count by itself. The model is still trying blocked verification commands, in fact the count rose from 12 to 17, but that is now mostly a guardrail firing instead of general trajectory noise. The runtime is spending less time recovering from malformed calls and more time staying on the structured path.
+
+Within-file precision helped enough to land `sympy__sympy-13877`, which had been a verified-but-wrong case in the earlier rerun. The new symbol hints do not solve target precision outright, but they seem to help the model commit inside the right neighborhood once it has the right file.
+
+The diagnosis metrics also improved. Zero-edit dropped from 3 back to 2, first edit improved from 5.92 to 5.50, and first verification improved more sharply from 7.58 to 6.42. That is the best verification timing of all four runs so far.
+
+The remaining problem is that wrong verified patches are still sticky. `wrong_patch_after_verification` stayed at 3, which means we still need a better notion of what to verify once the model is inside the right file. But now the failure mix is much healthier. We have fewer wasted trajectories, earlier verification, and more total submissions reaching a real patch.
+
+As before, the benchmark DB completed and the run summary printed before podman teardown finished. I killed job `789142` after the useful work was already written to disk.
+
+### Additional files
+
+- `diagnostic-swebench-report-after-churn-reduction.html` - fourth-run report ([view](https://raw.githack.com/0xCUB3/mcode/main/research/2026-04-03-adapter-aware-orchestrator-contract/diagnostic-swebench-report-after-churn-reduction.html))
+- `diagnostic-results-summary-after-churn-reduction.txt` - fourth-run CLI summary
+- `run-bluevela-minimax25-diagnostic-b15-after-churn-reduction/diagnostic.db` - fourth-run results DB
+- `run-bluevela-minimax25-diagnostic-b15-after-churn-reduction/final-summary.json` - fourth-run scaffold metrics and per-task outcomes
+- `run-bluevela-minimax25-diagnostic-b15-after-churn-reduction/swb-diag-m25-churn.log` - fourth-run Blue Vela log
+
+
 ## References
 
 - OpenHands runtime and event architecture: https://docs.openhands.dev/usage/architecture/runtime and https://docs.openhands.dev/sdk/arch/events
