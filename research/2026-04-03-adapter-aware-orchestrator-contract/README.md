@@ -2,9 +2,9 @@
 
 This note is the design center for the next scaffold pass. The benchmark is still useful, but it is no longer the product target. The target is a local coding agent with a small kernel that can sit on top of a base model and a handful of tool-family adapters.
 
-The current benchmark baseline makes the pressure obvious. The best documented full SWE-bench Verified run is 187/500, or 37.4%, in `research/2026-03-31-swebench-verified-minimax25-harness-redesign/README.md`. That run was good enough to keep, but its own write-up says the remaining failures are mostly scaffold failures: budget exhaustion, late or missing verification, and patches that looked plausible without actually closing the task. That is exactly the kind of signal we want from the benchmark. It tells us where the orchestrator is weak.
+The best documented full SWE-bench Verified run is 187/500, or 37.4%, in `research/2026-03-31-swebench-verified-minimax25-harness-redesign/README.md`. That run was good enough to keep, but the remaining failures are mostly scaffold failures such as budget exhaustion, late or missing verification, and patches that looked plausible without actually closing the task. That is exactly the kind of signal we want from the benchmark. It tells us where the orchestrator is weak.
 
-I also do not want to build a benchmark-first maze of special cases. The reusable runtime belongs in `mellea`. The dataset loading, scoring, cluster launchers, and result reporting belong in `mcode`. That split is still right. What changes now is the design center inside the reusable scaffold.
+I also do not want to build a benchmark-first maze of special cases. The reusable runtime belongs in `mellea`. The dataset loading, scoring, cluster launchers, and result reporting belong in `mcode`. What changes now is the design center inside the reusable scaffold.
 
 ## What the kernel owns
 
@@ -21,7 +21,7 @@ At minimum, that state is:
 - submission eligibility and the reason it is blocked
 - lightweight counters that describe loop quality, not just end results
 
-Those counters matter because pass rate alone hides the failure shape. If a run burned half its budget before the first edit, or reached the end with a dirty unverified diff, the orchestrator should say that directly.
+This list might change, but those counters matter because pass rate alone hides the failure shape. If a run burned half its budget before the first edit, or reached the end with a dirty unverified diff, the orchestrator should say that directly.
 
 ## Canonical phase machine
 
@@ -29,13 +29,11 @@ The solving loop has one canonical path:
 
 `diagnose -> edit -> verify -> submit`
 
-This is not meant to be fancy. It is meant to be honest.
-
 `diagnose` means the agent is still narrowing the problem and has not committed to a code change. The only acceptable exit is a concrete edit.
 
 `edit` means the agent has changed the repo and now owes the system evidence. More searching can still happen, but it is in service of fixing or finishing the patch, not reopening the task from scratch.
 
-`verify` means the agent is running the cheapest checks that can falsify its current patch. Verification is not a late courtesy. It is the gate between editing and submission.
+`verify` means the agent is running the cheapest checks that can falsify its current patch. Verification is the gate between editing and submission.
 
 `submit` means the agent has either met the verification requirement or has no patch worth keeping. The runtime, not the prompt, decides whether submission is allowed.
 
@@ -43,7 +41,7 @@ There can be loops inside a phase. A failed test can push the run back toward ed
 
 ## Capability families
 
-The runtime should stop thinking in terms of a flat bag of tools. It should think in terms of capability families.
+The runtime should stop thinking in terms of a flat bag of tools. It should instead think in terms of capability families.
 
 For the next pass, the families are:
 
@@ -53,15 +51,13 @@ For the next pass, the families are:
 - shell escape hatch: `bash`
 - optional planning or summarization later, only if it earns a permanent spot
 
-A family is not just a label for docs. It is a routing hint and a policy boundary. The orchestrator does not need to care whether repository exploration is implemented by one adapter, three built-ins, or a future model-specific tool head. It only needs to know that the model is asking for repository exploration, and that this request is or is not appropriate in the current phase.
+A family is a routing hint and a policy boundary. The orchestrator does not need to care whether repository exploration is implemented by one adapter or a future model-specific tool head. It only needs to know that the model is asking for repository exploration, and that this request is or is not appropriate in the current phase.
 
 That matters for the likely long-term direction. If the local agent eventually gains adapter-backed inference for some families, the runtime already has the seam. If it does not, the same family request can fall back to the ordinary bundled tools without changing the loop contract.
 
 ## Verification rules
 
-Verification is the strongest boundary in this design.
-
-A patch is not eligible for submission just because it exists. A patch is eligible only when one of these is true:
+Verification is the strongest boundary in this design. A patch is not eligible for submission just because it exists. A patch is eligible only when one of these is true:
 
 1. the task has no meaningful local verification path and the runtime records that explicitly, or
 2. the agent has attempted the default verification path, or
@@ -92,9 +88,7 @@ This is where the benchmark remains useful. If the model keeps trying to do veri
 
 ## Fallback when no adapter-aware runtime exists
 
-The first implementation should not wait for real adapter routing.
-
-If no adapter-aware backend exists, the runtime should:
+The first implementation should not wait for real adapter routing. If no adapter-aware backend exists, the runtime should:
 
 - keep the same phase machine
 - keep the same verification gate
@@ -102,7 +96,7 @@ If no adapter-aware backend exists, the runtime should:
 - satisfy family requests through the existing bundled tools
 - record that the run used fallback routing
 
-That gives us a clean seam without inventing a second architecture. The loop behavior stays the same. Only the route behind a family changes.
+That gives us a clean seam without inventing a second architecture. The loop behavior stays the same; only the route behind a family changes.
 
 ## Kernel versus modular edges
 
@@ -160,11 +154,11 @@ The ladder should be:
 - medium diagnostic slice with a mix of failure modes
 - full Verified 500-task run only for milestone checkpoints
 
-A medium slice is where scaffold work should mostly live. It is large enough to expose control-loop mistakes and still cheap enough to rerun after real changes.
+A medium slice is where scaffold work should mostly live. It is large enough to expose control-loop mistakes and still quick enough to rerun after changes.
 
 ## Why this stays minimal for now
 
-OpenHands is a useful reference because it keeps runtime state and action-to-observation boundaries explicit. That part is worth copying at the boundary level. Its framework size is not. OpenHands earns its weight because it is trying to be a whole system with sessions, runtime services, and a broad execution surface.
+OpenHands is a useful reference because it keeps runtime state and action-to-observation boundaries explicit. That part is worth copying at the boundary level. Its framework size is not. OpenHands earns its weight because it is trying to be a whole system.
 
 Pi and Codex-style harnesses are useful for the opposite reason. They show that a compact, opinionated kernel can carry a lot of real work if the loop is disciplined and the session state is durable.
 
@@ -178,11 +172,11 @@ In `mellea`, the reusable side should expose capability-family concepts and runt
 
 In `mcode`, the benchmark-facing side should consume that contract, persist the new loop-quality metrics, and report terminal reasons in the results DB.
 
-The benchmark remains the measuring stick, but the scaffold changes should now be judged by a harder question: does this make the local coding agent more legible, more verifiable, and easier to route by capability family?
+The benchmark remains the measuring stick, but the scaffold changes should now be judged by a different question: does this make the local coding agent more legible, more verifiable, and easier to route by capability family?
 
 ## Follow-up: Blue Vela medium diagnostic slice
 
-After the contract and instrumentation landed, I ran a medium diagnostic slice on Blue Vela against `MiniMaxAI/MiniMax-M2.5`. The point was not to chase a better score on a tiny sample. I wanted one run that exercised the new counters and terminal-reason buckets on a mixed slice, while still staying small enough to inspect by hand.
+After the contract and instrumentation landed, I ran a medium diagnostic slice on Blue Vela against `MiniMaxAI/MiniMax-M2.5`. I wanted one run that exercised the new counters and terminal-reason buckets on a mixed slice, while still staying small enough to inspect by hand.
 
 HTML snapshot: [`diagnostic-swebench-report.html`](https://raw.githack.com/0xCUB3/mcode/main/research/2026-04-03-adapter-aware-orchestrator-contract/diagnostic-swebench-report.html) ([source](diagnostic-swebench-report.html))
 
@@ -282,13 +276,13 @@ Passed tasks: `astropy__astropy-12907`, `astropy__astropy-13453`, `astropy__astr
 
 ### Findings
 
-The run did exactly what I wanted from a medium slice. It did not just tell me the pass rate. It told me where the loop is still slow and where it is lying to itself. The average first edit came at turn 8.2, and the average first verification came even later at turn 9.4. That is too late for a 15-turn loop. The new counters made that obvious immediately.
+The run did exactly what I wanted from a medium slice. The average first edit came at turn 8.2, and the average first verification came even later at turn 9.4. That is too late for a 15-turn loop. The new counters made that obvious immediately.
 
-The terminal-reason buckets were useful on the first try. Four tasks ended as `wrong_patch_after_verification`, four ended as `unverified_diff_discarded`, and two never reached an edit at all. That split matters. The wrong-patch cases point at diagnosis and target selection problems. The unverified-discard cases point at loops that finally touched code but spent verification too late or too weakly to earn submission.
+The terminal-reason buckets were useful on the first try. Four tasks ended as `wrong_patch_after_verification`, four ended as `unverified_diff_discarded`, and two never reached an edit at all. The wrong-patch cases point at diagnosis and target selection problems. The unverified-discard cases point at loops that finally touched code but spent verification too late or too weakly to earn submission.
 
-The Astropy smoke failures still line up with the older postmortem more than I would like. `astropy__astropy-13033`, `astropy__astropy-13977`, and `astropy__astropy-14182` are still in the verified-but-wrong bucket. `astropy__astropy-13398` is still an unverified discard. The instrumented run did not fix those tasks, but it made the failure shape much easier to see without reading raw logs for an hour.
+The Astropy smoke failures still line up with the older postmortem more than I would like. `astropy__astropy-13033`, `astropy__astropy-13977`, and `astropy__astropy-14182` are still in the verified-but-wrong bucket. `astropy__astropy-13398` is still an unverified discard. The instrumented run did not fix those tasks, but it made the failure shape much easier to see without reading raw logs.
 
-The bash gating also showed up in a useful way. One trajectory tried to drift back into shell churn late in the loop, and the runtime blocked it with the new capability-family message instead of letting the model waste the last turns. That did not magically save the task, but it did keep the failure honest.
+The bash gating also showed up in a useful way. One trajectory tried to drift back into shell churn late in the loop, and the runtime blocked it with the new capability-family message instead of letting the model waste the last turns. That did not magically save the task, but it did keep the failure well-defined. 
 
 There were still podman warnings on Blue Vela about rootless networking and cleanup. They did not stop the benchmark itself. They only showed up around image startup and teardown. I killed the wrapper after the run summary printed because the useful work was already done and the DB was complete.
 
