@@ -75,6 +75,11 @@ def build_coding_agent(
         repo_map_text = build_repo_map(repo_root, problem_statement, max_tokens=4096)
     except Exception as e:
         print(f"  [repo_map] failed: {e}", flush=True)
+    candidate_files_text = ""
+    try:
+        candidate_files_text = build_candidate_files(repo_root, problem_statement, top_n=6)
+    except Exception as e:
+        print(f"  [localization] failed: {e}", flush=True)
     repo_customization = load_repo_customization(repo_root)
 
     coding_policy = build_coding_policy(
@@ -82,6 +87,7 @@ def build_coding_agent(
         problem_statement=problem_statement,
         hints_text=hints_text,
         repo_map_text=repo_map_text,
+        candidate_files_text=candidate_files_text,
         repo_customization_text=repo_customization.text,
         verification_prompt=verification_policy.prompt_block,
     )
@@ -137,6 +143,20 @@ def build_coding_agent(
         condensed_state=condensed_state,
         condensation=condensation,
         capability_contract=capability_contract,
+    )
+
+
+def build_candidate_files(
+    repo_root: str,
+    query: str,
+    *,
+    top_n: int = 6,
+) -> str:
+    capability_module = importlib.import_module("mellea.agent.localization")
+    return capability_module.format_candidate_files(
+        repo_root,
+        query,
+        top_n=top_n,
     )
 
 

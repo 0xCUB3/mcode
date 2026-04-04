@@ -12,6 +12,7 @@ def _install_fake_runtime_modules():
     memory_module = types.ModuleType("mellea.agent.runtime.memory")
     loops_module = types.ModuleType("mellea.agent.runtime.loops")
     capabilities_module = types.ModuleType("mellea.agent.capabilities")
+    localization_module = types.ModuleType("mellea.agent.localization")
 
     class FakeSafetyPolicy:
         def __init__(self, mode, network_access=None, writable_roots=()):
@@ -128,6 +129,10 @@ def _install_fake_runtime_modules():
                 "fallback_route": "bundled_tool_fallback",
             }
 
+    localization_module.format_candidate_files = lambda repo_root, query, top_n=6: (
+        "Likely files to inspect first:\n- pkg/parser.py\n- pkg/models.py"
+    )
+
     runtime_module.EventLog = FakeEventLog
     runtime_module.SafetyPolicy = FakeSafetyPolicy
     runtime_module.SessionMetadata = FakeSessionMetadata
@@ -143,6 +148,7 @@ def _install_fake_runtime_modules():
             "mellea.agent.runtime.memory": memory_module,
             "mellea.agent.runtime.loops": loops_module,
             "mellea.agent.capabilities": capabilities_module,
+            "mellea.agent.localization": localization_module,
         },
         FakeWorkspace,
         FakeEventLog,
@@ -196,7 +202,9 @@ def test_build_coding_agent_assembles_prompt_and_tools_without_benchmark_path(
 
     assert assembly.goal.startswith("Fix this bug in test/repo")
     assert "Repository structure:\nrepo map" in assembly.goal
+    assert "Likely files to inspect first:\n- pkg/parser.py" in assembly.goal
     assert "Additional context:\nHint text" in assembly.goal
+    assert "Start with one of these before widening the search." in assembly.goal
     assert "Start with `run_tests default`" in assembly.goal
     assert "Keep verification cheap" in assembly.goal
     assert assembly.tools == ["tool-a"]
@@ -394,6 +402,7 @@ def test_build_coding_policy_composes_shell_first_goal():
         "You are an expert software engineer fixing a bug in an open-source repository."
     )
     assert "Repository structure:\nrepo map" in policy.goal
+    assert "Likely files to inspect first:" not in policy.goal
     assert "Additional context:\nHint text" in policy.goal
     assert "Use the cheapest shell command." in policy.goal
     assert "PHASES:" in policy.system_prompt

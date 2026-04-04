@@ -24,6 +24,7 @@ def _install_fake_runtime_modules():
     workspace_module = types.ModuleType("mellea.agent.runtime.workspace")
     strategy_module = types.ModuleType("mellea.agent.strategy")
     capabilities_module = types.ModuleType("mellea.agent.capabilities")
+    localization_module = types.ModuleType("mellea.agent.localization")
     runtime_module.__path__ = []
 
     class FakeSafetyPolicy:
@@ -201,6 +202,9 @@ def _install_fake_runtime_modules():
     strategy_module.ToolPhaseState = ToolPhaseState
     strategy_module.get_available_tools = get_available_tools
     capabilities_module.OrchestratorContract = FakeOrchestratorContract
+    localization_module.format_candidate_files = lambda repo_root, query, top_n=6: (
+        "Likely files to inspect first:\n- pkg/parser.py\n- pkg/models.py"
+    )
 
     return {
         "mellea.agent.runtime": runtime_module,
@@ -209,6 +213,7 @@ def _install_fake_runtime_modules():
         "mellea.agent.runtime.workspace": workspace_module,
         "mellea.agent.strategy": strategy_module,
         "mellea.agent.capabilities": capabilities_module,
+        "mellea.agent.localization": localization_module,
     }
 
 
