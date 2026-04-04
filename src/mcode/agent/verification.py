@@ -277,6 +277,28 @@ class _LocalToolPhaseState:
     def has_edit(self) -> bool:
         return any(call.name == "edit" for call in self.invocations)
 
+    @property
+    def progress(self) -> float:
+        return self.turn / max(1, self.budget)
+
+    @property
+    def last_tool_name(self) -> str | None:
+        if not self.invocations:
+            return None
+        return self.invocations[-1].name
+
+    @property
+    def repeated_tool_streak(self) -> int:
+        if not self.invocations:
+            return 0
+        last_name = self.invocations[-1].name
+        streak = 0
+        for call in reversed(self.invocations):
+            if call.name != last_name:
+                break
+            streak += 1
+        return streak
+
 
 def tool_phase_state_from_event_log(
     event_log: object | None,
@@ -340,12 +362,18 @@ def tighten_available_tools(
     allowed = set(available_tools)
     discovery_tools = allowed & _VERIFICATION_DISCOVERY_TOOLS
     focused_discovery = allowed & _FOCUSED_DISCOVERY_TOOLS
+    last_tool_name = getattr(phase_state, "last_tool_name", None)
+    repeated_tool_streak = int(getattr(phase_state, "repeated_tool_streak", 0) or 0)
 
     if not has_changes and not phase_state.has_edit:
         if phase_state.progress >= 0.35:
             allowed.discard("bash")
+        if repeated_tool_streak >= 2 and last_tool_name in discovery_tools:
+            allowed -= discovery_tools - focused_discovery
+            allowed.add("edit")
         if phase_state.progress >= 0.5:
             allowed -= discovery_tools - focused_discovery
+            allowed.add("edit")
     elif has_run_tests_tool:
         if not verification_state.used_run_tests and phase_state.progress >= 0.5:
             allowed.discard("bash")

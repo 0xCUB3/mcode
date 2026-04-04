@@ -203,7 +203,10 @@ def _install_fake_runtime_modules():
     strategy_module.get_available_tools = get_available_tools
     capabilities_module.OrchestratorContract = FakeOrchestratorContract
     localization_module.format_candidate_files = lambda repo_root, query, top_n=6: (
-        "Likely files to inspect first:\n- pkg/parser.py\n- pkg/models.py"
+        "Likely files to inspect first:\n"
+        "- pkg/parser.py\n"
+        "  - line 42: parse_error_report\n"
+        "- pkg/models.py"
     )
 
     return {

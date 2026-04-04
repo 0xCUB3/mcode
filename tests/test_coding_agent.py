@@ -130,7 +130,10 @@ def _install_fake_runtime_modules():
             }
 
     localization_module.format_candidate_files = lambda repo_root, query, top_n=6: (
-        "Likely files to inspect first:\n- pkg/parser.py\n- pkg/models.py"
+        "Likely files to inspect first:\n"
+        "- pkg/parser.py\n"
+        "  - line 42: parse_error_report\n"
+        "- pkg/models.py"
     )
 
     runtime_module.EventLog = FakeEventLog
@@ -203,6 +206,7 @@ def test_build_coding_agent_assembles_prompt_and_tools_without_benchmark_path(
     assert assembly.goal.startswith("Fix this bug in test/repo")
     assert "Repository structure:\nrepo map" in assembly.goal
     assert "Likely files to inspect first:\n- pkg/parser.py" in assembly.goal
+    assert "  - line 42: parse_error_report" in assembly.goal
     assert "Additional context:\nHint text" in assembly.goal
     assert "Start with one of these before widening the search." in assembly.goal
     assert "Start with `run_tests default`" in assembly.goal

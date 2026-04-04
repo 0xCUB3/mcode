@@ -99,9 +99,18 @@ def test_validate_verification_command_blocks_pipes() -> None:
 
 
 class _FakePhaseState:
-    def __init__(self, *, progress: float, has_edit: bool) -> None:
+    def __init__(
+        self,
+        *,
+        progress: float,
+        has_edit: bool,
+        last_tool_name: str | None = None,
+        repeated_tool_streak: int = 0,
+    ) -> None:
         self.progress = progress
         self.has_edit = has_edit
+        self.last_tool_name = last_tool_name
+        self.repeated_tool_streak = repeated_tool_streak
 
 
 def test_tighten_available_tools_pushes_earlier_edit() -> None:
@@ -119,6 +128,27 @@ def test_tighten_available_tools_pushes_earlier_edit() -> None:
     assert "find_file" not in tools
     assert "list_dir" not in tools
     assert "bash" not in tools
+
+
+def test_tighten_available_tools_cuts_repeated_search_churn() -> None:
+    tools = verification.tighten_available_tools(
+        ["search_code", "read_file", "find_file", "list_dir", "edit", "bash"],
+        phase_state=_FakePhaseState(
+            progress=0.4,
+            has_edit=False,
+            last_tool_name="search_code",
+            repeated_tool_streak=3,
+        ),
+        has_changes=False,
+        verification_state=verification.VerificationState(),
+        has_run_tests_tool=False,
+    )
+
+    assert "edit" in tools
+    assert "read_file" in tools
+    assert "search_code" not in tools
+    assert "find_file" not in tools
+    assert "list_dir" not in tools
 
 
 def test_build_phase_guidance_mentions_plain_verification_after_block() -> None:
