@@ -20,6 +20,7 @@ Short notes for benchmark runs and parameter sweeps. Each entry should include:
 - `2026-03-31-swebench-optimization-log`: running SWE-bench optimization history, moved out of `docs/` so the long-form benchmark log lives under `research/`.
 - `2026-03-31-swebench-verified-minimax25-harness-redesign`: SWE-bench Verified (500 instances), MiniMax-M2.5 on Blue Vela after the harness redesign. Final result: 187/500 (37.4%) with shared HF auth/cache and the new single-path text-react runtime.
 - `2026-04-03-adapter-aware-orchestrator-contract`: design note for the next scaffold pass, plus a 16-task Blue Vela MiniMax-M2.5 diagnostic slice that validates the new scaffold metrics and terminal-reason buckets.
+- `2026-04-07-gemma4-31b-diagnostic-slice`: SWE-bench Verified diagnostic slice on Blue Vela with `google/gemma-4-31B-it` over vLLM. Final valid run: 5/16 (31.25%) after fixing the podman service launcher.
 
 ## Entry template
 

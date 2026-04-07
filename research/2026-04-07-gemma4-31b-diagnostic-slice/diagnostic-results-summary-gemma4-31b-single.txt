@@ -1,0 +1,48 @@
+Gemma 4 31B diagnostic slice summary
+
+Model: google/gemma-4-31B-it
+Backend: openai
+Loop budget: 15
+Timeout: 300
+Tasks: 16
+Passed: 5
+Pass rate: 31.25%
+
+Terminal reasons:
+- submitted: 5
+- unverified_diff_discarded: 7
+- wrong_patch_after_verification: 4
+
+Behavior metrics:
+- verification_succeeded: 9
+- zero_edit: 0
+- zero_verification: 6
+- malformed_tool_call_recoveries: 59
+- blocked_verification_commands: 0
+- avg_turns_to_first_edit: 5.88
+- avg_turns_to_first_verification: 6.70
+
+Passed tasks:
+- astropy__astropy-12907
+- astropy__astropy-13453
+- astropy__astropy-14309
+- scikit-learn__scikit-learn-13328
+- sympy__sympy-13877
+
+All task outcomes:
+- astropy__astropy-12907: passed, submitted
+- astropy__astropy-13033: failed, wrong_patch_after_verification
+- astropy__astropy-13236: failed, unverified_diff_discarded
+- astropy__astropy-13398: failed, wrong_patch_after_verification
+- astropy__astropy-13453: passed, submitted
+- astropy__astropy-13579: failed, unverified_diff_discarded
+- astropy__astropy-13977: failed, unverified_diff_discarded
+- astropy__astropy-14096: failed, unverified_diff_discarded
+- astropy__astropy-14182: failed, wrong_patch_after_verification
+- astropy__astropy-14309: passed, submitted
+- django__django-11211: failed, unverified_diff_discarded
+- matplotlib__matplotlib-25775: failed, unverified_diff_discarded
+- pylint-dev__pylint-4551: failed, unverified_diff_discarded
+- scikit-learn__scikit-learn-13328: passed, submitted
+- sphinx-doc__sphinx-8120: failed, wrong_patch_after_verification
+- sympy__sympy-13877: passed, submitted
