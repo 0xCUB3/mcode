@@ -9,6 +9,7 @@ from mcode.agent.verification import (
     build_phase_guidance,
     build_submit_block_message,
     build_tool_gate_message,
+    classify_verification_command,
     tighten_available_tools,
     tool_phase_state_from_event_log,
     verification_state_from_event_log,
@@ -198,7 +199,10 @@ class LLMSession:
             return result.returncode == 1
 
         def _verification_state():
-            return verification_state_from_event_log(event_log)
+            return verification_state_from_event_log(
+                event_log,
+                default_test_cmds=verification_cmds,
+            )
 
         def _phase_state(turn: int):
             return tool_phase_state_from_event_log(
@@ -265,13 +269,43 @@ class LLMSession:
                     )
                 )
 
+            debug_tool_gate = os.environ.get("MCODE_TOOL_GATE_DEBUG") == "1"
+
+            def _debug_tool_gate(
+                kind: str,
+                *,
+                name: str,
+                phase_state,
+                repo_has_changes: bool,
+                effective_has_changes: bool,
+                invocation_count: int,
+            ) -> None:
+                if not debug_tool_gate:
+                    return
+                metadata = {
+                    "tool_name": name,
+                    "repo_has_changes": repo_has_changes,
+                    "phase_has_edit": bool(getattr(phase_state, "has_edit", False)),
+                    "phase_has_verification": bool(getattr(phase_state, "has_verification", False)),
+                    "effective_has_changes": effective_has_changes,
+                    "phase_turn": int(getattr(phase_state, "turn", 0) or 0),
+                    "invocation_count": invocation_count,
+                    "last_tool_name": getattr(phase_state, "last_tool_name", None),
+                    "repeated_tool_streak": int(
+                        getattr(phase_state, "repeated_tool_streak", 0) or 0
+                    ),
+                }
+                _emit_summary(kind, metadata)
+                print(f"MCODE_TOOL_GATE_DEBUG {kind} {metadata}", flush=True)
+
             def _text_on_turn(turn: int, total: int, messages: list[dict]) -> list[dict]:
                 attempt_state.current_turn = turn
+                phase_state = _phase_state(turn)
                 guidance = build_phase_guidance(
-                    has_changes=_repo_has_changes(),
+                    has_changes=_repo_has_changes() or phase_state.has_edit,
                     has_run_tests_tool=has_run_tests_tool,
                     verification_state=_verification_state(),
-                    phase_state=_phase_state(turn),
+                    phase_state=phase_state,
                     require_default_verification=require_default_verification,
                 )
                 if guidance and (not messages or messages[-1].get("content") != guidance):
@@ -279,10 +313,12 @@ class LLMSession:
                 return messages
 
             def _tool_gate(name: str, args: dict, *, messages, event_log):
-                del args, messages
+                del messages
                 turn_index = max(1, attempt_state.current_turn or 1)
                 if name == "edit" and attempt_state.turns_to_first_edit is None:
                     attempt_state.turns_to_first_edit = turn_index
+                if name == "edit":
+                    _emit_summary("edit_started", {"turn": turn_index})
                 if name == "run_tests" and attempt_state.turns_to_first_verification is None:
                     attempt_state.turns_to_first_verification = turn_index
 
@@ -331,6 +367,85 @@ class LLMSession:
                     turn=max(1, invocation_count + 1),
                     budget=budget,
                 )
+                repo_has_changes = _repo_has_changes()
+                effective_has_changes = repo_has_changes or phase_state.has_edit
+                requested_test_cmd = None
+                if name == "run_tests":
+                    raw_test_cmd = args.get("test_cmd")
+                    if isinstance(raw_test_cmd, str):
+                        requested_test_cmd = raw_test_cmd.strip()
+                if name in {"edit", "probe_python", "run_tests", "final_answer"}:
+                    _debug_tool_gate(
+                        "tool_gate_state",
+                        name=name,
+                        phase_state=phase_state,
+                        repo_has_changes=repo_has_changes,
+                        effective_has_changes=effective_has_changes,
+                        invocation_count=invocation_count,
+                    )
+                if name == "probe_python" and effective_has_changes and has_run_tests_tool:
+                    _debug_tool_gate(
+                        "tool_gate_probe_blocked",
+                        name=name,
+                        phase_state=phase_state,
+                        repo_has_changes=repo_has_changes,
+                        effective_has_changes=effective_has_changes,
+                        invocation_count=invocation_count,
+                    )
+                    return build_tool_gate_message(
+                        name,
+                        available_tools=[],
+                        has_changes=True,
+                        has_run_tests_tool=has_run_tests_tool,
+                        verification_state=_verification_state(),
+                        require_default_verification=require_default_verification,
+                        requested_family=(
+                            None
+                            if capability_route is None
+                            else getattr(capability_route, "requested_family", None)
+                        ),
+                        route_mode=(
+                            None
+                            if capability_route is None
+                            else getattr(capability_route, "mode", None)
+                        ),
+                        requested_test_cmd=requested_test_cmd,
+                    )
+                if (
+                    name == "run_tests"
+                    and phase_state.has_edit
+                    and has_run_tests_tool
+                    and requested_test_cmd
+                    and requested_test_cmd.lower() != "default"
+                    and classify_verification_command(requested_test_cmd) in {"probe", "script"}
+                ):
+                    _debug_tool_gate(
+                        "tool_gate_run_tests_probe_blocked",
+                        name=name,
+                        phase_state=phase_state,
+                        repo_has_changes=repo_has_changes,
+                        effective_has_changes=effective_has_changes,
+                        invocation_count=invocation_count,
+                    )
+                    return build_tool_gate_message(
+                        name,
+                        available_tools=[],
+                        has_changes=True,
+                        has_run_tests_tool=has_run_tests_tool,
+                        verification_state=_verification_state(),
+                        require_default_verification=require_default_verification,
+                        requested_family=(
+                            None
+                            if capability_route is None
+                            else getattr(capability_route, "requested_family", None)
+                        ),
+                        route_mode=(
+                            None
+                            if capability_route is None
+                            else getattr(capability_route, "mode", None)
+                        ),
+                        requested_test_cmd=requested_test_cmd,
+                    )
                 available_tools = tighten_available_tools(
                     get_available_tools(
                         tool_names,
@@ -339,14 +454,14 @@ class LLMSession:
                         state=phase_state,
                     ),
                     phase_state=phase_state,
-                    has_changes=_repo_has_changes(),
+                    has_changes=effective_has_changes,
                     verification_state=_verification_state(),
                     has_run_tests_tool=has_run_tests_tool,
                 )
                 block_message = build_tool_gate_message(
                     name,
                     available_tools=available_tools,
-                    has_changes=_repo_has_changes(),
+                    has_changes=effective_has_changes,
                     has_run_tests_tool=has_run_tests_tool,
                     verification_state=_verification_state(),
                     require_default_verification=require_default_verification,
@@ -360,6 +475,7 @@ class LLMSession:
                         if capability_route is None
                         else getattr(capability_route, "mode", None)
                     ),
+                    requested_test_cmd=requested_test_cmd,
                 )
                 if block_message and name == "final_answer":
                     attempt_state.blocked_submissions += 1

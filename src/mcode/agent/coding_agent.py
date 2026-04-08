@@ -9,6 +9,7 @@ from mcode.agent.coding_policy import CodingPolicy, build_coding_policy
 from mcode.agent.repo_customization import load_repo_customization
 from mcode.agent.verification import (
     VerificationPolicy,
+    build_probe_python_tool,
     build_run_tests_tool,
     build_verification_policy,
 )
@@ -269,14 +270,26 @@ def make_agent_tools(
         command_fn=command_fn,
         workspace=workspace,
     )
+    probe_python = build_probe_python_tool(
+        repo_root=repo_root,
+        command_fn=command_fn,
+        workspace=workspace,
+    )
     replaced = False
+    saw_probe_python = False
     out = []
     for tool in tools:
         if getattr(tool, "name", "") == "run_tests":
             out.append(hardened_run_tests)
             replaced = True
             continue
+        if getattr(tool, "name", "") == "probe_python":
+            out.append(probe_python)
+            saw_probe_python = True
+            continue
         out.append(tool)
     if not replaced:
         out.append(hardened_run_tests)
+    if not saw_probe_python:
+        out.append(probe_python)
     return out

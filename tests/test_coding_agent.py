@@ -11,6 +11,7 @@ def _install_fake_runtime_modules():
     runtime_module = types.ModuleType("mellea.agent.runtime")
     memory_module = types.ModuleType("mellea.agent.runtime.memory")
     loops_module = types.ModuleType("mellea.agent.runtime.loops")
+    events_module = types.ModuleType("mellea.agent.runtime.events")
     capabilities_module = types.ModuleType("mellea.agent.capabilities")
     localization_module = types.ModuleType("mellea.agent.localization")
 
@@ -110,6 +111,7 @@ def _install_fake_runtime_modules():
                 "list_dir": "repository_exploration",
                 "edit": "editing",
                 "run_tests": "verification",
+                "probe_python": "verification",
                 "bash": "shell",
                 "final_answer": "submission",
             }.get(tool_name, "other")
@@ -140,6 +142,9 @@ def _install_fake_runtime_modules():
     runtime_module.SafetyPolicy = FakeSafetyPolicy
     runtime_module.SessionMetadata = FakeSessionMetadata
     runtime_module.Workspace = FakeWorkspace
+    events_module.SummaryEvent = lambda kind, metadata=None: types.SimpleNamespace(
+        as_dict=lambda: {"kind": "summary", "metadata": {"kind": kind, **dict(metadata or {})}}
+    )
     memory_module.CondensedState = FakeCondensedState
     memory_module.WorkingMemory = FakeWorkingMemory
     loops_module.CondensationConfig = FakeCondensationConfig
@@ -148,6 +153,7 @@ def _install_fake_runtime_modules():
     return (
         {
             "mellea.agent.runtime": runtime_module,
+            "mellea.agent.runtime.events": events_module,
             "mellea.agent.runtime.memory": memory_module,
             "mellea.agent.runtime.loops": loops_module,
             "mellea.agent.capabilities": capabilities_module,
