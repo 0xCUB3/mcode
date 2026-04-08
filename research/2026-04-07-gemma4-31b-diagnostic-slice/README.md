@@ -4,7 +4,7 @@
 
 This was a Blue Vela check of `google/gemma-4-31B-it` on the same 16-task SWE-bench Verified diagnostic slice used for the April 3 harness work. I used vLLM rather than Ollama because vLLM already has official Gemma 4 parser support and a clean OpenAI-compatible endpoint shape.
 
-The original plan was to push parallelism hard. That exposed launcher and rootless podman problems first, so the only publishable result from this session is the fixed-service single-host rerun on `p1-r04-n1`.
+The original plan was to push parallelism hard. That exposed launcher and rootless podman problems first, so the main publishable result from this session is the fixed-service single-host rerun on `p1-r04-n1`. I also ran one valid prompt-steer follow-up on April 8, 2026. That follow-up improved tool-use behavior but did not improve the benchmark result, so the harness change was reverted.
 
 HTML snapshot: [`diagnostic-swebench-report-gemma4-31b-single.html`](https://raw.githack.com/0xCUB3/mcode/main/research/2026-04-07-gemma4-31b-diagnostic-slice/diagnostic-swebench-report-gemma4-31b-single.html) ([source](diagnostic-swebench-report-gemma4-31b-single.html))
 
@@ -74,6 +74,7 @@ Blue Vela attempts from this session:
 | Initial parallel run | `822818` | 8 shards | invalid | mixed infra failures, not publishable |
 | Parallel retries | `822848`, `822943` | 4 shards | invalid | podman socket and shared-state failures, not publishable |
 | Fixed-service rerun | `823114` | single host `p1-r04-n1` | `5/16`, `31.25%` | first valid Gemma 4 run from this session |
+| Prompt-steer follow-up | `825538` | single host `p1-r04-n1` | `5/16`, `31.25%` | better tool-use metrics, worse safety mix, reverted |
 
 Final fixed-service metrics:
 
@@ -109,9 +110,47 @@ Passed tasks:
 - The failure mix is mostly semantic, not transport or tool-boundary churn. There were `7` `unverified_diff_discarded` outcomes and `4` `wrong_patch_after_verification` outcomes.
 - `blocked_verification_commands` stayed at `0`, so Gemma already fits the current verification boundary reasonably well. The bigger problem is patch quality after it gets through the tool interface.
 
+## Prompt-steer follow-up
+
+On April 8, 2026 I tested a prompt-only harness change that tried to steer Gemma away from malformed `bash` heredoc repro scripts and toward `run_tests` with `python -c` or focused `pytest -k` probes.
+
+That comparison used the same model, task slice, loop budget, and fixed-service launcher shape as the valid April 7 rerun. The only intended harness change was the prompt and bash gate wording.
+
+Valid follow-up run:
+
+- job: `825538`
+- run dir: `run-bluevela-gemma4-31b-diagnostic-b15-single-fixedservice-p1-promptsteer-migrate-20260408`
+- result: `5/16`, `31.25%`
+
+Comparison against the April 7 control:
+
+| Metric | Control | Prompt steer |
+|-|-|-|
+| Passed | 5 | 5 |
+| `wrong_patch_after_verification` | 4 | 6 |
+| `unverified_diff_discarded` | 7 | 4 |
+| Verification-succeeded tasks | 9 | 11 |
+| Zero-verification tasks | 6 | 2 |
+| Malformed tool-call recoveries | 59 | 21 |
+| Avg turns to first edit | 5.88 | 5.12 |
+| Avg turns to first verification | 6.70 | 4.93 |
+
+What changed:
+
+- The prompt steer worked at the tool boundary. Gemma reached verification sooner, recovered from far fewer malformed tool calls, and almost eliminated no-verification outcomes.
+- The benchmark result did not move. Pass rate stayed at `5/16`.
+- The safety mix got worse. Several tasks that previously failed as `unverified_diff_discarded` became `wrong_patch_after_verification`.
+
+Conclusion:
+
+- I reverted the prompt-steer code change.
+- The next useful Gemma work should target wrong verified patches, not just tool-call hygiene.
+
 ## Additional files
 
 - `diagnostic-swebench-report-gemma4-31b-single.html` - interactive report ([view](https://raw.githack.com/0xCUB3/mcode/main/research/2026-04-07-gemma4-31b-diagnostic-slice/diagnostic-swebench-report-gemma4-31b-single.html))
 - `diagnostic-results-summary-gemma4-31b-single.txt` - plain-text summary snapshot
+- `diagnostic-results-summary-gemma4-31b-promptsteer.txt` - plain-text summary for the reverted April 8 follow-up
 - `run-bluevela-gemma4-31b-diagnostic-b15-single-fixedservice-p1-20260407/diagnostic.db` - final results DB
 - `run-bluevela-gemma4-31b-diagnostic-b15-single-fixedservice-p1-20260407/run_gemma4_diag_single.sh` - exact Blue Vela launcher used for the valid rerun
+- `run-bluevela-gemma4-31b-diagnostic-b15-single-fixedservice-p1-promptsteer-migrate-20260408/diagnostic.db` - final results DB for the reverted prompt-steer follow-up
