@@ -1,25 +1,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 
-class TargetKind(str, Enum):
+class TargetKind(StrEnum):
     BLUEVELA = "bluevela"
     LOCAL_VLLM = "local-vllm"
     LOCAL_OLLAMA = "local-ollama"
     OPENAI_COMPATIBLE = "openai-compatible"
 
 
-class SyncMode(str, Enum):
+class SyncMode(StrEnum):
     GIT_OVERLAY = "git-overlay"
     GIT_REF = "git-ref"
     WORKING_TREE = "working-tree"
 
 
-class ReuseMode(str, Enum):
+class ReuseMode(StrEnum):
     PREFER = "prefer"
     FORCE_NEW = "force-new"
     STOP_AND_REPLACE = "stop-and-replace"
