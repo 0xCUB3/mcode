@@ -198,7 +198,10 @@ def launch(
         str | None,
         typer.Option("--backend", help="Override benchmark backend"),
     ] = None,
-    split: Annotated[str, typer.Option("--split", help="Benchmark split")] = "verified",
+    split: Annotated[
+        str | None,
+        typer.Option("--split", help="Benchmark split (default: verified for live, test for lite)"),
+    ] = None,
     loop_budget: Annotated[int, typer.Option("--loop-budget", min=1)] = 15,
     timeout: Annotated[int, typer.Option("--timeout", min=1)] = 1800,
     parallelism: Annotated[int, typer.Option("--parallelism", min=1)] = 1,

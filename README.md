@@ -110,6 +110,8 @@ The launcher reads optional per-user defaults from:
 ~/.config/mcode/launch.toml
 ```
 
+It uses the current process environment for `$USER`, so the default Blue Vela profile resolves to paths like `/u/$USER/mcode-launch` and `/proj/dmfexp/$USER`. Override those in `launch.toml` if your cluster setup differs.
+
 The legacy Blue Vela scripts are still available during the transition under `deploy/bluevela/`:
 
 - `setup.sh`

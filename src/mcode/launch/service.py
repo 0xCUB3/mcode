@@ -61,7 +61,7 @@ def build_launch_spec(
     model: str,
     benchmark: str,
     backend: str | None,
-    split: str,
+    split: str | None,
     loop_budget: int,
     timeout: int,
     parallelism: int,
@@ -141,10 +141,11 @@ def build_launch_spec(
         ollama_num_parallel=ollama_num_parallel or config.local_ollama.num_parallel,
         ollama_max_queue=ollama_max_queue or config.local_ollama.max_queue,
     )
+    resolved_split = _resolve_benchmark_split(benchmark, split)
     bench = BenchSpec(
         benchmark=benchmark,
         backend=backend or ("ollama" if kind == TargetKind.LOCAL_OLLAMA else "openai"),
-        split=split,
+        split=resolved_split,
         loop_budget=loop_budget,
         timeout=timeout,
         parallelism=parallelism,
@@ -164,6 +165,14 @@ def build_launch_spec(
         follow=follow,
         detach=detach,
     )
+
+
+def _resolve_benchmark_split(benchmark: str, split: str | None) -> str:
+    if split:
+        return split
+    if benchmark == "swebench-lite":
+        return "test"
+    return "verified"
 
 
 def launch_doctor(spec: LaunchSpec) -> CommandResult:
