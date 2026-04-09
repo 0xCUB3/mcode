@@ -104,6 +104,8 @@ uv run mcode launch sync --target bluevela --check
 uv run mcode launch status --json
 ```
 
+See [`docs/COMMANDS.md`](/Users/skula/Documents/mcode/docs/COMMANDS.md) for the full command cookbook, including Blue Vela launch, attach, fetch, stop, and local provider examples.
+
 The launcher reads optional per-user defaults from:
 
 ```bash
@@ -125,5 +127,4 @@ See [`deploy/bluevela/README.md`](/Users/skula/Documents/mcode/deploy/bluevela/R
 ## Notes
 
 - `docs/COMMANDS.md` has the higher-level command cookbook.
-- `docs/benchmarking.md` covers the benchmarking workflow.
 - `research/` is the canonical home for durable benchmark run notes, optimization history, and rendered reports. Start with `research/2026-03-31-swebench-optimization-log/README.md` for the running SWE-bench optimization history.

@@ -6,6 +6,8 @@ The preferred path is now the unified launcher:
 uv run mcode launch
 ```
 
+For the full operational command set, including `status`, `attach`, `fetch`, and `stop`, use [`docs/COMMANDS.md`](/Users/skula/Documents/mcode/docs/COMMANDS.md).
+
 Recommended first checks:
 
 ```bash
@@ -13,7 +15,7 @@ uv run mcode launch doctor --target bluevela
 uv run mcode launch sync --target bluevela --check
 ```
 
-The shell scripts in this directory are still supported during the transition. They remain useful for debugging and for users who want the old explicit step-by-step flow.
+The shell scripts in this directory are still supported during the transition. They are for debugging and legacy flows. New run docs should prefer `mcode launch` commands over these scripts.
 
 ## Prerequisites
 
@@ -22,13 +24,17 @@ The shell scripts in this directory are still supported during the transition. T
 
 ## One-time setup
 
-SSH into the cluster and run:
+Preferred:
+
+```bash
+uv run mcode deps sync --no-dev --extra swebench --extra datasets
+```
+
+Legacy:
 
 ```bash
 ./setup.sh
 ```
-
-This installs dependencies and configures the environment.
 
 ## Running SWE-bench Live
 
@@ -86,7 +92,11 @@ SWB_SPLIT=verified
 ./start-vllm.sh
 ```
 
-Submits the vLLM serving job to LSF. Wait for it to report ready before proceeding.
+Preferred replacement:
+
+```bash
+uv run mcode launch --target bluevela --model Qwen/Qwen3.5-27B --benchmark swebench-live --parallelism 4 --yes
+```
 
 ### 3. Run the benchmark
 
@@ -94,18 +104,28 @@ Submits the vLLM serving job to LSF. Wait for it to report ready before proceedi
 ./run-swebench-live.sh
 ```
 
-Submits a sharded SWE-bench Live array job.
+Preferred replacement:
+
+```bash
+uv run mcode launch --target bluevela --model Qwen/Qwen3.5-27B --benchmark swebench-live --parallelism 4 --yes
+```
 
 ### 4. Monitor
 
 ```bash
-bjobs
+uv run mcode launch status --json
 ```
 
 ### 5. Stop vLLM when done
 
 ```bash
 ./stop-vllm.sh
+```
+
+Preferred replacement:
+
+```bash
+uv run mcode launch stop server-12345678
 ```
 
 ## Fetching results
@@ -116,7 +136,11 @@ Run locally (not on the cluster):
 ./fetch-results.sh
 ```
 
-Uses rsync to pull results from the cluster to your local machine.
+Preferred replacement:
+
+```bash
+uv run mcode launch fetch run-12345678 --destination results
+```
 
 ## Common LSF commands
 
