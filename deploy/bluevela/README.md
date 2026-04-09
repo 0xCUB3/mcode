@@ -1,5 +1,20 @@
 # Blue Vela Deployment
 
+The preferred path is now the unified launcher:
+
+```bash
+uv run mcode launch
+```
+
+Recommended first checks:
+
+```bash
+uv run mcode launch doctor --target bluevela
+uv run mcode launch sync --target bluevela --check
+```
+
+The shell scripts in this directory are still supported during the transition. They remain useful for debugging and for users who want the old explicit step-by-step flow.
+
 ## Prerequisites
 
 - SSH access to `login3.bluevela.rmf.ibm.com`
@@ -16,6 +31,34 @@ SSH into the cluster and run:
 This installs dependencies and configures the environment.
 
 ## Running SWE-bench Live
+
+Recommended:
+
+```bash
+uv run mcode launch \
+  --target bluevela \
+  --model Qwen/Qwen3.5-27B \
+  --benchmark swebench-live \
+  --split verified \
+  --parallelism 4 \
+  --yes
+```
+
+The launcher handles:
+
+- config defaults
+- code sync
+- vLLM server reuse or startup
+- benchmark launch
+- state tracking for attach, fetch, and stop
+
+You can override defaults in:
+
+```bash
+~/.config/mcode/launch.toml
+```
+
+Legacy scripted flow:
 
 ### 1. Configure
 

@@ -28,7 +28,6 @@ def test_bluevela_bench_scripts_wait_for_docker() -> None:
     assert "client.ping()" in text
 
 
-
 def test_bluevela_live_launcher_sources_hf_env() -> None:
     text = (BLUEVELA_DIR / "env.sh").read_text()
     assert "BV_HF_ENV" in text

@@ -82,7 +82,35 @@ uv run mcode export-csv -i experiments/results --out-dir experiments/results --p
 
 ## Blue Vela
 
-The maintained Blue Vela path is under `deploy/bluevela/`:
+The preferred launcher path is now:
+
+```bash
+uv run mcode launch
+```
+
+The new launcher supports:
+
+- `bluevela`
+- `local-vllm`
+- `local-ollama`
+- `openai-compatible`
+
+Useful commands:
+
+```bash
+uv run mcode launch --help
+uv run mcode launch doctor --target bluevela
+uv run mcode launch sync --target bluevela --check
+uv run mcode launch status --json
+```
+
+The launcher reads optional per-user defaults from:
+
+```bash
+~/.config/mcode/launch.toml
+```
+
+The legacy Blue Vela scripts are still available during the transition under `deploy/bluevela/`:
 
 - `setup.sh`
 - `start-vllm.sh`
@@ -90,7 +118,7 @@ The maintained Blue Vela path is under `deploy/bluevela/`:
 - `stop-vllm.sh`
 - `fetch-results.sh`
 
-See `deploy/bluevela/README.md` for the remote workflow.
+See [`deploy/bluevela/README.md`](/Users/skula/Documents/mcode/deploy/bluevela/README.md) for the remote workflow and the legacy script path.
 
 ## Notes
 
