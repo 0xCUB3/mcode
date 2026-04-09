@@ -33,4 +33,5 @@
 - When adding or changing user-facing run commands, update `docs/COMMANDS.md`.
 - If the change affects primary usage, also update `README.md`.
 - If the change is Blue Vela-specific, also update `deploy/bluevela/README.md`.
+- Keep `tests/test_docs_commands.py` in sync with the documented command contract when docs or CLI examples change.
 - Historical research notes under `research/` are records, not the source of truth for current operational commands.

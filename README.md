@@ -27,7 +27,7 @@ If you want to override that temporarily with a local checkout, set
 ## Run SWE-bench Lite
 
 ```bash
-mcode bench swebench-lite --model granite3.3:8b --limit 5
+uv run mcode bench swebench-lite --model granite3.3:8b --limit 5
 ```
 
 Useful flags:
@@ -42,13 +42,13 @@ Useful flags:
 If you need to force local image builds instead of pulling prebuilt images:
 
 ```bash
-mcode bench swebench-lite --namespace "" --model granite3.3:8b --limit 5
+uv run mcode bench swebench-lite --namespace "" --model granite3.3:8b --limit 5
 ```
 
 ## Run SWE-bench Live
 
 ```bash
-mcode bench swebench-live --model granite3.3:8b --limit 5
+uv run mcode bench swebench-live --model granite3.3:8b --limit 5
 ```
 
 `swebench-live` uses prebuilt evaluation images, so it does not need the lite image-build settings.
@@ -58,20 +58,20 @@ mcode bench swebench-live --model granite3.3:8b --limit 5
 Per-run summaries:
 
 ```bash
-mcode results --benchmark swebench-live
-mcode results --benchmark swebench-live --time
+uv run mcode results --benchmark swebench-live
+uv run mcode results --benchmark swebench-live --time
 ```
 
 HTML report:
 
 ```bash
-mcode report --db-dir ./results --benchmark swebench-live --out ./results/report.html
+uv run mcode report --db-dir ./results --benchmark swebench-live --out ./results/report.html
 ```
 
 Merge shard DBs:
 
 ```bash
-mcode merge-shards --out ./results/merged.db ./results/swebench-live-shard-0.db ./results/swebench-live-shard-1.db
+uv run mcode merge-shards --out ./results/merged.db ./results/swebench-live-shard-0.db ./results/swebench-live-shard-1.db
 ```
 
 CSV export:
