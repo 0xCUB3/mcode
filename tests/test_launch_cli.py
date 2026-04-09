@@ -39,6 +39,8 @@ def test_cli_launch_has_core_options() -> None:
     assert "sync_mode" in option_names
     assert "json_mode" in option_names
     assert "gpu_memory_utilization" in option_names
+    assert "follow" in option_names
+    assert "detach" not in option_names
 
 
 def test_cli_launch_sync_help() -> None:

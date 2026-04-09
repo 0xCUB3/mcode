@@ -24,7 +24,11 @@ def build_ollama_warmup_command(spec: LaunchSpec) -> str:
     target = spec.target
     assert isinstance(target, LocalOllamaTargetSpec)
     keep_alive = spec.serving.keep_alive or "-1"
-    payload = json.dumps({"model": spec.model, "keep_alive": int(keep_alive)})
+    try:
+        keep_alive_value: int | str = int(keep_alive)
+    except ValueError:
+        keep_alive_value = keep_alive
+    payload = json.dumps({"model": spec.model, "keep_alive": keep_alive_value})
     return (
         f"curl -s http://{shlex.quote(target.host)}:{spec.serving.port}/api/generate -d '{payload}'"
     )

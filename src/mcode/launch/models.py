@@ -116,7 +116,6 @@ class LaunchSpec:
     json_mode: bool = False
     yes: bool = False
     follow: bool = False
-    detach: bool = False
 
 
 @dataclass

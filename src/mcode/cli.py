@@ -214,7 +214,6 @@ def launch(
     json_mode: Annotated[bool, typer.Option("--json", help="Emit JSON")] = False,
     yes: Annotated[bool, typer.Option("--yes", help="Execute without prompt")] = False,
     follow: Annotated[bool, typer.Option("--follow", help="Follow logs after launch")] = False,
-    detach: Annotated[bool, typer.Option("--detach", help="Return after launch")] = False,
     tp: Annotated[int, typer.Option("--tp", min=1)] = 1,
     dp: Annotated[int, typer.Option("--dp", min=1)] = 1,
     api_server_count: Annotated[int, typer.Option("--api-server-count", min=1)] = 1,
@@ -254,7 +253,6 @@ def launch(
         json_mode=json_mode,
         yes=yes,
         follow=follow,
-        detach=detach,
         tp=tp,
         dp=dp,
         api_server_count=api_server_count,
@@ -306,7 +304,9 @@ def launch_attach_cmd(
     run_id: Annotated[str, typer.Argument(..., help="Run id")],
     json_mode: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
-    _print_launch_result(launch_attach(run_id), json_mode=json_mode)
+    result = launch_attach(run_id, follow=not json_mode)
+    if json_mode or not result.ok:
+        _print_launch_result(result, json_mode=json_mode)
 
 
 @launch_app.command("stop")

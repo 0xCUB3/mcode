@@ -26,6 +26,18 @@ uv run mcode launch \
   --yes
 ```
 
+Launch and follow logs:
+
+```bash
+uv run mcode launch \
+  --target bluevela \
+  --model Qwen/Qwen3.5-27B \
+  --benchmark swebench-live \
+  --parallelism 4 \
+  --yes \
+  --follow
+```
+
 Manage runs:
 
 ```bash

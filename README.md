@@ -56,6 +56,15 @@ uv run mcode launch sync --target bluevela --check
 uv run mcode launch status --json
 ```
 
+Default run lifecycle:
+
+```bash
+uv run mcode launch --yes
+uv run mcode launch --yes --follow
+uv run mcode launch attach run-12345678
+uv run mcode launch stop run-12345678
+```
+
 Optional per-user defaults live in:
 
 ```bash

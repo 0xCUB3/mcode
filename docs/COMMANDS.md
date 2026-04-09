@@ -63,6 +63,18 @@ uv run mcode launch \
   --yes
 ```
 
+Launch and follow logs immediately:
+
+```bash
+uv run mcode launch \
+  --target bluevela \
+  --model Qwen/Qwen3.5-27B \
+  --benchmark swebench-live \
+  --parallelism 4 \
+  --yes \
+  --follow
+```
+
 The launcher defaults the split by benchmark:
 - `swebench-live` -> `verified`
 - `swebench-lite` -> `test`
@@ -95,6 +107,8 @@ Attach to a known run:
 ```bash
 uv run mcode launch attach run-12345678
 ```
+
+`launch attach` streams logs by default. Use `--json` when you only want metadata.
 
 Fetch run artifacts:
 
@@ -135,6 +149,19 @@ uv run mcode launch \
   --timeout 60 \
   --parallelism 1 \
   --json
+```
+
+Local runs also honor real shard parallelism against one shared endpoint per launch:
+
+```bash
+uv run mcode launch \
+  --target openai-compatible \
+  --openai-base-url http://127.0.0.1:8000/v1 \
+  --model Qwen/Qwen3.5-27B \
+  --benchmark swebench-lite \
+  --parallelism 2 \
+  --limit 1 \
+  --yes
 ```
 
 ## Legacy Blue Vela scripts

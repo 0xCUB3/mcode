@@ -8,13 +8,30 @@ import subprocess
 import tempfile
 import time
 import uuid
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from mcode.launch.bluevela_service import launch_bluevela as launch_bluevela_impl
 from mcode.launch.config import LaunchConfig
+from mcode.launch.follow import follow_run_logs
+from mcode.launch.local_service import (
+    launch_local_benchmark as launch_local_benchmark_impl,
+)
+from mcode.launch.local_service import (
+    launch_local_ollama as launch_local_ollama_impl,
+)
+from mcode.launch.local_service import (
+    launch_local_vllm as launch_local_vllm_impl,
+)
+from mcode.launch.local_service import (
+    launch_openai_compatible as launch_openai_compatible_impl,
+)
+from mcode.launch.local_service import (
+    resolve_local_server as resolve_local_server_impl,
+)
 from mcode.launch.models import (
     BenchSpec,
     BlueVelaTargetSpec,
@@ -41,14 +58,6 @@ from mcode.launch.providers.bluevela import (
     build_bluevela_server_reuse_key,
     build_bluevela_vllm_command,
     build_remote_workspace_prepare_command,
-)
-from mcode.launch.providers.local_ollama import (
-    build_ollama_serve_command,
-    build_ollama_warmup_command,
-)
-from mcode.launch.providers.local_vllm import (
-    build_local_vllm_command,
-    build_local_vllm_reuse_key,
 )
 from mcode.launch.remote_scripts import (
     build_remote_healthcheck_command,
@@ -85,7 +94,6 @@ def build_launch_spec(
     json_mode: bool,
     yes: bool,
     follow: bool,
-    detach: bool,
     tp: int,
     dp: int,
     api_server_count: int,
@@ -175,7 +183,6 @@ def build_launch_spec(
         json_mode=json_mode,
         yes=yes,
         follow=follow,
-        detach=detach,
     )
 
 
@@ -207,7 +214,6 @@ def build_admin_launch_spec(
         json_mode=json_mode,
         yes=False,
         follow=False,
-        detach=False,
         tp=1,
         dp=1,
         api_server_count=1,
@@ -336,11 +342,18 @@ def launch_stop(run_id: str, *, state_path: Path | None = None) -> CommandResult
     return _stop_run(run, state, state_path)
 
 
-def launch_attach(run_id: str, *, state_path: Path | None = None) -> CommandResult:
+def launch_attach(
+    run_id: str,
+    *,
+    follow: bool = True,
+    state_path: Path | None = None,
+) -> CommandResult:
     state = load_state(state_path)
     run = next((entry for entry in state.runs if entry.id == run_id), None)
     if run is None:
         return CommandResult(ok=False, message=f"Unknown run id: {run_id}")
+    if follow:
+        return _follow_run_logs(run)
     return CommandResult(
         ok=True, message=run.log_path or "No log path recorded.", data=run.metadata
     )
@@ -349,14 +362,26 @@ def launch_attach(run_id: str, *, state_path: Path | None = None) -> CommandResu
 def launch_run(
     spec: LaunchSpec, *, repo_root: Path, state_path: Path | None = None
 ) -> CommandResult:
+    if spec.follow and not spec.yes:
+        return CommandResult(ok=False, message="--follow requires --yes")
     state = load_state(state_path)
     if isinstance(spec.target, BlueVelaTargetSpec):
-        return _launch_bluevela(spec, repo_root=repo_root, state=state, state_path=state_path)
-    if isinstance(spec.target, LocalVllmTargetSpec):
-        return _launch_local_vllm(spec, state=state, state_path=state_path)
-    if isinstance(spec.target, LocalOllamaTargetSpec):
-        return _launch_local_ollama(spec, state=state, state_path=state_path)
-    return _launch_openai_compatible(spec, state=state, state_path=state_path)
+        result = _launch_bluevela(spec, repo_root=repo_root, state=state, state_path=state_path)
+    elif isinstance(spec.target, LocalVllmTargetSpec):
+        result = _launch_local_vllm(spec, state=state, state_path=state_path)
+    elif isinstance(spec.target, LocalOllamaTargetSpec):
+        result = _launch_local_ollama(spec, state=state, state_path=state_path)
+    else:
+        result = _launch_openai_compatible(spec, state=state, state_path=state_path)
+    if spec.follow and result.ok and "run_id" in result.data:
+        attach_result = launch_attach(result.data["run_id"], state_path=state_path)
+        if not attach_result.ok:
+            return attach_result
+    return result
+
+
+def _follow_run_logs(run: RunHandle) -> CommandResult:
+    return follow_run_logs(run)
 
 
 def _launch_bluevela(
@@ -366,226 +391,45 @@ def _launch_bluevela(
     state: LauncherState,
     state_path: Path | None,
 ) -> CommandResult:
-    if spec.yes:
-        _resolve_bluevela_podman_storage(spec.target)
-    sync_result = launch_sync(
-        replace(
-            spec,
-            sync=replace(spec.sync, apply=spec.yes, check=not spec.yes),
-        ),
+    return launch_bluevela_impl(
+        spec,
         repo_root=repo_root,
+        state=state,
         state_path=state_path,
-    )
-    if not sync_result.ok:
-        return sync_result
-    workspace_signature = sync_result.data["signature"]
-    reuse_key = build_bluevela_server_reuse_key(spec, workspace_signature=workspace_signature)
-    existing_server = _find_existing_server(state, reuse_key=reuse_key)
-    if spec.yes:
-        server = _resolve_bluevela_server(
-            spec,
-            state=state,
-            state_path=state_path,
-            reuse_key=reuse_key,
-            workspace_signature=workspace_signature,
-            existing_server=existing_server,
-        )
-    elif existing_server and spec.reuse == ReuseMode.PREFER:
-        server = existing_server
-    else:
-        run_dir = Path(spec.target.workspace_root) / "runs" / uuid.uuid4().hex[:12]
-        command = build_bluevela_vllm_command(spec, run_dir=run_dir)
-        server = ServerHandle(
-            id=f"server-{uuid.uuid4().hex[:8]}",
-            target=TargetKind.BLUEVELA.value,
-            reuse_key=reuse_key,
-            endpoint=f"http://pending:{spec.serving.port}/v1",
-            status="planned",
-            metadata={
-                "command": command,
-                "login": spec.target.login,
-                "run_dir": str(run_dir),
-            },
-            log_path=str(run_dir / "vllm.log"),
-        )
-
-    workspace = WorkspaceHandle(signature=workspace_signature, path=sync_result.data["remote_path"])
-    if not any(entry.signature == workspace.signature for entry in state.workspaces):
-        state.workspaces.append(workspace)
-
-    run_id = f"run-{uuid.uuid4().hex[:8]}"
-    run_dir = Path(spec.target.workspace_root) / "runs" / run_id
-    if spec.yes:
-        _run_ssh(spec.target.login, f"mkdir -p {run_dir}")
-    commands = [
-        _build_bluevela_bsub_benchmark_command(
-            spec,
-            workspace_path=Path(workspace.path),
-            run_dir=run_dir,
-            shard_index=shard_index,
-            endpoint=server.endpoint,
-        )
-        for shard_index in range(spec.benchmark.parallelism)
-    ]
-    job_ids = [
-        _run_ssh(spec.target.login, command).strip() if spec.yes else command
-        for command in commands
-    ]
-    run = RunHandle(
-        id=run_id,
-        target=TargetKind.BLUEVELA.value,
-        benchmark=spec.benchmark.benchmark,
-        status="running" if spec.yes else "planned",
-        metadata={
-            "job_ids": job_ids,
-            "login": spec.target.login,
-            "run_dir": str(run_dir),
-            "workspace_signature": workspace_signature,
-        },
-        log_path=str(run_dir / "benchmark.log"),
-    )
-    state.runs.append(run)
-    save_state(state_path, state)
-    return CommandResult(
-        ok=True,
-        message="\n".join(job_ids) if spec.yes else "\n".join(commands),
-        data={"run_id": run_id, "server_id": server.id, "workspace_signature": workspace_signature},
+        launch_sync=launch_sync,
+        resolve_podman_storage=_resolve_bluevela_podman_storage,
+        build_server_reuse_key=build_bluevela_server_reuse_key,
+        find_existing_server=_find_existing_server,
+        resolve_bluevela_server=_resolve_bluevela_server,
+        run_ssh=_run_ssh,
+        build_vllm_command=build_bluevela_vllm_command,
+        build_bsub_benchmark_command=_build_bluevela_bsub_benchmark_command,
+        save_state=save_state,
     )
 
 
 def _launch_local_vllm(
     spec: LaunchSpec, *, state: LauncherState, state_path: Path | None
 ) -> CommandResult:
-    reuse_key = build_local_vllm_reuse_key(spec)
-    endpoint = f"http://127.0.0.1:{spec.serving.port}/v1"
-    existing = next(
-        (
-            server
-            for server in state.servers
-            if server.reuse_key == reuse_key and server.status == "healthy"
-        ),
-        None,
-    )
-    if existing and spec.reuse == ReuseMode.PREFER and _endpoint_is_healthy(existing.endpoint):
-        server = existing
-    elif spec.reuse == ReuseMode.PREFER and _endpoint_is_healthy(endpoint):
-        server = ServerHandle(
-            id=f"server-{uuid.uuid4().hex[:8]}",
-            target=TargetKind.LOCAL_VLLM.value,
-            reuse_key=reuse_key,
-            endpoint=endpoint,
-            status="healthy",
-            metadata={"discovered": True},
-            log_path=None,
-        )
-        state.servers = [entry for entry in state.servers if entry.reuse_key != reuse_key] + [
-            server
-        ]
-        save_state(state_path, state)
-    else:
-        command = build_local_vllm_command(spec)
-        log_path = str(Path.cwd() / f".mcode-vllm-{spec.serving.port}.log")
-        if spec.yes:
-            with open(log_path, "a", encoding="utf-8") as handle:
-                process = subprocess.Popen(command, shell=True, stdout=handle, stderr=handle)
-            _wait_for_endpoint(endpoint)
-            metadata = {"pid": process.pid}
-            status = "healthy"
-        else:
-            metadata = {"command": command}
-            status = "planned"
-        server = ServerHandle(
-            id=f"server-{uuid.uuid4().hex[:8]}",
-            target=TargetKind.LOCAL_VLLM.value,
-            reuse_key=reuse_key,
-            endpoint=endpoint,
-            status=status,
-            metadata=metadata,
-            log_path=log_path,
-        )
-        state.servers = [entry for entry in state.servers if entry.reuse_key != reuse_key] + [
-            server
-        ]
-        save_state(state_path, state)
-    run = _launch_local_benchmark(
+    return launch_local_vllm_impl(
         spec,
-        env={
-            "OPENAI_BASE_URL": server.endpoint,
-            "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY", "dummy"),
-        },
         state=state,
         state_path=state_path,
+        resolve_local_server=_resolve_local_server,
+        launch_local_benchmark=_launch_local_benchmark,
     )
-    run.data["server_id"] = server.id
-    return run
 
 
 def _launch_local_ollama(
     spec: LaunchSpec, *, state: LauncherState, state_path: Path | None
 ) -> CommandResult:
-    endpoint = f"http://127.0.0.1:{spec.serving.port}"
-    reuse_key = "|".join(
-        [
-            "local-ollama",
-            spec.model,
-            str(spec.serving.port),
-            str(spec.serving.ollama_num_parallel or 1),
-        ]
+    return launch_local_ollama_impl(
+        spec,
+        state=state,
+        state_path=state_path,
+        resolve_local_server=_resolve_local_server,
+        launch_local_benchmark=_launch_local_benchmark,
     )
-    existing = next(
-        (
-            server
-            for server in state.servers
-            if server.reuse_key == reuse_key and server.status == "healthy"
-        ),
-        None,
-    )
-    if existing and spec.reuse == ReuseMode.PREFER and _endpoint_is_healthy(existing.endpoint):
-        server = existing
-    elif spec.reuse == ReuseMode.PREFER and _endpoint_is_healthy(endpoint):
-        server = ServerHandle(
-            id=f"server-{uuid.uuid4().hex[:8]}",
-            target=TargetKind.LOCAL_OLLAMA.value,
-            reuse_key=reuse_key,
-            endpoint=endpoint,
-            status="healthy",
-            metadata={"discovered": True},
-            log_path=None,
-        )
-        state.servers = [entry for entry in state.servers if entry.reuse_key != reuse_key] + [
-            server
-        ]
-        save_state(state_path, state)
-    else:
-        serve_cmd = build_ollama_serve_command(spec)
-        warm_cmd = build_ollama_warmup_command(spec)
-        log_path = str(Path.cwd() / f".mcode-ollama-{spec.serving.port}.log")
-        if spec.yes and shutil.which("ollama"):
-            with open(log_path, "a", encoding="utf-8") as handle:
-                process = subprocess.Popen(serve_cmd, shell=True, stdout=handle, stderr=handle)
-            subprocess.run(warm_cmd, shell=True, check=False)
-            _wait_for_endpoint(endpoint)
-            metadata = {"pid": process.pid, "warmup": warm_cmd}
-            status = "healthy"
-        else:
-            metadata = {"command": serve_cmd, "warmup": warm_cmd}
-            status = "planned"
-        server = ServerHandle(
-            id=f"server-{uuid.uuid4().hex[:8]}",
-            target=TargetKind.LOCAL_OLLAMA.value,
-            reuse_key=reuse_key,
-            endpoint=endpoint,
-            status=status,
-            metadata=metadata,
-            log_path=log_path,
-        )
-        state.servers = [entry for entry in state.servers if entry.reuse_key != reuse_key] + [
-            server
-        ]
-        save_state(state_path, state)
-    run = _launch_local_benchmark(spec, env={}, state=state, state_path=state_path)
-    run.data["server_id"] = server.id
-    return run
 
 
 def _launch_openai_compatible(
@@ -594,13 +438,12 @@ def _launch_openai_compatible(
     state: LauncherState,
     state_path: Path | None,
 ) -> CommandResult:
-    env = {
-        "OPENAI_BASE_URL": spec.target.base_url,
-        "OPENAI_API_KEY": os.environ.get(
-            spec.target.api_key_env, os.environ.get("OPENAI_API_KEY", "dummy")
-        ),
-    }
-    return _launch_local_benchmark(spec, env=env, state=state, state_path=state_path)
+    return launch_openai_compatible_impl(
+        spec,
+        state=state,
+        state_path=state_path,
+        launch_local_benchmark=_launch_local_benchmark,
+    )
 
 
 def _stop_run(run: RunHandle, state: LauncherState, state_path: Path | None) -> CommandResult:
@@ -610,6 +453,9 @@ def _stop_run(run: RunHandle, state: LauncherState, state_path: Path | None) -> 
             _run_ssh(run.metadata["login"], f"bkill {current}")
     elif run.target == TargetKind.BLUEVELA.value and job_id:
         _run_ssh(run.metadata["login"], f"bkill {job_id}")
+    elif run.metadata.get("pids"):
+        for current in run.metadata["pids"]:
+            os.kill(int(current), 15)
     elif "pid" in run.metadata:
         os.kill(int(run.metadata["pid"]), 15)
     run.status = "stopped"
@@ -947,6 +793,35 @@ def _wait_for_remote_file(login: str, path: str, *, timeout_s: int = 300) -> str
     raise RuntimeError(f"Remote file did not appear: {path}")
 
 
+def _resolve_local_server(
+    spec: LaunchSpec,
+    *,
+    state: LauncherState,
+    state_path: Path | None,
+    reuse_key: str,
+    endpoint: str,
+    target: TargetKind,
+    executable: str,
+    command: str,
+    warmup_command: str | None = None,
+) -> ServerHandle:
+    return resolve_local_server_impl(
+        spec,
+        state=state,
+        state_path=state_path,
+        reuse_key=reuse_key,
+        endpoint=endpoint,
+        target=target,
+        executable=executable,
+        command=command,
+        endpoint_is_healthy=_endpoint_is_healthy,
+        wait_for_endpoint=_wait_for_endpoint,
+        save_state=save_state,
+        which=shutil.which,
+        warmup_command=warmup_command,
+    )
+
+
 def _sync_bluevela_workspace(target: BlueVelaTargetSpec, repo_root: Path, plan) -> None:
     lock_path = build_bluevela_lock_path(target, kind="workspace", key=plan.signature)
     _acquire_remote_lock(target.login, lock_path)
@@ -1086,50 +961,30 @@ def _launch_local_benchmark(
     state: LauncherState,
     state_path: Path | None,
 ) -> CommandResult:
-    run_id = f"run-{uuid.uuid4().hex[:8]}"
-    log_path = str(Path.cwd() / f".mcode-{run_id}.log")
-    command = _build_local_benchmark_command(spec, run_id=run_id)
-    if spec.yes:
-        merged_env = os.environ.copy()
-        merged_env.update(env)
-        with open(log_path, "a", encoding="utf-8") as handle:
-            process = subprocess.Popen(
-                command, shell=True, stdout=handle, stderr=handle, env=merged_env
-            )
-        metadata = {"pid": process.pid, **env}
-        status = "running"
-    else:
-        metadata = {"command": command, **env}
-        status = "planned"
-    run = RunHandle(
-        id=run_id,
-        target=spec.target.kind.value,
-        benchmark=spec.benchmark.benchmark,
-        status=status,
-        metadata=metadata,
-        log_path=log_path,
+    return launch_local_benchmark_impl(
+        spec,
+        env=env,
+        state=state,
+        state_path=state_path,
+        save_state=save_state,
     )
-    state.runs.append(run)
-    save_state(state_path, state)
-    return CommandResult(ok=True, message=command, data={"run_id": run.id})
 
 
-def _build_local_benchmark_command(spec: LaunchSpec, *, run_id: str) -> str:
-    task_ids = f"--task-ids {spec.benchmark.task_ids}" if spec.benchmark.task_ids else ""
-    limit = f"--limit {spec.benchmark.limit}" if spec.benchmark.limit is not None else ""
-    db_path = Path("results") / f"{run_id}.db"
-    return (
-        f"uv run mcode bench {spec.benchmark.benchmark} "
-        f"--model {spec.model} "
-        f"--backend {spec.benchmark.backend} "
-        f"--loop-budget {spec.benchmark.loop_budget} "
-        f"--timeout {spec.benchmark.timeout} "
-        f"--split {spec.benchmark.split} "
-        f"--shard-count {spec.benchmark.parallelism} "
-        f"--shard-index 0 "
-        f"--db {db_path} "
-        f"{task_ids} {limit}"
-    ).strip()
+def _build_local_benchmark_command(
+    spec: LaunchSpec,
+    *,
+    run_dir: Path,
+    shard_count: int,
+    shard_index: int,
+) -> str:
+    from mcode.launch.local_service import build_local_benchmark_command
+
+    return build_local_benchmark_command(
+        spec,
+        run_dir=run_dir,
+        shard_count=shard_count,
+        shard_index=shard_index,
+    )
 
 
 def render_result(result: CommandResult, *, json_mode: bool) -> str:

@@ -19,7 +19,10 @@ def load_state(path: Path | None = None) -> LauncherState:
     state_path = path or Path(os.environ.get("MCODE_LAUNCH_STATE", default_state_path()))
     if not state_path.exists():
         return LauncherState()
-    data = json.loads(state_path.read_text())
+    raw = state_path.read_text().strip()
+    if not raw:
+        return LauncherState()
+    data = json.loads(raw)
     return LauncherState(
         servers=[ServerHandle(**entry) for entry in data.get("servers", [])],
         runs=[RunHandle(**entry) for entry in data.get("runs", [])],

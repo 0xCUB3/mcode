@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from subprocess import CompletedProcess
 
 from mcode.launch import service as service_module
 from mcode.launch.models import (
@@ -41,7 +42,6 @@ def test_local_vllm_command_uses_profile_flags() -> None:
         json_mode=False,
         yes=True,
         follow=False,
-        detach=False,
     )
 
     command = build_local_vllm_command(spec)
@@ -71,7 +71,6 @@ def test_local_vllm_reuse_key_changes_with_tp() -> None:
         json_mode=False,
         yes=True,
         follow=False,
-        detach=False,
     )
     left = build_local_vllm_reuse_key(spec)
     spec.serving.tensor_parallel = 2
@@ -99,13 +98,151 @@ def test_local_vllm_reuse_key_changes_with_gpu_memory_utilization() -> None:
         json_mode=False,
         yes=True,
         follow=False,
-        detach=False,
     )
     left = build_local_vllm_reuse_key(spec)
     spec.serving.gpu_memory_utilization = 0.4
     right = build_local_vllm_reuse_key(spec)
 
     assert left != right
+
+
+def test_local_launch_parallelism_spawns_one_shard_per_process(tmp_path: Path) -> None:
+    spec = LaunchSpec(
+        target=LocalVllmTargetSpec(kind=TargetKind.LOCAL_VLLM, host="127.0.0.1"),
+        model="Qwen/Qwen3.5-27B",
+        benchmark=BenchSpec(benchmark="swebench-lite", backend="openai", parallelism=3, limit=1),
+        serving=ServingSpec(
+            engine="vllm",
+            port=8000,
+            tensor_parallel=1,
+            data_parallel=1,
+            api_server_count=1,
+            max_model_len=32768,
+            profile=resolve_serving_profile("Qwen/Qwen3.5-27B"),
+        ),
+        sync=SyncSpec(),
+        reuse=ReuseMode.PREFER,
+        json_mode=False,
+        yes=True,
+        follow=False,
+    )
+    state = LauncherState()
+    state_path = tmp_path / "launch-state.json"
+    launched: list[str] = []
+    original_health = service_module._endpoint_is_healthy
+    original_wait = service_module._wait_for_endpoint
+    original_popen = service_module.subprocess.Popen
+
+    class _Process:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+    def fake_popen(command, *args, **kwargs):
+        del args, kwargs
+        launched.append(command)
+        return _Process(1000 + len(launched))
+
+    try:
+        service_module._endpoint_is_healthy = (
+            lambda base_url: base_url == "http://127.0.0.1:8000/v1"
+        )
+        service_module._wait_for_endpoint = lambda base_url: None
+        service_module.subprocess.Popen = fake_popen
+        result = service_module._launch_local_vllm(spec, state=state, state_path=state_path)
+    finally:
+        service_module._endpoint_is_healthy = original_health
+        service_module._wait_for_endpoint = original_wait
+        service_module.subprocess.Popen = original_popen
+
+    assert result.ok is True
+    run = state.runs[0]
+    assert run.metadata["pids"] == [1001, 1002, 1003]
+    assert len(run.metadata["commands"]) == 3
+    assert len(run.metadata["db_paths"]) == 3
+    assert len(run.metadata["log_paths"]) == 3
+    assert "--shard-count 3 --shard-index 0" in run.metadata["commands"][0]
+    assert "--shard-count 3 --shard-index 1" in run.metadata["commands"][1]
+    assert "--shard-count 3 --shard-index 2" in run.metadata["commands"][2]
+    assert result.data["server_id"].startswith("server-")
+
+
+def test_stop_run_kills_all_local_shard_pids(tmp_path: Path) -> None:
+    state = LauncherState(
+        runs=[
+            service_module.RunHandle(
+                id="run-1",
+                target=TargetKind.LOCAL_VLLM.value,
+                benchmark="swebench-live",
+                status="running",
+                metadata={"pids": [111, 222, 333]},
+                log_path=str(tmp_path / "benchmark.log"),
+            )
+        ]
+    )
+    state_path = tmp_path / "launch-state.json"
+    original_kill = service_module.os.kill
+    killed: list[tuple[int, int]] = []
+    try:
+        service_module.os.kill = lambda pid, sig: killed.append((pid, sig))
+        result = service_module._stop_run(state.runs[0], state, state_path)
+    finally:
+        service_module.os.kill = original_kill
+
+    assert result.ok is True
+    assert [pid for pid, _ in killed] == [111, 222, 333]
+
+
+def test_launch_attach_json_returns_metadata_for_local_run(tmp_path: Path) -> None:
+    state = LauncherState(
+        runs=[
+            service_module.RunHandle(
+                id="run-1",
+                target=TargetKind.LOCAL_VLLM.value,
+                benchmark="swebench-live",
+                status="running",
+                metadata={"log_paths": [str(tmp_path / "a.log"), str(tmp_path / "b.log")]},
+                log_path=str(tmp_path / "a.log"),
+            )
+        ]
+    )
+    state_path = tmp_path / "launch-state.json"
+    service_module.save_state(state_path, state)
+
+    result = service_module.launch_attach("run-1", follow=False, state_path=state_path)
+
+    assert result.ok is True
+    assert result.message == str(tmp_path / "a.log")
+
+
+def test_launch_attach_follows_all_local_logs(tmp_path: Path) -> None:
+    run = service_module.RunHandle(
+        id="run-1",
+        target=TargetKind.LOCAL_VLLM.value,
+        benchmark="swebench-live",
+        status="running",
+        metadata={"log_paths": [str(tmp_path / "a.log"), str(tmp_path / "b.log")]},
+        log_path=str(tmp_path / "a.log"),
+    )
+    state = LauncherState(runs=[run])
+    state_path = tmp_path / "launch-state.json"
+    service_module.save_state(state_path, state)
+    original_run = service_module.subprocess.run
+    commands: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        commands.append(cmd)
+        return CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    try:
+        service_module.subprocess.run = fake_run
+        result = service_module.launch_attach("run-1", state_path=state_path)
+    finally:
+        service_module.subprocess.run = original_run
+
+    assert result.ok is True
+    assert commands[0][:3] == ["tail", "-n", "20"]
+    assert str(tmp_path / "a.log") in commands[0]
+    assert str(tmp_path / "b.log") in commands[0]
 
 
 def test_local_ollama_commands_include_keep_alive_and_parallelism() -> None:
@@ -125,7 +262,6 @@ def test_local_ollama_commands_include_keep_alive_and_parallelism() -> None:
         json_mode=False,
         yes=True,
         follow=False,
-        detach=False,
     )
 
     serve = build_ollama_serve_command(spec)
@@ -134,6 +270,30 @@ def test_local_ollama_commands_include_keep_alive_and_parallelism() -> None:
     assert "OLLAMA_NUM_PARALLEL=4" in serve
     assert "OLLAMA_MAX_QUEUE=512" in serve
     assert '"keep_alive": -1' in warm
+
+
+def test_local_ollama_warmup_accepts_duration_keep_alive() -> None:
+    spec = LaunchSpec(
+        target=LocalOllamaTargetSpec(kind=TargetKind.LOCAL_OLLAMA, host="127.0.0.1"),
+        model="llama3.2",
+        benchmark=BenchSpec(benchmark="swebench-live", backend="ollama"),
+        serving=ServingSpec(
+            engine="ollama",
+            port=11434,
+            keep_alive="5m",
+            ollama_num_parallel=1,
+            ollama_max_queue=512,
+        ),
+        sync=SyncSpec(),
+        reuse=ReuseMode.PREFER,
+        json_mode=False,
+        yes=True,
+        follow=False,
+    )
+
+    warm = build_ollama_warmup_command(spec)
+
+    assert '"keep_alive": "5m"' in warm
 
 
 def test_local_ollama_attaches_to_existing_healthy_endpoint(tmp_path: Path) -> None:
@@ -153,7 +313,6 @@ def test_local_ollama_attaches_to_existing_healthy_endpoint(tmp_path: Path) -> N
         json_mode=False,
         yes=False,
         follow=False,
-        detach=False,
     )
     state = LauncherState()
     state_path = tmp_path / "launch-state.json"
@@ -196,7 +355,6 @@ def test_local_vllm_attaches_to_existing_healthy_endpoint(tmp_path: Path) -> Non
         json_mode=False,
         yes=False,
         follow=False,
-        detach=False,
     )
     state = LauncherState()
     state_path = tmp_path / "launch-state.json"

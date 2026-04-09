@@ -4,11 +4,11 @@ import hashlib
 import shlex
 from pathlib import Path
 
-from mcode.launch.models import BlueVelaTargetSpec, CommandResult, LaunchSpec
+from mcode.launch.models import BlueVelaTargetSpec, LaunchSpec
 from mcode.launch.sync import SyncPlan
 
 
-def build_bluevela_server_reuse_key(spec: LaunchSpec, *, workspace_signature: str) -> str:
+def build_bluevela_server_reuse_key(spec: LaunchSpec) -> str:
     target = spec.target
     assert isinstance(target, BlueVelaTargetSpec)
     parts = [
@@ -175,15 +175,4 @@ def build_remote_workspace_prepare_command(target: BlueVelaTargetSpec, plan: Syn
         f"{shlex.quote(root)}/state/servers "
         f"{shlex.quote(plan.remote_path)}"
         "'"
-    )
-
-
-def bluevela_doctor_result(target: BlueVelaTargetSpec) -> CommandResult:
-    return CommandResult(
-        ok=True,
-        message="Blue Vela doctor checks require live SSH execution.",
-        data={
-            "login": target.login,
-            "workspace_root": target.workspace_root,
-        },
     )

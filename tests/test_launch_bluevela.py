@@ -66,7 +66,6 @@ def _spec() -> LaunchSpec:
         json_mode=False,
         yes=True,
         follow=False,
-        detach=False,
     )
 
 
@@ -113,14 +112,13 @@ def test_bluevela_benchmark_command_uses_parallelism_and_openai_backend() -> Non
     assert "client.ping()" in command
 
 
-def test_bluevela_server_reuse_key_includes_profile_and_workspace() -> None:
-    key = build_bluevela_server_reuse_key(_spec(), workspace_signature="ws-123")
+def test_bluevela_server_reuse_key_includes_profile() -> None:
+    key = build_bluevela_server_reuse_key(_spec())
 
     assert "bluevela" in key
     assert "google/gemma-4-31B-it" in key
     assert "gemma4" in key
     assert "mem=0.9" in key
-    assert "workspace=" not in key
 
 
 def test_bluevela_registry_and_lock_paths_are_deterministic() -> None:
@@ -162,6 +160,34 @@ def test_bluevela_launch_preview_computes_sync_without_applying(tmp_path: Path) 
     assert calls == {"apply": False, "check": True}
     assert result.ok is True
     assert "bsub" in result.message
+    assert state.runs[0].log_path.endswith("/benchmark-shard-0.log")
+
+
+def test_stop_run_skips_bkill_for_planned_bluevela_run(tmp_path: Path) -> None:
+    run = service_module.RunHandle(
+        id="run-1",
+        target=TargetKind.BLUEVELA.value,
+        benchmark="swebench-lite",
+        status="planned",
+        metadata={
+            "login": "user@login3.example.com",
+            "job_ids": [],
+            "commands": ["bsub some command"],
+        },
+        log_path="/u/user/mcode-launch/runs/run-1/benchmark-shard-0.log",
+    )
+    state = LauncherState(runs=[run])
+    state_path = tmp_path / "launch-state.json"
+    original_run_ssh = service_module._run_ssh
+    calls: list[tuple[str, str]] = []
+    try:
+        service_module._run_ssh = lambda login, command: calls.append((login, command)) or ""
+        result = service_module._stop_run(run, state, state_path)
+    finally:
+        service_module._run_ssh = original_run_ssh
+
+    assert result.ok is True
+    assert calls == []
 
 
 def test_bluevela_server_resolution_reuses_remote_registry(tmp_path: Path) -> None:
@@ -314,3 +340,97 @@ def test_bluevela_bsub_benchmark_command_is_shell_parseable() -> None:
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_bluevela_launch_records_real_shard_log_paths(tmp_path: Path) -> None:
+    state = LauncherState()
+    state_path = tmp_path / "launch-state.json"
+    original_launch_sync = service_module.launch_sync
+    original_find_server = service_module._find_existing_server
+    original_resolve_server = service_module._resolve_bluevela_server
+    original_resolve_podman = service_module._resolve_bluevela_podman_storage
+    original_run_ssh = service_module._run_ssh
+    original_uuid4 = service_module.uuid.uuid4
+    uuids = iter(["aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb"])
+
+    class _UUID:
+        def __init__(self, value: str) -> None:
+            self.hex = value
+
+    try:
+        service_module.launch_sync = lambda spec, **kwargs: CommandResult(
+            ok=True,
+            message="sync",
+            data={"signature": "ws-1", "remote_path": "/u/user/mcode-launch/workspaces/ws-1"},
+        )
+        service_module._resolve_bluevela_podman_storage = lambda target: ("graphroot", "runroot")
+        service_module._find_existing_server = lambda *args, **kwargs: None
+        service_module._resolve_bluevela_server = lambda *args, **kwargs: ServerHandle(
+            id="server-1",
+            target=TargetKind.BLUEVELA.value,
+            reuse_key="reuse-key",
+            endpoint="http://host:8331/v1",
+            status="healthy",
+            metadata={"login": "user@login3.example.com", "job_id": "1"},
+            log_path="/u/user/mcode-launch/runs/server/vllm.log",
+        )
+        service_module._run_ssh = lambda *args, **kwargs: "123"
+        service_module.uuid.uuid4 = lambda: _UUID(next(uuids))
+        result = service_module._launch_bluevela(
+            _spec(),
+            repo_root=tmp_path,
+            state=state,
+            state_path=state_path,
+        )
+    finally:
+        service_module.launch_sync = original_launch_sync
+        service_module._find_existing_server = original_find_server
+        service_module._resolve_bluevela_server = original_resolve_server
+        service_module._resolve_bluevela_podman_storage = original_resolve_podman
+        service_module._run_ssh = original_run_ssh
+        service_module.uuid.uuid4 = original_uuid4
+
+    assert result.ok is True
+    run = state.runs[0]
+    assert run.log_path == "/u/user/mcode-launch/runs/run-aaaaaaaa/benchmark-shard-0.log"
+    assert run.metadata["log_paths"] == [
+        "/u/user/mcode-launch/runs/run-aaaaaaaa/benchmark-shard-0.log",
+        "/u/user/mcode-launch/runs/run-aaaaaaaa/benchmark-shard-1.log",
+        "/u/user/mcode-launch/runs/run-aaaaaaaa/benchmark-shard-2.log",
+        "/u/user/mcode-launch/runs/run-aaaaaaaa/benchmark-shard-3.log",
+    ]
+
+
+def test_launch_attach_follows_all_bluevela_logs(tmp_path: Path) -> None:
+    run = service_module.RunHandle(
+        id="run-1",
+        target=TargetKind.BLUEVELA.value,
+        benchmark="swebench-live",
+        status="running",
+        metadata={
+            "login": "user@login3.example.com",
+            "log_paths": ["/u/user/run/benchmark-shard-0.log", "/u/user/run/benchmark-shard-1.log"],
+        },
+        log_path="/u/user/run/benchmark-shard-0.log",
+    )
+    state = LauncherState(runs=[run])
+    state_path = tmp_path / "launch-state.json"
+    service_module.save_state(state_path, state)
+    original_run = service_module.subprocess.run
+    commands: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        commands.append(cmd)
+        return CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    try:
+        service_module.subprocess.run = fake_run
+        result = service_module.launch_attach("run-1", state_path=state_path)
+    finally:
+        service_module.subprocess.run = original_run
+
+    assert result.ok is True
+    assert commands[0][0:2] == ["ssh", "user@login3.example.com"]
+    assert (
+        "tail -n 20 -f /u/user/run/benchmark-shard-0.log /u/user/run/benchmark-shard-1.log"
+    ) in commands[0][2]
