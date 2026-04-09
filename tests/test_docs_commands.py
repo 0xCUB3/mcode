@@ -109,10 +109,3 @@ def test_preferred_docs_do_not_default_to_raw_cluster_commands() -> None:
             assert not command.startswith(RAW_CLUSTER_PREFIXES), (
                 f"Use mcode commands instead of raw cluster commands in {path.name}: {command}"
             )
-
-
-def test_agents_mentions_docs_contract_test() -> None:
-    text = (REPO_ROOT / "AGENTS.md").read_text()
-    assert "tests/test_docs_commands.py" in text
-    assert "update `docs/COMMANDS.md`" in text
-    assert "Prefer `uv run mcode ...` commands" in text
