@@ -104,7 +104,7 @@ uv run mcode launch sync --target bluevela --check
 uv run mcode launch status --json
 ```
 
-See [`docs/COMMANDS.md`](/Users/skula/Documents/mcode/docs/COMMANDS.md) for the full command cookbook, including Blue Vela launch, attach, fetch, stop, and local provider examples.
+See [`docs/COMMANDS.md`](docs/COMMANDS.md) for the full command cookbook, including Blue Vela launch, attach, fetch, stop, and local provider examples.
 
 The launcher reads optional per-user defaults from:
 
@@ -122,7 +122,7 @@ The legacy Blue Vela scripts are still available during the transition under `de
 - `stop-vllm.sh`
 - `fetch-results.sh`
 
-See [`deploy/bluevela/README.md`](/Users/skula/Documents/mcode/deploy/bluevela/README.md) for the remote workflow and the legacy script path.
+See [`deploy/bluevela/README.md`](deploy/bluevela/README.md) for the remote workflow and the legacy script path.
 
 ## Notes
 

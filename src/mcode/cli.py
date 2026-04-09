@@ -22,6 +22,7 @@ from mcode.bench.results import (
 from mcode.bench.runner import BenchConfig, BenchmarkRunner
 from mcode.launch.config import load_launch_config
 from mcode.launch.service import (
+    build_admin_launch_spec,
     build_launch_spec,
     launch_attach,
     launch_doctor,
@@ -279,36 +280,11 @@ def launch_doctor_cmd(
     openai_base_url: Annotated[str | None, typer.Option("--openai-base-url")] = None,
 ) -> None:
     config = load_launch_config()
-    spec = build_launch_spec(
+    spec = build_admin_launch_spec(
         config=config,
         target=target,
         model=model,
-        benchmark="swebench-live",
-        backend=None,
-        split="verified",
-        loop_budget=15,
-        timeout=1800,
-        parallelism=1,
-        limit=None,
-        task_ids=None,
-        reuse="prefer",
-        sync_mode="git-overlay",
-        ref="HEAD",
         json_mode=json_mode,
-        yes=False,
-        follow=False,
-        detach=False,
-        tp=1,
-        dp=1,
-        api_server_count=1,
-        max_model_len=32768,
-        gpu_memory_utilization=0.9,
-        port=None,
-        serving_profile=None,
-        no_auto_profile=False,
-        keep_alive=None,
-        ollama_num_parallel=None,
-        ollama_max_queue=None,
         openai_base_url=openai_base_url,
     )
     _print_launch_result(launch_doctor(spec), json_mode=json_mode)
@@ -361,37 +337,13 @@ def launch_sync_cmd(
     json_mode: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     config = load_launch_config()
-    spec = build_launch_spec(
+    spec = build_admin_launch_spec(
         config=config,
         target=target,
         model=model,
-        benchmark="swebench-live",
-        backend=None,
-        split="verified",
-        loop_budget=15,
-        timeout=1800,
-        parallelism=1,
-        limit=None,
-        task_ids=None,
-        reuse="prefer",
         sync_mode=sync_mode,
         ref=ref,
         json_mode=json_mode,
-        yes=False,
-        follow=False,
-        detach=False,
-        tp=1,
-        dp=1,
-        api_server_count=1,
-        max_model_len=32768,
-        gpu_memory_utilization=0.9,
-        port=None,
-        serving_profile=None,
-        no_auto_profile=False,
-        keep_alive=None,
-        ollama_num_parallel=None,
-        ollama_max_queue=None,
-        openai_base_url=None,
     )
     spec.sync.check = check
     spec.sync.apply = apply

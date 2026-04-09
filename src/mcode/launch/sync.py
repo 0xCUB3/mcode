@@ -23,6 +23,7 @@ class SyncPlan:
     repo_url: str
     ref_sha: str
     overlay_patch_sha: str
+    bootstrap_key: str
     remote_path: str
     mode: SyncMode
     is_noop: bool
@@ -104,6 +105,7 @@ def build_sync_plan(
         repo_url=remote,
         ref_sha=ref_sha,
         overlay_patch_sha=overlay_patch_sha,
+        bootstrap_key=sync.bootstrap_key,
         remote_path=remote_path,
         mode=sync.mode,
         is_noop=existing is not None

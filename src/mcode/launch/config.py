@@ -7,15 +7,17 @@ from pathlib import Path
 
 from mcode.launch.models import default_config_path
 
+DEFAULT_USER = os.environ.get("USER", "user")
+
 
 @dataclass
 class BlueVelaConfig:
-    login: str = f"{os.environ.get('USER', 'user')}@login3.bluevela.rmf.ibm.com"
-    workspace_root: str = f"/u/{os.environ.get('USER', 'user')}/mcode-launch"
+    login: str = f"{DEFAULT_USER}@login3.bluevela.rmf.ibm.com"
+    workspace_root: str = f"/u/{DEFAULT_USER}/mcode-launch"
     queue: str = "normal"
     group: str = "grp_runtime"
-    shared_root: str = f"/proj/dmfexp/{os.environ.get('USER', 'user')}"
-    hf_env: str = f"/u/{os.environ.get('USER', 'user')}/.config/mcode/hf-env.sh"
+    shared_root: str = f"/proj/dmfexp/{DEFAULT_USER}"
+    hf_env: str = f"/u/{DEFAULT_USER}/.config/mcode/hf-env.sh"
     podman_graphroot: str | None = None
     podman_runroot: str | None = None
     results_root: str | None = None
@@ -67,12 +69,8 @@ def load_launch_config(path: Path | None = None) -> LaunchConfig:
             group=bluevela.get("group", BlueVelaConfig.group),
             shared_root=shared_root,
             hf_env=bluevela.get("hf_env", BlueVelaConfig.hf_env),
-            podman_graphroot=bluevela.get(
-                "podman_graphroot", f"{shared_root.rstrip('/')}/podman/graphroot"
-            ),
-            podman_runroot=bluevela.get(
-                "podman_runroot", f"{shared_root.rstrip('/')}/podman/runroot"
-            ),
+            podman_graphroot=bluevela.get("podman_graphroot"),
+            podman_runroot=bluevela.get("podman_runroot"),
             results_root=bluevela.get("results_root"),
         ),
         local_vllm=LocalVllmConfig(

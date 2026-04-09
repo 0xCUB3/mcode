@@ -6,7 +6,7 @@ The preferred path is now the unified launcher:
 uv run mcode launch
 ```
 
-For the full operational command set, including `status`, `attach`, `fetch`, and `stop`, use [`docs/COMMANDS.md`](/Users/skula/Documents/mcode/docs/COMMANDS.md).
+For the full operational command set, including `status`, `attach`, `fetch`, and `stop`, use [`docs/COMMANDS.md`](../../docs/COMMANDS.md).
 
 Recommended first checks:
 

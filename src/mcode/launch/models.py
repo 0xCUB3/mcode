@@ -154,6 +154,9 @@ class CommandResult:
     data: dict[str, Any] = field(default_factory=dict)
 
 
+DEFAULT_BOOTSTRAP_KEY = SyncSpec.bootstrap_key
+
+
 def default_state_path() -> Path:
     return Path.home() / ".config" / "mcode" / "launch-state.json"
 

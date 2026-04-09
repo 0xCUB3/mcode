@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from typer.main import get_command
 from typer.testing import CliRunner
 
@@ -13,6 +15,10 @@ def _command_option_names(*args: str) -> set[str]:
         current = current.get_command(None, name)
         assert current is not None
     return {param.name for param in current.params}
+
+
+def _strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]", "", text)
 
 
 def test_cli_launch_help() -> None:
@@ -39,5 +45,6 @@ def test_cli_launch_sync_help() -> None:
     runner = CliRunner()
     res = runner.invoke(app, ["launch", "sync", "--help"], color=False)
     assert res.exit_code == 0
-    assert "--check" in res.stdout
-    assert "--apply" in res.stdout
+    stdout = _strip_ansi(res.stdout)
+    assert "--check" in stdout
+    assert "--apply" in stdout

@@ -30,7 +30,7 @@
 
 ## Docs maintenance
 
-- When adding or changing user-facing run commands, update `/Users/skula/Documents/mcode/docs/COMMANDS.md`.
-- If the change affects primary usage, also update `/Users/skula/Documents/mcode/README.md`.
-- If the change is Blue Vela-specific, also update `/Users/skula/Documents/mcode/deploy/bluevela/README.md`.
+- When adding or changing user-facing run commands, update `docs/COMMANDS.md`.
+- If the change affects primary usage, also update `README.md`.
+- If the change is Blue Vela-specific, also update `deploy/bluevela/README.md`.
 - Historical research notes under `research/` are records, not the source of truth for current operational commands.

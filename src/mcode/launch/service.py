@@ -50,8 +50,20 @@ from mcode.launch.providers.local_vllm import (
     build_local_vllm_command,
     build_local_vllm_reuse_key,
 )
+from mcode.launch.remote_scripts import (
+    build_remote_healthcheck_command,
+    build_uv_sync_command,
+)
 from mcode.launch.state import LauncherState, load_state, save_state
 from mcode.launch.sync import build_sync_plan, list_untracked_files, tracked_overlay_patch
+
+BLUEVELA_VLLM_FAILED_MARKERS = (
+    "Exited with exit code",
+    "Failed to obtain podman configuration",
+    "Engine core initialization failed",
+    "No available memory for the cache blocks",
+    "cannot re-exec process to join the existing user namespace",
+)
 
 
 def build_launch_spec(
@@ -164,6 +176,50 @@ def build_launch_spec(
         yes=yes,
         follow=follow,
         detach=detach,
+    )
+
+
+def build_admin_launch_spec(
+    *,
+    config: LaunchConfig,
+    target: str,
+    model: str,
+    json_mode: bool,
+    openai_base_url: str | None = None,
+    sync_mode: str = "git-overlay",
+    ref: str = "HEAD",
+) -> LaunchSpec:
+    return build_launch_spec(
+        config=config,
+        target=target,
+        model=model,
+        benchmark="swebench-live",
+        backend=None,
+        split="verified",
+        loop_budget=15,
+        timeout=1800,
+        parallelism=1,
+        limit=None,
+        task_ids=None,
+        reuse="prefer",
+        sync_mode=sync_mode,
+        ref=ref,
+        json_mode=json_mode,
+        yes=False,
+        follow=False,
+        detach=False,
+        tp=1,
+        dp=1,
+        api_server_count=1,
+        max_model_len=32768,
+        gpu_memory_utilization=0.9,
+        port=None,
+        serving_profile=None,
+        no_auto_profile=False,
+        keep_alive=None,
+        ollama_num_parallel=None,
+        ollama_max_queue=None,
+        openai_base_url=openai_base_url,
     )
 
 
@@ -662,27 +718,7 @@ def _endpoint_is_healthy(base_url: str) -> bool:
 def _remote_endpoint_is_healthy(login: str, base_url: str) -> bool:
     if not base_url:
         return False
-    root = base_url.rstrip("/")
-    command = (
-        "python - <<'PY'\n"
-        "import sys\n"
-        "import urllib.request\n"
-        "urls = [\n"
-        f"    {root!r} + '/health',\n"
-        f"    {root!r} + '/models',\n"
-        f"    {root!r} + '/v1/models',\n"
-        f"    {root!r} + '/api/tags',\n"
-        "]\n"
-        "for url in urls:\n"
-        "    try:\n"
-        "        with urllib.request.urlopen(url, timeout=5) as response:\n"
-        "            if 200 <= response.status < 300:\n"
-        "                sys.exit(0)\n"
-        "    except Exception:\n"
-        "        continue\n"
-        "sys.exit(1)\n"
-        "PY"
-    )
+    command = build_remote_healthcheck_command(base_url)
     result = _run_ssh_result(login, command, check=False)
     return result.returncode == 0
 
@@ -708,14 +744,7 @@ def _wait_for_bluevela_endpoint(
         if _remote_endpoint_is_healthy(login, base_url):
             return
         log_tail = _run_ssh(login, f"test -f {log_path} && tail -n 20 {log_path} || true")
-        failed_markers = (
-            "Exited with exit code",
-            "Failed to obtain podman configuration",
-            "Engine core initialization failed",
-            "No available memory for the cache blocks",
-            "cannot re-exec process to join the existing user namespace",
-        )
-        failed = any(marker in log_tail for marker in failed_markers)
+        failed = any(marker in log_tail for marker in BLUEVELA_VLLM_FAILED_MARKERS)
         if failed:
             raise RuntimeError(
                 f"Blue Vela vLLM job failed before endpoint was healthy:\n{log_tail}"
@@ -986,18 +1015,19 @@ def _sync_bluevela_workspace(target: BlueVelaTargetSpec, repo_root: Path, plan) 
                         check=True,
                     )
         bootstrap_marker = f"{plan.remote_path}/.mcode-bootstrap-key"
-        mode_value = json.dumps(plan.mode.value)
+        bootstrap_value = json.dumps(plan.bootstrap_key)
         mode_check = (
             f"if [ ! -f {bootstrap_marker} ] || "
-            f'[ "$(cat {bootstrap_marker} 2>/dev/null)" != {mode_value} ]; then '
+            f'[ "$(cat {bootstrap_marker} 2>/dev/null)" != {bootstrap_value} ]; then '
         )
+        sync_command = build_uv_sync_command(plan.bootstrap_key)
         bootstrap_cmd = (
             "bash -lc '"
             f"mkdir -p {plan.remote_path}; "
             f"{mode_check}"
             f"cd {plan.remote_path} && uv python pin 3.11 && "
-            "uv run mcode deps sync --no-dev --extra swebench --extra datasets && "
-            f"printf %s {mode_value} > {bootstrap_marker}; "
+            f"{sync_command} && "
+            f"printf %s {bootstrap_value} > {bootstrap_marker}; "
             "fi'"
         )
         _run_ssh(target.login, bootstrap_cmd)
