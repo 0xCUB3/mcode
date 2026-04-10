@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import io
+import sys
+import tarfile
 import types
 
 import pytest
@@ -118,3 +121,77 @@ def test_swebench_get_client_raises_docker_unavailable_after_retries(monkeypatch
 
     with pytest.raises(DockerUnavailableError, match="SWE-bench Lite"):
         sandbox._get_client()
+
+
+def test_repo_context_disables_network_for_source_container(monkeypatch):
+    class FakeSourceContainer:
+        def get_archive(self, path):
+            assert path == "/testbed"
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w") as tar:
+                info = tarfile.TarInfo("testbed")
+                info.type = tarfile.DIRTYPE
+                tar.addfile(info)
+            buf.seek(0)
+            return [buf.getvalue()], {}
+
+        def remove(self, force=False):
+            assert force is True
+
+    class FakeExecContainer:
+        def start(self):
+            return None
+
+        def remove(self, force=False):
+            assert force is True
+
+    create_calls: list[dict] = []
+    containers = [FakeSourceContainer(), FakeExecContainer()]
+
+    class FakeContainerManager:
+        def create(self, **kwargs):
+            create_calls.append(kwargs)
+            return containers.pop(0)
+
+    class FakeClient:
+        containers = FakeContainerManager()
+
+    fake_test_spec = types.SimpleNamespace(
+        instance_image_key="docker.io/example/image:latest",
+        platform="linux/amd64",
+        eval_script_list=[],
+    )
+
+    fake_test_spec_module = types.ModuleType("swebench.harness.test_spec.test_spec")
+    fake_test_spec_module.make_test_spec = lambda *args, **kwargs: fake_test_spec
+    monkeypatch.setitem(sys.modules, "swebench", types.ModuleType("swebench"))
+    monkeypatch.setitem(sys.modules, "swebench.harness", types.ModuleType("swebench.harness"))
+    monkeypatch.setitem(
+        sys.modules,
+        "swebench.harness.test_spec",
+        types.ModuleType("swebench.harness.test_spec"),
+    )
+    monkeypatch.setitem(sys.modules, "swebench.harness.test_spec.test_spec", fake_test_spec_module)
+
+    fake_bash_module = types.ModuleType("mellea.agent.tools.bash")
+    fake_bash_module.format_tool_result = lambda command, status, output: (
+        f"{command}|{status}|{output}"
+    )
+    monkeypatch.setitem(sys.modules, "mellea", types.ModuleType("mellea"))
+    monkeypatch.setitem(sys.modules, "mellea.agent", types.ModuleType("mellea.agent"))
+    monkeypatch.setitem(sys.modules, "mellea.agent.tools", types.ModuleType("mellea.agent.tools"))
+    monkeypatch.setitem(sys.modules, "mellea.agent.tools.bash", fake_bash_module)
+
+    monkeypatch.setattr("mcode.execution.swebench._ensure_image", lambda client, name: None)
+    monkeypatch.setattr(
+        "mcode.execution.swebench._exec_agent_command_in_container",
+        lambda *args, **kwargs: ("", 0, False),
+    )
+
+    sandbox = SWEbenchSandbox()
+    monkeypatch.setattr(sandbox, "_get_client", lambda: FakeClient())
+
+    with sandbox.repo_context({"instance_id": "astropy__astropy-12907"}):
+        pass
+
+    assert create_calls[0]["network_disabled"] is True
