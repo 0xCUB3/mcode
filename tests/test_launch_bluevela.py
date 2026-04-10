@@ -111,6 +111,7 @@ def test_bluevela_benchmark_command_uses_parallelism_and_openai_backend() -> Non
     )
 
     assert "uv run mcode bench swebench-lite" in command
+    assert "--dataset SWE-bench/SWE-bench_Lite" in command
     assert "bash -lc" not in command
     assert "--backend openai" in command
     assert "--shard-count 4" in command

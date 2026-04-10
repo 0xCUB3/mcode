@@ -459,6 +459,11 @@ def build_local_benchmark_command(
     shard_index: int,
 ) -> str:
     task_ids = f"--task-ids {spec.benchmark.task_ids}" if spec.benchmark.task_ids else ""
+    dataset = (
+        f"--dataset {spec.benchmark.dataset or 'SWE-bench/SWE-bench_Lite'}"
+        if spec.benchmark.benchmark == "swebench-lite"
+        else ""
+    )
     limit = f"--limit {spec.benchmark.limit}" if spec.benchmark.limit is not None else ""
     db_path = run_dir / f"diagnostic-shard-{shard_index}.db"
     return (
@@ -474,5 +479,5 @@ def build_local_benchmark_command(
         f"--shard-index {shard_index} "
         f"--n-samples {spec.benchmark.n_samples} "
         f"--db {db_path} "
-        f"{task_ids} {limit}"
+        f"{task_ids} {dataset} {limit}"
     ).strip()

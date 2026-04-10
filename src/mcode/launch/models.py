@@ -36,6 +36,7 @@ class BenchSpec:
     benchmark: str = "swebench-live"
     backend: str = "openai"
     split: str = "verified"
+    dataset: str | None = None
     loop_budget: int = 15
     timeout: int = 1800
     parallelism: int = 1

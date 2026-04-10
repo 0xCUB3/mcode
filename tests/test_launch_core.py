@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from subprocess import CompletedProcess
 
+import pytest
+
 from mcode.launch import service as service_module
 from mcode.launch.config import LaunchConfig, load_launch_config
 from mcode.launch.models import SyncMode
@@ -93,6 +95,43 @@ shared_root = "/proj/shared/user"
 
     assert config.bluevela.podman_graphroot == "/proj/shared/user/podman/graphroot"
     assert config.bluevela.podman_runroot == "/proj/shared/user/podman/runroot"
+
+
+def _build_launch_spec(**overrides):
+    kwargs = {
+        "config": load_launch_config(Path("/does/not/exist")),
+        "target": "bluevela",
+        "model": "Qwen/Qwen3-1.7B",
+        "benchmark": "swebench-lite",
+        "backend": None,
+        "split": None,
+        "loop_budget": 1,
+        "timeout": 60,
+        "parallelism": 1,
+        "limit": 1,
+        "task_ids": None,
+        "reuse": "prefer",
+        "sync_mode": "git-overlay",
+        "ref": "HEAD",
+        "json_mode": False,
+        "yes": False,
+        "follow": False,
+        "tp": 1,
+        "dp": 1,
+        "api_server_count": 1,
+        "max_model_len": 32768,
+        "gpu_memory_utilization": 0.9,
+        "port": None,
+        "serving_profile": None,
+        "no_auto_profile": False,
+        "keep_alive": None,
+        "ollama_num_parallel": None,
+        "ollama_max_queue": None,
+        "openai_base_url": None,
+        "dataset": None,
+    }
+    kwargs.update(overrides)
+    return service_module.build_launch_spec(**kwargs)
 
 
 def test_state_round_trip(tmp_path: Path) -> None:
@@ -232,119 +271,74 @@ def test_endpoint_health_tolerates_transient_socket_errors() -> None:
 
 
 def test_build_launch_spec_defaults_split_for_swebench_lite() -> None:
-    config = load_launch_config(Path("/does/not/exist"))
-
-    spec = service_module.build_launch_spec(
-        config=config,
-        target="bluevela",
-        model="Qwen/Qwen3-1.7B",
-        benchmark="swebench-lite",
-        backend=None,
-        split=None,
-        loop_budget=1,
-        timeout=60,
-        parallelism=1,
-        limit=1,
-        task_ids=None,
-        reuse="prefer",
-        sync_mode="git-overlay",
-        ref="HEAD",
-        json_mode=False,
-        yes=False,
-        follow=False,
-        tp=1,
-        dp=1,
-        api_server_count=1,
-        max_model_len=32768,
-        gpu_memory_utilization=0.9,
-        port=None,
-        serving_profile=None,
-        no_auto_profile=False,
-        keep_alive=None,
-        ollama_num_parallel=None,
-        ollama_max_queue=None,
-        openai_base_url=None,
-    )
+    spec = _build_launch_spec()
 
     assert spec.benchmark.split == "test"
+    assert spec.benchmark.dataset == "SWE-bench/SWE-bench_Lite"
 
 
 def test_build_launch_spec_defaults_split_for_swebench_live() -> None:
-    config = load_launch_config(Path("/does/not/exist"))
-
-    spec = service_module.build_launch_spec(
-        config=config,
-        target="bluevela",
-        model="Qwen/Qwen3-1.7B",
-        benchmark="swebench-live",
-        backend=None,
-        split=None,
-        loop_budget=1,
-        timeout=60,
-        parallelism=1,
-        limit=1,
-        task_ids=None,
-        reuse="prefer",
-        sync_mode="git-overlay",
-        ref="HEAD",
-        json_mode=False,
-        yes=False,
-        follow=False,
-        tp=1,
-        dp=1,
-        api_server_count=1,
-        max_model_len=32768,
-        gpu_memory_utilization=0.9,
-        port=None,
-        serving_profile=None,
-        no_auto_profile=False,
-        keep_alive=None,
-        ollama_num_parallel=None,
-        ollama_max_queue=None,
-        openai_base_url=None,
-    )
+    spec = _build_launch_spec(benchmark="swebench-live")
 
     assert spec.benchmark.split == "verified"
 
 
 def test_build_launch_spec_normalizes_task_id_file_to_inline_ids(tmp_path: Path) -> None:
-    config = load_launch_config(Path("/does/not/exist"))
     task_file = tmp_path / "task_ids.txt"
     task_file.write_text("sympy__sympy-1\nsympy__sympy-2\n")
+    original = service_module._find_missing_task_ids
+    service_module._find_missing_task_ids = lambda *args, **kwargs: []
 
-    spec = service_module.build_launch_spec(
-        config=config,
-        target="bluevela",
-        model="google/gemma-4-31B-it",
-        benchmark="swebench-lite",
-        backend=None,
-        split=None,
-        loop_budget=1,
-        timeout=60,
-        parallelism=1,
-        limit=None,
-        task_ids=str(task_file),
-        reuse="prefer",
-        sync_mode="git-overlay",
-        ref="HEAD",
-        json_mode=False,
-        yes=False,
-        follow=False,
-        tp=1,
-        dp=1,
-        api_server_count=1,
-        max_model_len=32768,
-        gpu_memory_utilization=0.9,
-        port=None,
-        serving_profile=None,
-        no_auto_profile=False,
-        keep_alive=None,
-        ollama_num_parallel=None,
-        ollama_max_queue=None,
-        openai_base_url=None,
-    )
+    try:
+        spec = _build_launch_spec(
+            model="google/gemma-4-31B-it",
+            limit=None,
+            task_ids=str(task_file),
+        )
+    finally:
+        service_module._find_missing_task_ids = original
 
     assert spec.benchmark.task_ids == "sympy__sympy-1,sympy__sympy-2"
+
+
+def test_build_launch_spec_warns_on_partial_task_id_overlap(tmp_path: Path) -> None:
+    task_file = tmp_path / "task_ids.txt"
+    task_file.write_text("sympy__sympy-1\nsympy__sympy-2\n")
+    original = service_module._find_missing_task_ids
+    service_module._find_missing_task_ids = lambda *args, **kwargs: ["sympy__sympy-2"]
+
+    try:
+        with pytest.warns(UserWarning, match=r"matched 1/2 tasks.*sympy__sympy-2"):
+            spec = _build_launch_spec(
+                model="google/gemma-4-31B-it",
+                limit=None,
+                task_ids=str(task_file),
+                dataset="princeton-nlp/SWE-bench_Verified",
+            )
+    finally:
+        service_module._find_missing_task_ids = original
+
+    assert spec.benchmark.dataset == "princeton-nlp/SWE-bench_Verified"
+
+
+def test_build_launch_spec_rejects_zero_task_id_overlap(tmp_path: Path) -> None:
+    task_file = tmp_path / "task_ids.txt"
+    task_file.write_text("sympy__sympy-1\nsympy__sympy-2\n")
+    original = service_module._find_missing_task_ids
+    service_module._find_missing_task_ids = lambda *args, **kwargs: [
+        "sympy__sympy-1",
+        "sympy__sympy-2",
+    ]
+
+    try:
+        with pytest.raises(ValueError, match=r"matched 0/2 tasks"):
+            _build_launch_spec(
+                model="google/gemma-4-31B-it",
+                limit=None,
+                task_ids=str(task_file),
+            )
+    finally:
+        service_module._find_missing_task_ids = original
 
 
 def test_remote_endpoint_health_uses_ssh_result() -> None:

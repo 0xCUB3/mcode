@@ -161,6 +161,7 @@ def test_local_launch_parallelism_spawns_one_shard_per_process(tmp_path: Path) -
     assert len(run.metadata["commands"]) == 3
     assert len(run.metadata["db_paths"]) == 3
     assert len(run.metadata["log_paths"]) == 3
+    assert "--dataset SWE-bench/SWE-bench_Lite" in run.metadata["commands"][0]
     assert "--shard-count 3 --shard-index 0" in run.metadata["commands"][0]
     assert "--shard-count 3 --shard-index 1" in run.metadata["commands"][1]
     assert "--shard-count 3 --shard-index 2" in run.metadata["commands"][2]

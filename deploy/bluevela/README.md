@@ -38,6 +38,8 @@ uv run mcode launch \
   --follow
 ```
 
+If you run `swebench-lite` against a non-default Hugging Face dataset such as `princeton-nlp/SWE-bench_Verified`, pass `--dataset ...` on `launch` so task-id files are checked against the right slice.
+
 Manage runs:
 
 ```bash

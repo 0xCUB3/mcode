@@ -86,6 +86,19 @@ The launcher defaults the split by benchmark:
 - `swebench-live` -> `verified`
 - `swebench-lite` -> `test`
 
+For `swebench-lite`, `launch` also accepts `--dataset`. This matters if you are replaying a Verified slice through the lite harness:
+
+```bash
+uv run mcode launch \
+  --target bluevela \
+  --model google/gemma-4-31B-it \
+  --benchmark swebench-lite \
+  --dataset princeton-nlp/SWE-bench_Verified \
+  --task-ids research/2026-04-03-adapter-aware-orchestrator-contract/medium-diagnostic-task-ids.txt \
+  --parallelism 2 \
+  --yes
+```
+
 Override the split only when you have a specific reason:
 
 ```bash

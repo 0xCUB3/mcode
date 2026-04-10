@@ -171,6 +171,11 @@ def build_bluevela_benchmark_command(
     task_ids = (
         f"--task-ids {shlex.quote(spec.benchmark.task_ids)}" if spec.benchmark.task_ids else ""
     )
+    dataset = (
+        f"--dataset {shlex.quote(spec.benchmark.dataset or 'SWE-bench/SWE-bench_Lite')}"
+        if spec.benchmark.benchmark == "swebench-lite"
+        else ""
+    )
     limit = f"--limit {spec.benchmark.limit}" if spec.benchmark.limit is not None else ""
     benchmark_podman_root = _bluevela_benchmark_podman_root(target)
     hf_cache = f"{target.shared_root.rstrip('/')}/hf-cache"
@@ -218,7 +223,7 @@ def build_bluevela_benchmark_command(
         f"--shard-index {shard_index} "
         f"--n-samples {spec.benchmark.n_samples} "
         f"--db {shlex.quote(str(db_path))} "
-        f"{task_ids} {limit}"
+        f"{task_ids} {dataset} {limit}"
     )
 
 

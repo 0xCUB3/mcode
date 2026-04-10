@@ -37,6 +37,7 @@ def test_cli_launch_has_core_options() -> None:
     assert "target" in option_names
     assert "model" in option_names
     assert "benchmark" in option_names
+    assert "dataset" in option_names
     assert "reuse" in option_names
     assert "sync_mode" in option_names
     assert "json_mode" in option_names

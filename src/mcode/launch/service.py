@@ -16,6 +16,7 @@ from typing import Any
 from urllib.error import URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
+from warnings import warn
 
 from mcode.launch.bluevela_service import launch_bluevela as launch_bluevela_impl
 from mcode.launch.config import LaunchConfig
@@ -102,7 +103,7 @@ def _normalize_task_ids_arg(raw: str | None) -> str | None:
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        ids = [item.strip() for item in text.replace("\n", ",").split(",") if item.strip()]
+        ids = _split_task_ids(text)
     else:
         if isinstance(data, list):
             ids = [str(item).strip() for item in data if str(item).strip()]
@@ -114,6 +115,33 @@ def _normalize_task_ids_arg(raw: str | None) -> str | None:
         else:
             raise ValueError(f"Cannot parse task IDs from {raw}")
     return ",".join(ids)
+
+
+def _split_task_ids(raw: str) -> list[str]:
+    return [item.strip() for item in raw.replace("\n", ",").split(",") if item.strip()]
+
+
+def _find_missing_task_ids(
+    benchmark: str,
+    split: str,
+    dataset: str | None,
+    task_ids: str | None,
+) -> list[str] | None:
+    if benchmark != "swebench-lite" or not dataset or not task_ids:
+        return None
+    from mcode.bench.swebench_lite import load_swebench_lite
+
+    ids = _split_task_ids(task_ids)
+    matched = {
+        task.instance_id
+        for task in load_swebench_lite(
+            Path("/tmp"),
+            split=split,
+            instance_ids=ids,
+            dataset_name=dataset,
+        )
+    }
+    return [task_id for task_id in ids if task_id not in matched]
 
 
 def build_launch_spec(
@@ -147,6 +175,7 @@ def build_launch_spec(
     ollama_num_parallel: int | None,
     ollama_max_queue: int | None,
     openai_base_url: str | None,
+    dataset: str | None = None,
 ) -> LaunchSpec:
     kind = TargetKind(target)
     profile = resolve_serving_profile(model)
@@ -203,16 +232,35 @@ def build_launch_spec(
         ollama_max_queue=ollama_max_queue or config.local_ollama.max_queue,
     )
     resolved_split = _resolve_benchmark_split(benchmark, split)
+    resolved_dataset = dataset or (
+        "SWE-bench/SWE-bench_Lite" if benchmark == "swebench-lite" else None
+    )
     bench = BenchSpec(
         benchmark=benchmark,
         backend=backend or ("ollama" if kind == TargetKind.LOCAL_OLLAMA else "openai"),
         split=resolved_split,
+        dataset=resolved_dataset,
         loop_budget=loop_budget,
         timeout=timeout,
         parallelism=parallelism,
         limit=limit,
         task_ids=_normalize_task_ids_arg(task_ids),
     )
+    missing_task_ids = _find_missing_task_ids(
+        bench.benchmark, bench.split, bench.dataset, bench.task_ids
+    )
+    if missing_task_ids is not None and bench.task_ids:
+        total = len(_split_task_ids(bench.task_ids))
+        matched = total - len(missing_task_ids)
+        message = (
+            f"--task-ids matched {matched}/{total} tasks in {bench.dataset} split={bench.split}"
+        )
+        if missing_task_ids:
+            message += f". Missing examples: {', '.join(missing_task_ids[:3])}"
+        if matched == 0:
+            raise ValueError(message)
+        if missing_task_ids:
+            warn(message, stacklevel=2)
     sync = SyncSpec(mode=SyncMode(sync_mode), ref=ref)
     return LaunchSpec(
         target=target_spec,
