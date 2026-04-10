@@ -174,6 +174,25 @@ def test_acquire_remote_lock_does_not_double_wrap_bash() -> None:
     assert "bash -lc" not in commands[0]
 
 
+def test_run_ssh_result_uses_ssh_n_and_bash_lc() -> None:
+    original_run = service_module.subprocess.run
+    captured: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        del kwargs
+        captured.append(cmd)
+        return CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    try:
+        service_module.subprocess.run = fake_run
+        result = service_module._run_ssh_result("user@login3.example.com", "echo ok")
+    finally:
+        service_module.subprocess.run = original_run
+
+    assert result.returncode == 0
+    assert captured == [["ssh", "-n", "user@login3.example.com", "bash -lc 'echo ok'"]]
+
+
 @dataclass
 class _Plan:
     signature: str
@@ -934,8 +953,8 @@ def test_launch_attach_follows_all_bluevela_logs(tmp_path: Path) -> None:
         service_module.subprocess.run = original_run
 
     assert result.ok is True
-    assert commands[0][0:2] == ["ssh", "user@login3.example.com"]
-    assert commands[0][2].startswith("bash -lc ")
+    assert commands[0][0:3] == ["ssh", "-n", "user@login3.example.com"]
+    assert commands[0][3].startswith("bash -lc ")
     assert (
         "tail -n 20 -f /u/user/run/benchmark-shard-0.log /u/user/run/benchmark-shard-1.log"
-    ) in commands[0][2]
+    ) in commands[0][3]

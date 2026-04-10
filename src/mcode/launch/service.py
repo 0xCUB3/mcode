@@ -531,7 +531,7 @@ def _run_ssh_result(
 ) -> subprocess.CompletedProcess[str]:
     remote = f"bash -lc {shlex.quote(command)}"
     return subprocess.run(
-        ["ssh", login, remote],
+        ["ssh", "-n", login, remote],
         check=check,
         text=True,
         capture_output=True,
