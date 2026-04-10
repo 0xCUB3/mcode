@@ -21,6 +21,8 @@ from mcode.bench.results import (
 )
 from mcode.bench.runner import BenchConfig, BenchmarkRunner
 from mcode.launch.config import load_launch_config
+from mcode.launch.models import CommandResult
+from mcode.launch.progress import NullProgressReporter, RichProgressReporter
 from mcode.launch.service import (
     build_admin_launch_spec,
     build_launch_spec,
@@ -30,6 +32,7 @@ from mcode.launch.service import (
     launch_run,
     launch_status,
     launch_stop,
+    launch_stop_all,
     launch_sync,
     render_result,
 )
@@ -42,10 +45,26 @@ console = Console()
 DEFAULT_DB_PATH = Path("experiments/results/results.db")
 
 
-def _print_launch_result(result, *, json_mode: bool) -> None:
+def _launch_reporter(*, json_mode: bool, title: str):
+    if json_mode:
+        return NullProgressReporter()
+    return RichProgressReporter(console=console, title=title)
+
+
+def _print_launch_result(result, *, json_mode: bool, prominent_ids: bool = False) -> None:
     if json_mode:
         typer.echo(render_result(result, json_mode=True))
     else:
+        if prominent_ids:
+            lines: list[str] = []
+            run_id = result.data.get("run_id")
+            server_id = result.data.get("server_id")
+            if run_id:
+                lines.append(f"run_id: {run_id}")
+            if server_id:
+                lines.append(f"server_id: {server_id}")
+            if lines:
+                console.print("\n".join(lines))
         console.print(render_result(result, json_mode=False))
     if not result.ok:
         raise typer.Exit(1)
@@ -269,8 +288,9 @@ def launch(
         ollama_max_queue=ollama_max_queue,
         openai_base_url=openai_base_url,
     )
-    result = launch_run(spec, repo_root=Path.cwd())
-    _print_launch_result(result, json_mode=json_mode)
+    with _launch_reporter(json_mode=json_mode, title="launch") as reporter:
+        result = launch_run(spec, repo_root=Path.cwd(), reporter=reporter)
+    _print_launch_result(result, json_mode=json_mode, prominent_ids=True)
 
 
 @launch_app.command("doctor")
@@ -314,9 +334,39 @@ def launch_attach_cmd(
 
 @launch_app.command("stop")
 def launch_stop_cmd(
-    run_id: Annotated[str, typer.Argument(..., help="Run or server id")],
+    run_id: Annotated[str | None, typer.Argument(help="Run or server id")] = None,
+    all_ids: Annotated[bool, typer.Option("--all", help="Stop everything")] = False,
+    target: Annotated[str | None, typer.Option("--target")] = None,
+    yes: Annotated[bool, typer.Option("--yes", help="Skip confirmation for --all")] = False,
     json_mode: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
+    if all_ids:
+        if run_id is not None:
+            raise typer.BadParameter("Do not pass an id with --all")
+        if json_mode and not yes:
+            _print_launch_result(
+                CommandResult(ok=False, message="--all with --json requires --yes"),
+                json_mode=True,
+            )
+            return
+        if not yes and not typer.confirm(
+            "This will stop all tracked launcher runs and servers, "
+            "kill matching Blue Vela jobs, and clear stale remote "
+            "locks and registries. Continue?"
+        ):
+            raise typer.Exit(1)
+        config = load_launch_config()
+        with _launch_reporter(json_mode=json_mode, title="stop") as reporter:
+            result = launch_stop_all(
+                target=target,
+                bluevela_login=config.bluevela.login,
+                bluevela_workspace_root=config.bluevela.workspace_root,
+                reporter=reporter,
+            )
+        _print_launch_result(result, json_mode=json_mode)
+        return
+    if run_id is None:
+        raise typer.BadParameter("Run or server id is required unless you pass --all")
     _print_launch_result(launch_stop(run_id), json_mode=json_mode)
 
 
@@ -326,7 +376,9 @@ def launch_fetch_cmd(
     destination: Annotated[Path, typer.Option("--destination")] = Path("results"),
     json_mode: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
-    _print_launch_result(launch_fetch(run_id, destination=destination), json_mode=json_mode)
+    with _launch_reporter(json_mode=json_mode, title="fetch") as reporter:
+        result = launch_fetch(run_id, destination=destination, reporter=reporter)
+    _print_launch_result(result, json_mode=json_mode)
 
 
 @launch_app.command("sync")
@@ -350,7 +402,9 @@ def launch_sync_cmd(
     )
     spec.sync.check = check
     spec.sync.apply = apply
-    _print_launch_result(launch_sync(spec, repo_root=Path.cwd()), json_mode=json_mode)
+    with _launch_reporter(json_mode=json_mode, title="sync") as reporter:
+        result = launch_sync(spec, repo_root=Path.cwd(), reporter=reporter)
+    _print_launch_result(result, json_mode=json_mode)
 
 
 @deps_app.command("sync")

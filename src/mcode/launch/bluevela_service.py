@@ -16,6 +16,7 @@ from mcode.launch.models import (
     TargetKind,
     WorkspaceHandle,
 )
+from mcode.launch.progress import NullProgressReporter, ProgressReporter
 from mcode.launch.state import LauncherState
 
 
@@ -35,7 +36,9 @@ def launch_bluevela(
     build_bsub_benchmark_command: Callable[..., str],
     merge_workspace: Callable[[Path | None, WorkspaceHandle], WorkspaceHandle],
     merge_run: Callable[[Path | None, RunHandle], RunHandle],
+    reporter: ProgressReporter | None = None,
 ) -> CommandResult:
+    reporter = reporter or NullProgressReporter()
     if spec.yes:
         resolve_podman_storage(spec.target)
     sync_result = launch_sync(
@@ -52,32 +55,6 @@ def launch_bluevela(
     workspace_signature = sync_result.data["signature"]
     reuse_key = build_server_reuse_key(spec)
     existing_server = find_existing_server(state, reuse_key=reuse_key)
-    if spec.yes:
-        server = resolve_bluevela_server(
-            spec,
-            state_path=state_path,
-            reuse_key=reuse_key,
-            workspace_signature=workspace_signature,
-            existing_server=existing_server,
-        )
-    elif existing_server and spec.reuse == ReuseMode.PREFER:
-        server = existing_server
-    else:
-        run_dir = Path(spec.target.workspace_root) / "runs" / uuid.uuid4().hex[:12]
-        command = build_vllm_command(spec, run_dir=run_dir)
-        server = ServerHandle(
-            id=f"server-{uuid.uuid4().hex[:8]}",
-            target=TargetKind.BLUEVELA.value,
-            reuse_key=reuse_key,
-            endpoint=f"http://pending:{spec.serving.port}/v1",
-            status="planned",
-            metadata={
-                "command": command,
-                "login": spec.target.login,
-                "run_dir": str(run_dir),
-            },
-            log_path=str(run_dir / "vllm.log"),
-        )
 
     workspace = WorkspaceHandle(signature=workspace_signature, path=sync_result.data["remote_path"])
     state.workspaces = [
@@ -87,6 +64,90 @@ def launch_bluevela(
 
     run_id = f"run-{uuid.uuid4().hex[:8]}"
     run_dir = Path(spec.target.workspace_root) / "runs" / run_id
+    pending_run = RunHandle(
+        id=run_id,
+        target=TargetKind.BLUEVELA.value,
+        benchmark=spec.benchmark.benchmark,
+        status="planned",
+        metadata={
+            "db_paths": [],
+            "job_ids": [],
+            "login": spec.target.login,
+            "log_paths": [],
+            "run_dir": str(run_dir),
+            "workspace_signature": workspace_signature,
+        },
+        log_path=None,
+    )
+    current_run = pending_run
+
+    def _record_run(run: RunHandle) -> RunHandle:
+        nonlocal current_run
+        current_run = run
+        state.runs = [entry for entry in state.runs if entry.id != run.id] + [run]
+        return merge_run(state_path, run)
+
+    def _record_pending_run(server: ServerHandle) -> None:
+        log_paths = [server.log_path] if server.log_path else []
+        run = replace(
+            pending_run,
+            status="pending" if spec.yes else "planned",
+            metadata={
+                **pending_run.metadata,
+                "log_paths": log_paths,
+                "server_id": server.id,
+                "startup_server_status": server.status,
+            },
+            log_path=server.log_path,
+        )
+        _record_run(run)
+
+    try:
+        if spec.yes:
+            reporter.set(35, "Starting or reusing Blue Vela server")
+            server = resolve_bluevela_server(
+                spec,
+                state_path=state_path,
+                reuse_key=reuse_key,
+                workspace_signature=workspace_signature,
+                existing_server=existing_server,
+                on_pending_server=_record_pending_run,
+            )
+        elif existing_server and spec.reuse == ReuseMode.PREFER:
+            server = existing_server
+        else:
+            run_dir = Path(spec.target.workspace_root) / "runs" / uuid.uuid4().hex[:12]
+            command = build_vllm_command(spec, run_dir=run_dir)
+            server = ServerHandle(
+                id=f"server-{uuid.uuid4().hex[:8]}",
+                target=TargetKind.BLUEVELA.value,
+                reuse_key=reuse_key,
+                endpoint=f"http://pending:{spec.serving.port}/v1",
+                status="planned",
+                metadata={
+                    "command": command,
+                    "login": spec.target.login,
+                    "run_dir": str(run_dir),
+                },
+                log_path=str(run_dir / "vllm.log"),
+            )
+            _record_pending_run(server)
+    except Exception as exc:
+        failed_run = replace(
+            current_run,
+            status="failed",
+            metadata={
+                **current_run.metadata,
+                "error": str(exc),
+            },
+        )
+        _record_run(failed_run)
+        return CommandResult(
+            ok=False,
+            message=str(exc),
+            data={"run_id": run_id, "workspace_signature": workspace_signature},
+        )
+
     if spec.yes:
         run_ssh(spec.target.login, f"mkdir -p {run_dir}")
     log_paths = [
@@ -112,24 +173,26 @@ def launch_bluevela(
         for command in commands:
             output = run_ssh(spec.target.login, command).strip()
             job_ids.append(extract_lsf_job_id(output) or output)
-    run = RunHandle(
-        id=run_id,
-        target=TargetKind.BLUEVELA.value,
-        benchmark=spec.benchmark.benchmark,
+            reporter.set(
+                65 + int((len(job_ids) / len(commands)) * 25),
+                "Submitting benchmark shards",
+            )
+    run = replace(
+        pending_run,
         status="running" if spec.yes else "planned",
         metadata={
-            "job_ids": job_ids,
+            **pending_run.metadata,
             "commands": commands,
             "db_paths": db_paths,
-            "login": spec.target.login,
+            "job_ids": job_ids,
             "log_paths": log_paths,
-            "run_dir": str(run_dir),
-            "workspace_signature": workspace_signature,
+            "server_id": server.id,
+            "startup_server_status": server.status,
         },
         log_path=log_paths[0],
     )
-    state.runs = [entry for entry in state.runs if entry.id != run.id] + [run]
-    merge_run(state_path, run)
+    _record_run(run)
+    reporter.set(95, "Finalizing launch metadata")
     return CommandResult(
         ok=True,
         message="\n".join(job_ids) if spec.yes else "\n".join(commands),

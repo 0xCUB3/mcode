@@ -60,7 +60,7 @@ def test_cli_launch_json_emits_valid_json(monkeypatch) -> None:
     monkeypatch.setattr(
         cli_module,
         "launch_run",
-        lambda spec, repo_root: CommandResult(
+        lambda spec, repo_root, reporter=None: CommandResult(
             ok=True,
             message="line one\nline two",
             data={"run_id": "run-1"},
@@ -90,6 +90,39 @@ def test_cli_launch_json_emits_valid_json(monkeypatch) -> None:
     assert payload["data"]["run_id"] == "run-1"
 
 
+def test_cli_launch_non_json_prints_run_and_server_ids_first(monkeypatch) -> None:
+    from mcode import cli as cli_module
+
+    monkeypatch.setattr(
+        cli_module,
+        "launch_run",
+        lambda spec, repo_root, reporter=None: CommandResult(
+            ok=True,
+            message="submitted",
+            data={"run_id": "run-1", "server_id": "server-1"},
+        ),
+    )
+    runner = CliRunner()
+    res = runner.invoke(
+        app,
+        [
+            "launch",
+            "--target",
+            "openai-compatible",
+            "--openai-base-url",
+            "http://127.0.0.1:8000/v1",
+            "--model",
+            "test-model",
+            "--benchmark",
+            "swebench-lite",
+        ],
+        color=False,
+    )
+    assert res.exit_code == 0
+    stdout = _strip_ansi(res.stdout)
+    assert stdout.lstrip().startswith("run_id: run-1\nserver_id: server-1\nsubmitted")
+
+
 def test_cli_launch_status_json_emits_valid_json(monkeypatch) -> None:
     from mcode import cli as cli_module
 
@@ -114,3 +147,44 @@ def test_cli_launch_status_json_emits_valid_json(monkeypatch) -> None:
     assert res.exit_code == 0
     payload = json.loads(res.stdout)
     assert payload["runs"][0]["metadata"]["commands"] == ["line one\nline two"]
+
+
+def test_cli_launch_stop_all_prompts_and_calls_service(monkeypatch) -> None:
+    from mcode import cli as cli_module
+
+    called: dict[str, object] = {}
+    monkeypatch.setattr(cli_module.typer, "confirm", lambda message, abort=False: True)
+    monkeypatch.setattr(
+        cli_module,
+        "launch_stop_all",
+        lambda *,
+        target=None,
+        state_path=None,
+        bluevela_login=None,
+        bluevela_workspace_root=None,
+        reporter=None: (
+            called.update(
+                {
+                    "target": target,
+                    "state_path": state_path,
+                    "bluevela_login": bluevela_login,
+                    "bluevela_workspace_root": bluevela_workspace_root,
+                }
+            )
+            or CommandResult(ok=True, message="Stopped all", data={"runs_stopped": 1})
+        ),
+    )
+    runner = CliRunner()
+    res = runner.invoke(app, ["launch", "stop", "--all", "--target", "bluevela"], color=False)
+    assert res.exit_code == 0
+    assert "Stopped all" in _strip_ansi(res.stdout)
+    assert called["target"] == "bluevela"
+    assert called["bluevela_login"]
+    assert called["bluevela_workspace_root"]
+
+
+def test_cli_launch_stop_all_json_requires_yes() -> None:
+    runner = CliRunner()
+    res = runner.invoke(app, ["launch", "stop", "--all", "--json"], color=False)
+    assert res.exit_code == 1
+    assert "--all with --json requires --yes" in _strip_ansi(res.stdout)

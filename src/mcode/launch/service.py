@@ -52,6 +52,7 @@ from mcode.launch.models import (
     WorkspaceHandle,
 )
 from mcode.launch.profiles import resolve_serving_profile
+from mcode.launch.progress import NullProgressReporter, ProgressReporter
 from mcode.launch.providers.bluevela import (
     _bluevela_podman_base_dirs,
     build_bluevela_benchmark_command,
@@ -258,9 +259,18 @@ def launch_doctor(spec: LaunchSpec) -> CommandResult:
 
 
 def launch_sync(
-    spec: LaunchSpec, *, repo_root: Path, state_path: Path | None = None
+    spec: LaunchSpec,
+    *,
+    repo_root: Path,
+    state_path: Path | None = None,
+    reporter: ProgressReporter | None = None,
 ) -> CommandResult:
-    return _launch_sync(spec, repo_root=repo_root, state_path=state_path)
+    return _launch_sync(
+        spec,
+        repo_root=repo_root,
+        state_path=state_path,
+        reporter=reporter,
+    )
 
 
 def _launch_sync(
@@ -269,10 +279,14 @@ def _launch_sync(
     repo_root: Path,
     state_path: Path | None = None,
     state: LauncherState | None = None,
+    reporter: ProgressReporter | None = None,
 ) -> CommandResult:
+    reporter = reporter or NullProgressReporter()
     if not isinstance(spec.target, BlueVelaTargetSpec):
+        reporter.finish("Sync not required")
         return CommandResult(ok=True, message="Sync is only required for Blue Vela in V1.")
 
+    reporter.set(5, "Planning workspace sync")
     if state is None:
         state = load_state(state_path)
     existing = next(
@@ -300,6 +314,7 @@ def _launch_sync(
         "blocking_untracked_files": blocking_untracked,
     }
     if blocking_untracked:
+        reporter.finish("Sync blocked")
         return CommandResult(
             ok=False,
             message=(
@@ -309,14 +324,18 @@ def _launch_sync(
             data=data,
         )
     if spec.sync.check:
+        reporter.set(60, "Checking remote workspace")
         manifest = _read_remote_workspace_manifest(spec.target, plan.remote_path)
         data["remote_manifest"] = manifest
         data["is_noop"] = bool(manifest and manifest.get("signature") == plan.signature)
+        reporter.finish("Sync check complete")
         return CommandResult(ok=True, message="Sync plan computed.", data=data)
 
-    _sync_bluevela_workspace(spec.target, repo_root, plan)
+    reporter.set(20, "Preparing remote workspace")
+    _sync_bluevela_workspace(spec.target, repo_root, plan, reporter=reporter)
     workspace = WorkspaceHandle(signature=plan.signature, path=plan.remote_path, metadata=data)
     merge_workspace(state_path, workspace)
+    reporter.finish("Sync complete")
     return CommandResult(ok=True, message=plan.remote_path, data=data)
 
 
@@ -330,21 +349,32 @@ def launch_status(*, state_path: Path | None = None) -> dict[str, Any]:
 
 
 def launch_fetch(
-    run_id: str, *, destination: Path, state_path: Path | None = None
+    run_id: str,
+    *,
+    destination: Path,
+    state_path: Path | None = None,
+    reporter: ProgressReporter | None = None,
 ) -> CommandResult:
+    reporter = reporter or NullProgressReporter()
+    reporter.set(5, "Loading run state")
     state = load_state(state_path)
     run = next((entry for entry in state.runs if entry.id == run_id), None)
     if run is None:
+        reporter.finish("Fetch failed")
         return CommandResult(ok=False, message=f"Unknown run id: {run_id}")
     if run.target != TargetKind.BLUEVELA.value:
+        reporter.finish("Fetch failed")
         return CommandResult(ok=False, message="Fetch is only implemented for Blue Vela runs.")
     remote_path = run.metadata.get("run_dir")
     if not remote_path:
+        reporter.finish("Fetch failed")
         return CommandResult(ok=False, message="Run has no remote directory recorded.")
     destination.mkdir(parents=True, exist_ok=True)
     login = run.metadata.get("login")
+    reporter.set(30, "Copying results")
     cmd = ["rsync", "-az", f"{login}:{remote_path}/", str(destination)]
     subprocess.run(cmd, check=True)
+    reporter.finish("Fetch complete")
     return CommandResult(ok=True, message=f"Fetched {run_id} into {destination}")
 
 
@@ -357,6 +387,80 @@ def launch_stop(run_id: str, *, state_path: Path | None = None) -> CommandResult
             return CommandResult(ok=False, message=f"Unknown id: {run_id}")
         return _stop_server(server, state_path)
     return _stop_run(run, state_path)
+
+
+def launch_stop_all(
+    *,
+    target: str | None = None,
+    state_path: Path | None = None,
+    bluevela_login: str | None = None,
+    bluevela_workspace_root: str | None = None,
+    reporter: ProgressReporter | None = None,
+) -> CommandResult:
+    reporter = reporter or NullProgressReporter()
+    target_filter = TargetKind(target).value if target else None
+    if target_filter == TargetKind.BLUEVELA.value and (
+        not bluevela_login or not bluevela_workspace_root
+    ):
+        reporter.finish("Stop failed")
+        return CommandResult(
+            ok=False,
+            message="Blue Vela stop --all requires Blue Vela login and workspace root.",
+        )
+
+    reporter.set(5, "Loading launcher state")
+    state = load_state(state_path)
+    runs = [
+        run for run in state.runs if target_filter is None or run.target == target_filter
+    ]
+    servers = [
+        server
+        for server in state.servers
+        if target_filter is None or server.target == target_filter
+    ]
+    stopped_server_ids: set[str] = set()
+    runs_stopped = 0
+    servers_stopped = 0
+
+    reporter.set(15, "Stopping tracked runs")
+    for run in runs:
+        result = _stop_run(run, state_path, state=state)
+        if result.ok:
+            runs_stopped += 1
+            if (
+                run.metadata.get("startup_server_status") == "pending"
+                and run.metadata.get("server_id")
+            ):
+                stopped_server_ids.add(str(run.metadata["server_id"]))
+            if runs:
+                reporter.set(15 + int((runs_stopped / len(runs)) * 35), "Stopping tracked runs")
+
+    reporter.set(50, "Stopping tracked servers")
+    for server in servers:
+        if server.id in stopped_server_ids:
+            continue
+        result = _stop_server(server, state_path, state=state)
+        if result.ok:
+            servers_stopped += 1
+            if servers:
+                reporter.set(
+                    50 + int((servers_stopped / len(servers)) * 25),
+                    "Stopping tracked servers",
+                )
+
+    data = {
+        "runs_stopped": runs_stopped,
+        "servers_stopped": servers_stopped,
+    }
+    if (
+        target_filter in (None, TargetKind.BLUEVELA.value)
+        and bluevela_login
+        and bluevela_workspace_root
+    ):
+        reporter.set(80, "Sweeping Blue Vela jobs and locks")
+        data.update(_stop_all_bluevela_cluster(bluevela_login, bluevela_workspace_root))
+    reporter.finish("Stop complete")
+    return CommandResult(ok=True, message="Stopped all", data=data)
 
 
 def launch_attach(
@@ -377,23 +481,39 @@ def launch_attach(
 
 
 def launch_run(
-    spec: LaunchSpec, *, repo_root: Path, state_path: Path | None = None
+    spec: LaunchSpec,
+    *,
+    repo_root: Path,
+    state_path: Path | None = None,
+    reporter: ProgressReporter | None = None,
 ) -> CommandResult:
+    reporter = reporter or NullProgressReporter()
     if spec.follow and not spec.yes:
         return CommandResult(ok=False, message="--follow requires --yes")
     state = load_state(state_path)
     if isinstance(spec.target, BlueVelaTargetSpec):
-        result = _launch_bluevela(spec, repo_root=repo_root, state=state, state_path=state_path)
+        reporter.set(5, "Syncing workspace")
+        result = _launch_bluevela(
+            spec,
+            repo_root=repo_root,
+            state=state,
+            state_path=state_path,
+            reporter=reporter,
+        )
     elif isinstance(spec.target, LocalVllmTargetSpec):
+        reporter.set(20, "Resolving local vLLM server")
         result = _launch_local_vllm(spec, state=state, state_path=state_path)
     elif isinstance(spec.target, LocalOllamaTargetSpec):
+        reporter.set(20, "Resolving local Ollama server")
         result = _launch_local_ollama(spec, state=state, state_path=state_path)
     else:
+        reporter.set(40, "Preparing benchmark run")
         result = _launch_openai_compatible(spec, state=state, state_path=state_path)
     if spec.follow and result.ok and "run_id" in result.data:
         attach_result = launch_attach(result.data["run_id"], state_path=state_path)
         if not attach_result.ok:
             return attach_result
+    reporter.finish("Launch complete" if result.ok else "Launch failed")
     return result
 
 
@@ -407,22 +527,26 @@ def _launch_bluevela(
     repo_root: Path,
     state: LauncherState,
     state_path: Path | None,
+    reporter: ProgressReporter | None = None,
 ) -> CommandResult:
     return launch_bluevela_impl(
         spec,
         repo_root=repo_root,
         state=state,
         state_path=state_path,
-        launch_sync=_launch_sync,
+        launch_sync=lambda *args, **kwargs: _launch_sync(*args, reporter=reporter, **kwargs),
         resolve_podman_storage=_resolve_bluevela_podman_storage,
         build_server_reuse_key=build_bluevela_server_reuse_key,
         find_existing_server=_find_existing_server,
-        resolve_bluevela_server=_resolve_bluevela_server,
+        resolve_bluevela_server=lambda *args, **kwargs: _resolve_bluevela_server(
+            *args, reporter=reporter, **kwargs
+        ),
         run_ssh=_run_ssh,
         build_vllm_command=build_bluevela_vllm_command,
         build_bsub_benchmark_command=_build_bluevela_bsub_benchmark_command,
         merge_workspace=merge_workspace,
         merge_run=merge_run,
+        reporter=reporter,
     )
 
 
@@ -470,12 +594,28 @@ def _stop_run(
     *,
     state: LauncherState | None = None,
 ) -> CommandResult:
+    current_state = state or load_state(state_path)
     job_id = run.metadata.get("job_id")
     if run.target == TargetKind.BLUEVELA.value and run.metadata.get("job_ids"):
         for current in run.metadata["job_ids"]:
             normalized_job_id = extract_lsf_job_id(current)
             if normalized_job_id:
                 _maybe_bkill_bluevela_job(run.metadata["login"], normalized_job_id)
+    elif (
+        run.target == TargetKind.BLUEVELA.value
+        and run.metadata.get("startup_server_status") == "pending"
+        and run.metadata.get("server_id")
+    ):
+        pending_server = next(
+            (
+                entry
+                for entry in current_state.servers
+                if entry.id == run.metadata["server_id"]
+            ),
+            None,
+        )
+        if pending_server is not None:
+            _stop_server(pending_server, state_path, state=current_state)
     elif run.target == TargetKind.BLUEVELA.value and job_id:
         normalized_job_id = extract_lsf_job_id(job_id)
         if normalized_job_id:
@@ -541,6 +681,33 @@ def _run_ssh_result(
 def _run_ssh(login: str, command: str) -> str:
     res = _run_ssh_result(login, command)
     return res.stdout.strip() or res.stderr.strip()
+
+
+def _stop_all_bluevela_cluster(login: str, workspace_root: str) -> dict[str, int]:
+    command = (
+        "jobs=$(bjobs -w 2>/dev/null | awk '/mcode-vllm|mcode-bench/ {print $1}'); "
+        'jobs_killed=0; for job in $jobs; do bkill "$job" >/dev/null 2>&1 || true; '
+        "jobs_killed=$((jobs_killed+1)); done; "
+        f"registries_removed=$(find {workspace_root}/state/servers -maxdepth 1 -name '*.json' "
+        "2>/dev/null | wc -l | tr -d ' '); "
+        f"rm -f {workspace_root}/state/servers/*.json 2>/dev/null || true; "
+        f"locks_removed=$(find {workspace_root}/locks -mindepth 1 -maxdepth 1 "
+        "2>/dev/null | wc -l | tr -d ' '); "
+        f"rm -rf {workspace_root}/locks/* 2>/dev/null || true; "
+        'printf \'jobs_killed=%s\nregistries_removed=%s\nlocks_removed=%s\n\' '
+        '"$jobs_killed" "$registries_removed" "$locks_removed"'
+    )
+    output = _run_ssh(login, command)
+    data: dict[str, int] = {
+        "jobs_killed": 0,
+        "registries_removed": 0,
+        "locks_removed": 0,
+    }
+    for line in output.splitlines():
+        key, _, value = line.partition("=")
+        if key in data:
+            data[key] = int(value or "0")
+    return data
 
 
 def _maybe_bkill_bluevela_job(login: str, job_id: str) -> None:
@@ -804,7 +971,10 @@ def _resolve_bluevela_server(
     reuse_key: str,
     workspace_signature: str,
     existing_server: ServerHandle | None,
+    on_pending_server=None,
+    reporter: ProgressReporter | None = None,
 ) -> ServerHandle:
+    reporter = reporter or NullProgressReporter()
     assert isinstance(spec.target, BlueVelaTargetSpec)
     target = spec.target
     registry_path = build_bluevela_server_registry_path(target, reuse_key=reuse_key)
@@ -878,6 +1048,9 @@ def _resolve_bluevela_server(
             _release_remote_lock(target.login, lock_path)
 
     pending_server = _start_or_reuse_pending(allow_reuse=True)
+    if on_pending_server is not None:
+        on_pending_server(pending_server)
+    reporter.set(45, "Waiting for Blue Vela server startup")
     retries = 0
     while True:
         assert pending_server is not None
@@ -888,6 +1061,7 @@ def _resolve_bluevela_server(
             host_path = Path(pending_server.metadata["run_dir"]) / "vllm_host.txt"
             host = _wait_for_remote_file(target.login, str(host_path))
             endpoint = f"http://{host}:{spec.serving.port}/v1"
+            reporter.set(55, f"Waiting for server health on {host}")
             _wait_for_bluevela_endpoint(
                 target.login,
                 endpoint,
@@ -900,6 +1074,9 @@ def _resolve_bluevela_server(
                 raise
             retries += 1
             pending_server = _start_or_reuse_pending(allow_reuse=False)
+            if on_pending_server is not None:
+                on_pending_server(pending_server)
+            reporter.set(45, "Retrying Blue Vela server startup")
 
     _acquire_remote_lock(target.login, lock_path)
     try:
@@ -966,16 +1143,28 @@ def _resolve_local_server(
     )
 
 
-def _sync_bluevela_workspace(target: BlueVelaTargetSpec, repo_root: Path, plan) -> None:
+def _sync_bluevela_workspace(
+    target: BlueVelaTargetSpec,
+    repo_root: Path,
+    plan,
+    *,
+    reporter: ProgressReporter | None = None,
+) -> None:
+    reporter = reporter or NullProgressReporter()
     lock_path = build_bluevela_lock_path(target, kind="workspace", key=plan.signature)
+    reporter.set(25, "Acquiring remote workspace lock")
     _acquire_remote_lock(target.login, lock_path)
     try:
+        reporter.set(35, "Checking remote workspace manifest")
         manifest = _read_remote_workspace_manifest(target, plan.remote_path)
         if manifest and manifest.get("signature") == plan.signature:
+            reporter.set(90, "Remote workspace already current")
             return
 
+        reporter.set(45, "Preparing remote workspace")
         _run_ssh(target.login, build_remote_workspace_prepare_command(target, plan))
         remote_path = f"{target.login}:{plan.remote_path}/"
+        reporter.set(55, "Cleaning remote workspace")
         _run_ssh(
             target.login,
             (
@@ -986,6 +1175,7 @@ def _sync_bluevela_workspace(target: BlueVelaTargetSpec, repo_root: Path, plan) 
             ),
         )
         if plan.mode == SyncMode.WORKING_TREE:
+            reporter.set(65, "Uploading tracked working tree")
             paths = subprocess.run(
                 ["git", "ls-files", "-z"],
                 cwd=repo_root,
@@ -1010,6 +1200,7 @@ def _sync_bluevela_workspace(target: BlueVelaTargetSpec, repo_root: Path, plan) 
             finally:
                 Path(manifest_path).unlink(missing_ok=True)
         else:
+            reporter.set(65, "Uploading base tree")
             archive_cmd = ["git", "archive", "--format=tar", plan.ref_sha]
             remote_cmd = [
                 "ssh",
@@ -1023,6 +1214,7 @@ def _sync_bluevela_workspace(target: BlueVelaTargetSpec, repo_root: Path, plan) 
             if plan.mode == SyncMode.GIT_OVERLAY:
                 patch = tracked_overlay_patch(repo_root, plan.ref_sha)
                 if patch.strip():
+                    reporter.set(80, "Applying tracked overlay patch")
                     subprocess.run(
                         [
                             "ssh",
@@ -1048,7 +1240,9 @@ def _sync_bluevela_workspace(target: BlueVelaTargetSpec, repo_root: Path, plan) 
             f"printf %s {bootstrap_value} > {bootstrap_marker}; "
             "fi"
         )
+        reporter.set(85, "Bootstrapping remote environment")
         _run_ssh(target.login, bootstrap_cmd)
+        reporter.set(90, "Writing workspace manifest")
         _write_remote_json(
             target.login,
             f"{plan.remote_path}/.mcode-launch-workspace.json",
