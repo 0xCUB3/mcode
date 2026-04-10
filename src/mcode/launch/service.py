@@ -822,6 +822,7 @@ def _wait_for_bluevela_endpoint(
     base_url: str,
     *,
     log_path: str,
+    job_id: str | None = None,
     timeout_s: int = 300,
 ) -> None:
     deadline = time.time() + timeout_s
@@ -833,6 +834,10 @@ def _wait_for_bluevela_endpoint(
         if failed:
             raise RuntimeError(
                 f"Blue Vela vLLM job failed before endpoint was healthy:\n{log_tail}"
+            )
+        if job_id and not _bluevela_job_is_active(login, job_id):
+            raise RuntimeError(
+                f"Blue Vela vLLM job exited before endpoint was healthy:\n{log_tail}"
             )
         time.sleep(2)
     raise RuntimeError(f"Endpoint did not become healthy: {base_url}")
@@ -1066,6 +1071,7 @@ def _resolve_bluevela_server(
                 target.login,
                 endpoint,
                 log_path=pending_server.log_path,
+                job_id=extract_lsf_job_id(pending_server.metadata.get("job_id")),
             )
             server = replace(pending_server, endpoint=endpoint, status="healthy")
             break

@@ -505,6 +505,41 @@ def test_bkill_ignores_already_finished_job() -> None:
         service_module._run_ssh_result = original_run_ssh_result
 
 
+def test_wait_for_bluevela_endpoint_fails_when_job_exits(tmp_path: Path) -> None:
+    original_remote_health = service_module._remote_endpoint_is_healthy
+    original_run_ssh = service_module._run_ssh
+    original_job_active = service_module._bluevela_job_is_active
+    original_sleep = service_module.time.sleep
+
+    try:
+        service_module._remote_endpoint_is_healthy = lambda *args, **kwargs: False
+        service_module._run_ssh = (
+            lambda *args, **kwargs: "KeyError: invalid tool call parser: gemma4"
+        )
+        service_module._bluevela_job_is_active = lambda *args, **kwargs: False
+        service_module.time.sleep = lambda *_args, **_kwargs: None
+        try:
+            service_module._wait_for_bluevela_endpoint(
+                "user@login3.example.com",
+                "http://host:8331/v1",
+                log_path="/u/user/run/vllm.log",
+                job_id="860088",
+                timeout_s=1,
+            )
+        except RuntimeError as exc:
+            message = str(exc)
+        else:
+            raise AssertionError("expected RuntimeError")
+    finally:
+        service_module._remote_endpoint_is_healthy = original_remote_health
+        service_module._run_ssh = original_run_ssh
+        service_module._bluevela_job_is_active = original_job_active
+        service_module.time.sleep = original_sleep
+
+    assert "exited before endpoint was healthy" in message
+    assert "invalid tool call parser: gemma4" in message
+
+
 def test_bluevela_server_resolution_reuses_remote_registry(tmp_path: Path) -> None:
     state = LauncherState()
     state_path = tmp_path / "launch-state.json"
