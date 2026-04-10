@@ -231,8 +231,8 @@ def test_sync_bluevela_workspace_uses_remote_json_helper_for_manifest(tmp_path: 
         service_module._release_remote_lock = lambda *args, **kwargs: None
         service_module._read_remote_workspace_manifest = lambda *args, **kwargs: None
         service_module._run_ssh = lambda *args, **kwargs: ""
-        service_module._write_remote_json = (
-            lambda login, path, payload: captured_payloads.append((login, path, payload))
+        service_module._write_remote_json = lambda login, path, payload: captured_payloads.append(
+            (login, path, payload)
         )
         service_module.subprocess.run = lambda *args, **kwargs: CompletedProcess(
             args=args,
@@ -299,6 +299,22 @@ def test_bluevela_health_wait_progress_advances_during_cuda_graph_capture() -> N
     )
 
     assert progress == 80
+
+
+def test_describe_bluevela_health_wait_prefers_later_stage_over_early_markers() -> None:
+    log_tail = (
+        "Non-default args: ...\n"
+        "Starting vLLM API server\n"
+        "Loading safetensors checkpoint shards:  50% Completed | 1/2\n"
+    )
+    description = service_module._describe_bluevela_health_wait("host.example.com", log_tail)
+    assert description == "Loading model weights on host.example.com"
+
+
+def test_bluevela_health_wait_progress_prefers_later_stage_over_early_markers() -> None:
+    log_tail = "Non-default args: ...\nStarting vLLM API server\nGPU KV cache size: 4 GiB\n"
+    progress = service_module._bluevela_health_wait_progress(log_tail)
+    assert progress == 72
 
 
 def test_bluevela_launch_preview_computes_sync_without_applying(tmp_path: Path) -> None:

@@ -600,9 +600,9 @@ def test_local_vllm_replaces_stale_pending_server(tmp_path: Path) -> None:
         )
         service_module.shutil.which = lambda executable: executable
         service_module.time.time = lambda: 100.0
-        service_module.subprocess.Popen = (
-            lambda command, *args, **kwargs: launched.append(command) or _Process(9999)
-        )
+        service_module.subprocess.Popen = lambda command, *args, **kwargs: launched.append(
+            command
+        ) or _Process(9999)
         result = service_module._launch_local_vllm(spec, state=state, state_path=state_path)
     finally:
         service_module._endpoint_is_healthy = original_health

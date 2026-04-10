@@ -441,9 +441,7 @@ def launch_stop_all(
 
     reporter.set(5, "Loading launcher state")
     state = load_state(state_path)
-    runs = [
-        run for run in state.runs if target_filter is None or run.target == target_filter
-    ]
+    runs = [run for run in state.runs if target_filter is None or run.target == target_filter]
     servers = [
         server
         for server in state.servers
@@ -458,9 +456,8 @@ def launch_stop_all(
         result = _stop_run(run, state_path, state=state)
         if result.ok:
             runs_stopped += 1
-            if (
-                run.metadata.get("startup_server_status") == "pending"
-                and run.metadata.get("server_id")
+            if run.metadata.get("startup_server_status") == "pending" and run.metadata.get(
+                "server_id"
             ):
                 stopped_server_ids.add(str(run.metadata["server_id"]))
             if runs:
@@ -647,11 +644,7 @@ def _stop_run(
         and run.metadata.get("server_id")
     ):
         pending_server = next(
-            (
-                entry
-                for entry in current_state.servers
-                if entry.id == run.metadata["server_id"]
-            ),
+            (entry for entry in current_state.servers if entry.id == run.metadata["server_id"]),
             None,
         )
         if pending_server is not None:
@@ -734,7 +727,7 @@ def _stop_all_bluevela_cluster(login: str, workspace_root: str) -> dict[str, int
         f"locks_removed=$(find {workspace_root}/locks -mindepth 1 -maxdepth 1 "
         "2>/dev/null | wc -l | tr -d ' '); "
         f"rm -rf {workspace_root}/locks/* 2>/dev/null || true; "
-        'printf \'jobs_killed=%s\nregistries_removed=%s\nlocks_removed=%s\n\' '
+        "printf 'jobs_killed=%s\nregistries_removed=%s\nlocks_removed=%s\n' "
         '"$jobs_killed" "$registries_removed" "$locks_removed"'
     )
     output = _run_ssh(login, command)
