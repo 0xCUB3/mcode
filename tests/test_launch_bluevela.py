@@ -83,6 +83,11 @@ def test_bluevela_vllm_command_uses_resolved_profile() -> None:
     assert "mode=exclusive_process" in command
     assert "export HF_HUB_OFFLINE=1;" in command
     assert "export TRANSFORMERS_OFFLINE=1;" in command
+    assert "IMAGE_ARCHIVE=/proj/shared/user/podman-image-cache/" in command
+    assert "podman --cgroup-manager=cgroupfs --storage-driver=overlay " in command
+    assert 'image exists "$IMAGE" >/dev/null 2>&1' in command
+    assert 'load -i "$IMAGE_ARCHIVE" >/dev/null' in command
+    assert 'save -o "$IMAGE_ARCHIVE" "$IMAGE" >/dev/null' in command
     assert "-e HF_HUB_OFFLINE -e TRANSFORMERS_OFFLINE" in command
     assert '-e HF_HOME="/root/.cache/huggingface"' in command
     assert '-e HF_HUB_CACHE="/root/.cache/huggingface/hub"' in command
@@ -112,18 +117,19 @@ def test_bluevela_benchmark_command_uses_parallelism_and_openai_backend() -> Non
     assert "--shard-index 2" in command
     assert "export OPENAI_BASE_URL=http://host:8331/v1" in command
     assert "podman --cgroup-manager=cgroupfs --storage-driver=overlay" in command
-    assert 'GRAPHROOT="${GRAPHROOT_BASE}/${HOST_TAG}/graphroot"' in command
-    assert "GRAPHROOT_BASE=/proj/shared/user/podman" in command
-    assert "RUNROOT_BASE=/proj/shared/user/podman" in command
+    assert "PODMAN_ROOT_BASE=/proj/shared/user/podman-bench" in command
+    assert 'JOB_KEY="${LSB_JOBID:-0}"' in command
+    assert 'GRAPHROOT="${PODMAN_ROOT_BASE}/${JOB_KEY}/graphroot"' in command
+    assert 'RUNROOT="${PODMAN_ROOT_BASE}/${JOB_KEY}/runroot"' in command
     assert '--root="$GRAPHROOT"' in command
     assert '--runroot="$RUNROOT"' in command
-    assert 'RUNROOT="${RUNROOT_BASE}/${HOST_TAG}/runroot"' not in command
-    assert 'RUNROOT=/tmp/podman-mcode-$(id -u)-swb-${LSB_JOBID:-0}/runroot' in command
+    assert "GRAPHROOT_BASE=/proj/shared/user/podman" not in command
+    assert "RUNROOT_BASE=/proj/shared/user/podman" not in command
+    assert "HOST_TAG=$(hostname -s)" not in command
     assert 'rm -rf "$RUNROOT/networks/rootless-netns"' in command
     assert (
-        'podman --cgroup-manager=cgroupfs --storage-driver=overlay '
-        '--root="$GRAPHROOT" --runroot="$RUNROOT" rm -af >/dev/null 2>&1 || true;'
-        in command
+        "podman --cgroup-manager=cgroupfs --storage-driver=overlay "
+        '--root="$GRAPHROOT" --runroot="$RUNROOT" rm -af >/dev/null 2>&1 || true;' in command
     )
     assert 'export DOCKER_HOST="unix://${SOCK}"' in command
     assert "client.ping()" in command

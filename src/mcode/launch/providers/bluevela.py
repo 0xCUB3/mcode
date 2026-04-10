@@ -52,6 +52,21 @@ def _bluevela_podman_base_dirs(target: BlueVelaTargetSpec) -> tuple[str, str]:
     return graphroot.rstrip("/"), runroot.rstrip("/")
 
 
+def _bluevela_shared_image_cache_dir(target: BlueVelaTargetSpec) -> str:
+    return f"{target.shared_root.rstrip('/')}/podman-image-cache"
+
+
+def _bluevela_benchmark_podman_root(target: BlueVelaTargetSpec) -> str:
+    return f"{target.shared_root.rstrip('/')}/podman-bench"
+
+
+def _bluevela_podman_cli() -> str:
+    return (
+        "podman --cgroup-manager=cgroupfs --storage-driver=overlay "
+        '--root="$GRAPHROOT" --runroot="$RUNROOT" '
+    )
+
+
 def _build_hf_offline_probe(hf_cache: str, model: str) -> str:
     if "/" not in model or model.startswith("/"):
         return ""
@@ -87,6 +102,9 @@ def build_bluevela_vllm_command(spec: LaunchSpec, *, run_dir: Path) -> str:
     container_hf_home = "/root/.cache/huggingface"
     container_hf_hub_cache = f"{container_hf_home}/hub"
     graphroot_base, runroot_base = _bluevela_podman_base_dirs(target)
+    image_cache_dir = _bluevela_shared_image_cache_dir(target)
+    image_archive = f"{image_cache_dir}/{hashlib.sha256(image.encode()).hexdigest()[:16]}.tar"
+    podman = _bluevela_podman_cli()
     script = (
         f"mkdir -p {shlex.quote(str(run_dir))}; "
         f"hostname > {shlex.quote(str(host_file))}; "
@@ -98,10 +116,20 @@ def build_bluevela_vllm_command(spec: LaunchSpec, *, run_dir: Path) -> str:
         f'mkdir -p "$GRAPHROOT" "$RUNROOT" {shlex.quote(hf_cache)}; '
         f"if [ -f {shlex.quote(target.hf_env)} ]; then . {shlex.quote(target.hf_env)}; fi; "
         f"{offline_probe}"
+        f"IMAGE={shlex.quote(image)}; "
+        f"IMAGE_ARCHIVE={shlex.quote(image_archive)}; "
+        'mkdir -p "$(dirname "$IMAGE_ARCHIVE")"; '
         "export XDG_RUNTIME_DIR=/tmp/podman-run-$(id -u); "
         "mkdir -p /tmp/podman-run-$(id -u); "
-        "podman --cgroup-manager=cgroupfs --storage-driver=overlay "
-        '--root="$GRAPHROOT" --runroot="$RUNROOT" run --rm --device nvidia.com/gpu=all '
+        'exec 9>"${IMAGE_ARCHIVE}.lock"; '
+        "flock 9; "
+        f'if {podman} image exists "$IMAGE" >/dev/null 2>&1; then :; '
+        f'elif [ -f "$IMAGE_ARCHIVE" ]; then {podman} load -i "$IMAGE_ARCHIVE" >/dev/null; '
+        f'else {podman} pull "$IMAGE" >/dev/null; '
+        f'{podman} save -o "$IMAGE_ARCHIVE" "$IMAGE" >/dev/null; '
+        "fi; "
+        "flock -u 9; "
+        f"{podman}run --rm --device nvidia.com/gpu=all "
         "--security-opt=label=disable --ipc=host --net=host "
         "--storage-opt ignore_chown_errors=true "
         "-e HF_HUB_OFFLINE -e TRANSFORMERS_OFFLINE "
@@ -110,7 +138,7 @@ def build_bluevela_vllm_command(spec: LaunchSpec, *, run_dir: Path) -> str:
         f'-e HF_HOME="{container_hf_home}" '
         f'-e HF_HUB_CACHE="{container_hf_hub_cache}" '
         f"-v {shlex.quote(hf_cache)}:{container_hf_home} "
-        f"{shlex.quote(image)} "
+        '"$IMAGE" '
         f"--model {shlex.quote(spec.model)} "
         f"--port {spec.serving.port} "
         f"--max-model-len {spec.serving.max_model_len} "
@@ -144,28 +172,24 @@ def build_bluevela_benchmark_command(
         f"--task-ids {shlex.quote(spec.benchmark.task_ids)}" if spec.benchmark.task_ids else ""
     )
     limit = f"--limit {spec.benchmark.limit}" if spec.benchmark.limit is not None else ""
-    graphroot_base, runroot_base = _bluevela_podman_base_dirs(target)
+    benchmark_podman_root = _bluevela_benchmark_podman_root(target)
     hf_cache = f"{target.shared_root.rstrip('/')}/hf-cache"
+    podman = _bluevela_podman_cli()
     return (
         f"cd {shlex.quote(str(workspace_path))}; "
-        f"GRAPHROOT_BASE={shlex.quote(graphroot_base)}; "
-        f"RUNROOT_BASE={shlex.quote(runroot_base)}; "
-        "HOST_TAG=$(hostname -s); "
-        'GRAPHROOT="${GRAPHROOT_BASE}/${HOST_TAG}/graphroot"; '
-        'RUNROOT=/tmp/podman-mcode-$(id -u)-swb-${LSB_JOBID:-0}/runroot; '
+        f"PODMAN_ROOT_BASE={shlex.quote(benchmark_podman_root)}; "
+        'JOB_KEY="${LSB_JOBID:-0}"; '
+        'GRAPHROOT="${PODMAN_ROOT_BASE}/${JOB_KEY}/graphroot"; '
+        'RUNROOT="${PODMAN_ROOT_BASE}/${JOB_KEY}/runroot"; '
         f'mkdir -p "$GRAPHROOT" "$RUNROOT" {shlex.quote(hf_cache)}; '
         f"if [ -f {shlex.quote(target.hf_env)} ]; then . {shlex.quote(target.hf_env)}; fi; "
-        "export XDG_RUNTIME_DIR=/tmp/podman-$(id -u)-swb-${LSB_JOBID:-0}; "
+        "export XDG_RUNTIME_DIR=/tmp/podman-$(id -u)-swb-${JOB_KEY}; "
         "mkdir -p ${XDG_RUNTIME_DIR}; "
         "SOCK=${XDG_RUNTIME_DIR}/podman.sock; "
         "rm -f ${SOCK}; "
         'rm -rf "$RUNROOT/networks/rootless-netns"; '
-        "podman --cgroup-manager=cgroupfs --storage-driver=overlay "
-        '--root="$GRAPHROOT" --runroot="$RUNROOT" '
-        "rm -af >/dev/null 2>&1 || true; "
-        "podman --cgroup-manager=cgroupfs --storage-driver=overlay "
-        '--root="$GRAPHROOT" --runroot="$RUNROOT" '
-        "system service --time=0 unix://${SOCK} & "
+        f"{podman}rm -af >/dev/null 2>&1 || true; "
+        f"{podman}system service --time=0 unix://${{SOCK}} & "
         "PODMAN_PID=$!; "
         'trap "kill ${PODMAN_PID} 2>/dev/null; wait ${PODMAN_PID} 2>/dev/null" EXIT; '
         'export DOCKER_HOST="unix://${SOCK}"; '
