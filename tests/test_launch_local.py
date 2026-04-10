@@ -20,7 +20,7 @@ from mcode.launch.providers.local_ollama import (
     build_ollama_warmup_command,
 )
 from mcode.launch.providers.local_vllm import build_local_vllm_command, build_local_vllm_reuse_key
-from mcode.launch.state import LauncherState, update_state
+from mcode.launch.state import LauncherState, ServerHandle, update_state
 
 
 def test_local_vllm_command_uses_profile_flags() -> None:
@@ -411,3 +411,152 @@ def test_local_vllm_attaches_to_existing_healthy_endpoint(tmp_path: Path) -> Non
     assert result.data["server_id"].startswith("server-")
     assert state.servers[0].status == "healthy"
     assert state.servers[0].metadata["discovered"] is True
+
+
+def test_local_vllm_waits_for_pending_server_instead_of_spawning(tmp_path: Path) -> None:
+    spec = LaunchSpec(
+        target=LocalVllmTargetSpec(kind=TargetKind.LOCAL_VLLM, host="127.0.0.1"),
+        model="Qwen/Qwen3.5-27B",
+        benchmark=BenchSpec(benchmark="swebench-lite", backend="openai", parallelism=1, limit=1),
+        serving=ServingSpec(
+            engine="vllm",
+            port=8000,
+            tensor_parallel=1,
+            data_parallel=1,
+            api_server_count=1,
+            max_model_len=32768,
+            profile=resolve_serving_profile("Qwen/Qwen3.5-27B"),
+        ),
+        sync=SyncSpec(),
+        reuse=ReuseMode.PREFER,
+        json_mode=False,
+        yes=True,
+        follow=False,
+    )
+    state = LauncherState()
+    state_path = tmp_path / "launch-state.json"
+    pending = ServerHandle(
+        id="server-pending",
+        target=TargetKind.LOCAL_VLLM.value,
+        reuse_key=build_local_vllm_reuse_key(spec),
+        endpoint="http://127.0.0.1:8000/v1",
+        status="pending",
+        metadata={"command": "vllm serve", "pid": 4321, "created_at": 1.0},
+        log_path=str(tmp_path / "pending.log"),
+    )
+    update_state(state_path, lambda current: current.servers.append(pending))
+    original_health = service_module._endpoint_is_healthy
+    original_pid_is_alive = service_module._pid_is_alive
+    original_wait = service_module._wait_for_endpoint
+    original_popen = service_module.subprocess.Popen
+    original_launch_local = service_module._launch_local_benchmark
+    original_which = service_module.shutil.which
+    checks = {"count": 0}
+
+    def fake_health(base_url: str) -> bool:
+        assert base_url == "http://127.0.0.1:8000/v1"
+        checks["count"] += 1
+        return checks["count"] >= 2
+
+    try:
+        service_module._endpoint_is_healthy = fake_health
+        service_module._pid_is_alive = lambda pid: pid == 4321
+        service_module._wait_for_endpoint = lambda base_url: None
+        service_module._launch_local_benchmark = (
+            lambda *args, **kwargs: service_module.CommandResult(
+                ok=True, message="bench", data={"run_id": "run-1"}
+            )
+        )
+        service_module.shutil.which = lambda executable: executable
+        service_module.subprocess.Popen = lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("should not spawn a second local server")
+        )
+        result = service_module._launch_local_vllm(spec, state=state, state_path=state_path)
+    finally:
+        service_module._endpoint_is_healthy = original_health
+        service_module._pid_is_alive = original_pid_is_alive
+        service_module._wait_for_endpoint = original_wait
+        service_module._launch_local_benchmark = original_launch_local
+        service_module.shutil.which = original_which
+        service_module.subprocess.Popen = original_popen
+
+    assert result.ok is True
+    assert result.data["server_id"] == "server-pending"
+    assert state.servers[0].id == "server-pending"
+    assert state.servers[0].status == "healthy"
+
+
+def test_local_vllm_replaces_stale_pending_server(tmp_path: Path) -> None:
+    spec = LaunchSpec(
+        target=LocalVllmTargetSpec(kind=TargetKind.LOCAL_VLLM, host="127.0.0.1"),
+        model="Qwen/Qwen3.5-27B",
+        benchmark=BenchSpec(benchmark="swebench-lite", backend="openai", parallelism=1, limit=1),
+        serving=ServingSpec(
+            engine="vllm",
+            port=8000,
+            tensor_parallel=1,
+            data_parallel=1,
+            api_server_count=1,
+            max_model_len=32768,
+            profile=resolve_serving_profile("Qwen/Qwen3.5-27B"),
+        ),
+        sync=SyncSpec(),
+        reuse=ReuseMode.PREFER,
+        json_mode=False,
+        yes=True,
+        follow=False,
+    )
+    state = LauncherState()
+    state_path = tmp_path / "launch-state.json"
+    stale = ServerHandle(
+        id="server-stale",
+        target=TargetKind.LOCAL_VLLM.value,
+        reuse_key=build_local_vllm_reuse_key(spec),
+        endpoint="http://127.0.0.1:8000/v1",
+        status="pending",
+        metadata={"command": "vllm serve", "created_at": 0.0},
+        log_path=str(tmp_path / "stale.log"),
+    )
+    update_state(state_path, lambda current: current.servers.append(stale))
+    original_health = service_module._endpoint_is_healthy
+    original_pid_is_alive = service_module._pid_is_alive
+    original_wait = service_module._wait_for_endpoint
+    original_popen = service_module.subprocess.Popen
+    original_launch_local = service_module._launch_local_benchmark
+    original_which = service_module.shutil.which
+    original_time = service_module.time.time
+    launched: list[str] = []
+
+    class _Process:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+    try:
+        service_module._endpoint_is_healthy = lambda base_url: False
+        service_module._pid_is_alive = lambda pid: False
+        service_module._wait_for_endpoint = lambda base_url: None
+        service_module._launch_local_benchmark = (
+            lambda *args, **kwargs: service_module.CommandResult(
+                ok=True, message="bench", data={"run_id": "run-1"}
+            )
+        )
+        service_module.shutil.which = lambda executable: executable
+        service_module.time.time = lambda: 100.0
+        service_module.subprocess.Popen = (
+            lambda command, *args, **kwargs: launched.append(command) or _Process(9999)
+        )
+        result = service_module._launch_local_vllm(spec, state=state, state_path=state_path)
+    finally:
+        service_module._endpoint_is_healthy = original_health
+        service_module._pid_is_alive = original_pid_is_alive
+        service_module._wait_for_endpoint = original_wait
+        service_module._launch_local_benchmark = original_launch_local
+        service_module.shutil.which = original_which
+        service_module.subprocess.Popen = original_popen
+        service_module.time.time = original_time
+
+    assert result.ok is True
+    assert len(launched) == 1
+    assert state.servers[0].id != "server-stale"
+    assert state.servers[0].status == "healthy"
+    assert state.servers[0].metadata["pid"] == 9999

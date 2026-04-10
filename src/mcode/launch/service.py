@@ -70,6 +70,7 @@ from mcode.launch.state import (
     merge_run,
     merge_server,
     merge_workspace,
+    update_state,
 )
 from mcode.launch.sync import build_sync_plan, list_untracked_files, tracked_overlay_patch
 
@@ -568,6 +569,16 @@ def _maybe_bkill_bluevela_job(login: str, job_id: str) -> None:
     )
 
 
+def _pid_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def _run_bluevela_doctor(target: BlueVelaTargetSpec) -> CommandResult:
     checks = {
         "ssh": "echo ok",
@@ -956,8 +967,13 @@ def _resolve_local_server(
         command=command,
         endpoint_is_healthy=_endpoint_is_healthy,
         wait_for_endpoint=_wait_for_endpoint,
+        load_state=load_state,
         merge_server=merge_server,
+        update_state=update_state,
         which=shutil.which,
+        pid_is_alive=_pid_is_alive,
+        sleep=time.sleep,
+        now=time.time,
         warmup_command=warmup_command,
     )
 
