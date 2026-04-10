@@ -281,7 +281,7 @@ def test_describe_bluevela_health_wait_reports_cuda_graph_capture() -> None:
         ),
     )
 
-    assert description == "Capturing CUDA graphs on p2-r05-n2.bluevela.rmf.ibm.com (24/51)"
+    assert description == "Capturing CUDA graphs on p2-r05-n2.bluevela.rmf.ibm.com"
 
 
 def test_bluevela_health_wait_progress_advances_during_weight_loading() -> None:
@@ -298,7 +298,7 @@ def test_bluevela_health_wait_progress_advances_during_cuda_graph_capture() -> N
         "     | 24/51 [00:02<00:02, 11.08it/s]"
     )
 
-    assert progress == 84
+    assert progress == 78
 
 
 def test_bluevela_launch_preview_computes_sync_without_applying(tmp_path: Path) -> None:

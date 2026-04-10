@@ -887,9 +887,8 @@ def _describe_bluevela_health_wait(host: str, log_tail: str) -> str:
         )
     ):
         return f"Starting vLLM on {host}"
-    capture = re.search(r"Capturing CUDA graphs.*?\|\s*(\d+)/(\d+)\s*\[", log_tail)
-    if capture:
-        return f"Capturing CUDA graphs on {host} ({capture.group(1)}/{capture.group(2)})"
+    if "capturing cuda graphs" in lowered:
+        return f"Capturing CUDA graphs on {host}"
     if "loading safetensors checkpoint shards" in lowered or "starting to load model" in lowered:
         return f"Loading model weights on {host}"
     if "gpu kv cache size" in lowered or "available kv cache memory" in lowered:
@@ -930,9 +929,8 @@ def _bluevela_health_wait_progress(log_tail: str) -> int:
         return 60
     if "gpu kv cache size" in lowered or "available kv cache memory" in lowered:
         return 70
-    capture = re.search(r"Capturing CUDA graphs.*?(\d+)%", log_tail)
-    if capture:
-        return 78 + int(int(capture.group(1)) * 0.14)
+    if "capturing cuda graphs" in lowered:
+        return 78
     if "compile and warming up model" in lowered or "initial profiling/warmup run took" in lowered:
         return 92
     return 35
