@@ -65,10 +65,16 @@ def _build_hf_offline_probe(hf_cache: str, model: str) -> str:
     )
 
 
+def _default_bluevela_image(spec: LaunchSpec) -> str:
+    if spec.serving.profile.name == "gemma4":
+        return "docker.io/vllm/vllm-openai:gemma4"
+    return "docker.io/vllm/vllm-openai:v0.17.0"
+
+
 def build_bluevela_vllm_command(spec: LaunchSpec, *, run_dir: Path) -> str:
     target = spec.target
     assert isinstance(target, BlueVelaTargetSpec)
-    image = spec.serving.image or "docker.io/vllm/vllm-openai:v0.17.0"
+    image = spec.serving.image or _default_bluevela_image(spec)
     flags = " ".join(shlex.quote(flag) for flag in spec.serving.profile.flags)
     log_path = run_dir / "vllm.log"
     host_file = run_dir / "vllm_host.txt"

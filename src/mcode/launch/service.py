@@ -83,6 +83,7 @@ BLUEVELA_VLLM_FAILED_MARKERS = (
     "Engine core initialization failed",
     "No available memory for the cache blocks",
     "cannot re-exec process to join the existing user namespace",
+    "invalid tool call parser",
 )
 
 
