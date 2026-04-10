@@ -910,11 +910,11 @@ def _bluevela_health_wait_progress(log_tail: str) -> int:
             "storing signatures",
         )
     ):
-        return 35
+        return 40
     if "loading safetensors checkpoint shards" in lowered:
         match = re.search(r"(\d+)%\s+Completed", log_tail)
         if match:
-            return 40 + int(int(match.group(1)) * 0.2)
+            return 45 + int(int(match.group(1)) * 0.15)
         return 45
     if "starting to load model" in lowered or "resolved architecture" in lowered:
         return 45
@@ -931,10 +931,10 @@ def _bluevela_health_wait_progress(log_tail: str) -> int:
         return 70
     capture = re.search(r"Capturing CUDA graphs.*?(\d+)%", log_tail)
     if capture:
-        return 75 + int(int(capture.group(1)) * 0.2)
+        return 78 + int(int(capture.group(1)) * 0.14)
     if "compile and warming up model" in lowered or "initial profiling/warmup run took" in lowered:
-        return 90
-    return 30
+        return 92
+    return 35
 
 
 def _read_remote_workspace_manifest(
