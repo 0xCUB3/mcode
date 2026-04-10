@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import uuid
 from collections.abc import Callable
@@ -137,7 +138,7 @@ def resolve_local_server(
 ) -> ServerHandle:
     existing = _find_server(state, reuse_key)
     if existing and spec.reuse == ReuseMode.STOP_AND_REPLACE and existing.metadata.get("pid"):
-        os.kill(int(existing.metadata["pid"]), 15)
+        os.kill(int(existing.metadata["pid"]), signal.SIGTERM)
     if existing and spec.reuse == ReuseMode.PREFER and endpoint_is_healthy(existing.endpoint):
         return existing
     if spec.reuse == ReuseMode.PREFER and endpoint_is_healthy(endpoint):

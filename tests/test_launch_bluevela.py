@@ -25,6 +25,7 @@ from mcode.launch.providers.bluevela import (
     build_bluevela_server_registry_path,
     build_bluevela_server_reuse_key,
     build_bluevela_vllm_command,
+    build_remote_workspace_prepare_command,
 )
 from mcode.launch.state import LauncherState, update_state
 
@@ -103,6 +104,7 @@ def test_bluevela_benchmark_command_uses_parallelism_and_openai_backend() -> Non
     )
 
     assert "uv run mcode bench swebench-lite" in command
+    assert "bash -lc" not in command
     assert "--backend openai" in command
     assert "--shard-count 4" in command
     assert "--shard-index 2" in command
@@ -138,6 +140,19 @@ def test_bluevela_registry_and_lock_paths_are_deterministic() -> None:
     assert registry_path.endswith(".json")
     assert lock_path.startswith("/u/user/mcode-launch/locks/server-")
     assert lock_path.endswith(".lock")
+
+
+def test_remote_workspace_prepare_command_does_not_double_wrap_bash() -> None:
+    target = _spec().target
+    assert isinstance(target, BlueVelaTargetSpec)
+
+    class _Plan:
+        remote_path = "/u/user/mcode-launch/workspaces/ws-1"
+
+    command = build_remote_workspace_prepare_command(target, _Plan())
+
+    assert "bash -lc" not in command
+    assert "mkdir -p" in command
 
 
 def test_acquire_remote_lock_does_not_double_wrap_bash() -> None:
@@ -920,6 +935,7 @@ def test_launch_attach_follows_all_bluevela_logs(tmp_path: Path) -> None:
 
     assert result.ok is True
     assert commands[0][0:2] == ["ssh", "user@login3.example.com"]
+    assert commands[0][2].startswith("bash -lc ")
     assert (
         "tail -n 20 -f /u/user/run/benchmark-shard-0.log /u/user/run/benchmark-shard-1.log"
     ) in commands[0][2]

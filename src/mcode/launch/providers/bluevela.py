@@ -136,7 +136,6 @@ def build_bluevela_benchmark_command(
     graphroot_base, runroot_base = _bluevela_podman_base_dirs(target)
     hf_cache = f"{target.shared_root.rstrip('/')}/hf-cache"
     return (
-        "bash -lc '"
         f"cd {shlex.quote(str(workspace_path))}; "
         f"GRAPHROOT_BASE={shlex.quote(graphroot_base)}; "
         f"RUNROOT_BASE={shlex.quote(runroot_base)}; "
@@ -181,18 +180,15 @@ def build_bluevela_benchmark_command(
         f"--n-samples {spec.benchmark.n_samples} "
         f"--db {shlex.quote(str(db_path))} "
         f"{task_ids} {limit}"
-        "'"
     )
 
 
 def build_remote_workspace_prepare_command(target: BlueVelaTargetSpec, plan: SyncPlan) -> str:
     root = target.workspace_root.rstrip("/")
     return (
-        "bash -lc '"
         f"mkdir -p {shlex.quote(root)}/workspaces "
         f"{shlex.quote(root)}/runs "
         f"{shlex.quote(root)}/locks "
         f"{shlex.quote(root)}/state/servers "
         f"{shlex.quote(plan.remote_path)}"
-        "'"
     )

@@ -18,7 +18,7 @@ def follow_run_logs(run: RunHandle) -> CommandResult:
             if not login:
                 return CommandResult(ok=False, message=f"No login recorded for {run.id}")
             remote_tail = "tail -n 20 -f " + " ".join(shlex.quote(path) for path in log_paths)
-            subprocess.run(["ssh", login, remote_tail], check=False)
+            subprocess.run(["ssh", login, f"bash -lc {shlex.quote(remote_tail)}"], check=False)
         else:
             subprocess.run(["tail", "-n", "20", "-f", *log_paths], check=False)
     except KeyboardInterrupt:

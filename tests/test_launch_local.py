@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import signal
 from pathlib import Path
 from subprocess import CompletedProcess
 
@@ -223,6 +224,63 @@ def test_stop_run_ignores_missing_local_shard_pids(tmp_path: Path) -> None:
 
     assert result.ok is True
     assert killed == [111, 222]
+
+
+def test_local_stop_and_replace_uses_sigterm(tmp_path: Path) -> None:
+    spec = LaunchSpec(
+        target=LocalVllmTargetSpec(kind=TargetKind.LOCAL_VLLM, host="127.0.0.1"),
+        model="Qwen/Qwen3.5-27B",
+        benchmark=BenchSpec(benchmark="swebench-live", backend="openai"),
+        serving=ServingSpec(
+            engine="vllm",
+            port=8000,
+            tensor_parallel=1,
+            data_parallel=1,
+            api_server_count=1,
+            max_model_len=32768,
+            profile=resolve_serving_profile("Qwen/Qwen3.5-27B"),
+        ),
+        sync=SyncSpec(),
+        reuse=ReuseMode.STOP_AND_REPLACE,
+        json_mode=False,
+        yes=False,
+        follow=False,
+    )
+    state = LauncherState(
+        servers=[
+            ServerHandle(
+                id="server-1",
+                target=TargetKind.LOCAL_VLLM.value,
+                reuse_key=build_local_vllm_reuse_key(spec),
+                endpoint="http://127.0.0.1:8000/v1",
+                status="healthy",
+                metadata={"pid": 4321},
+                log_path=None,
+            )
+        ]
+    )
+    state_path = tmp_path / "launch-state.json"
+    original_kill = service_module.os.kill
+    original_which = service_module.shutil.which
+    killed: list[tuple[int, int]] = []
+    try:
+        service_module.os.kill = lambda pid, sig: killed.append((pid, sig))
+        service_module.shutil.which = lambda executable: None
+        service_module._resolve_local_server(
+            spec,
+            state=state,
+            state_path=state_path,
+            reuse_key=build_local_vllm_reuse_key(spec),
+            endpoint="http://127.0.0.1:8000/v1",
+            target=TargetKind.LOCAL_VLLM,
+            executable="vllm",
+            command="vllm serve",
+        )
+    finally:
+        service_module.os.kill = original_kill
+        service_module.shutil.which = original_which
+
+    assert killed == [(4321, signal.SIGTERM)]
 
 
 def test_launch_attach_json_returns_metadata_for_local_run(tmp_path: Path) -> None:
