@@ -144,9 +144,9 @@ def test_bluevela_launch_preview_computes_sync_without_applying(tmp_path: Path) 
     state = LauncherState()
     state_path = tmp_path / "launch-state.json"
     calls: dict[str, bool] = {}
-    original_launch_sync = service_module.launch_sync
+    original_launch_sync = service_module._launch_sync
     try:
-        service_module.launch_sync = lambda spec, **kwargs: (
+        service_module._launch_sync = lambda spec, **kwargs: (
             calls.update({"apply": spec.sync.apply, "check": spec.sync.check})
             or CommandResult(
                 ok=True,
@@ -161,7 +161,7 @@ def test_bluevela_launch_preview_computes_sync_without_applying(tmp_path: Path) 
             state_path=state_path,
         )
     finally:
-        service_module.launch_sync = original_launch_sync
+        service_module._launch_sync = original_launch_sync
 
     assert calls == {"apply": False, "check": True}
     assert result.ok is True
@@ -692,7 +692,7 @@ def test_bluevela_bsub_benchmark_command_is_shell_parseable() -> None:
 def test_bluevela_launch_records_real_shard_log_paths(tmp_path: Path) -> None:
     state = LauncherState()
     state_path = tmp_path / "launch-state.json"
-    original_launch_sync = service_module.launch_sync
+    original_launch_sync = service_module._launch_sync
     original_find_server = service_module._find_existing_server
     original_resolve_server = service_module._resolve_bluevela_server
     original_resolve_podman = service_module._resolve_bluevela_podman_storage
@@ -705,7 +705,7 @@ def test_bluevela_launch_records_real_shard_log_paths(tmp_path: Path) -> None:
             self.hex = value
 
     try:
-        service_module.launch_sync = lambda spec, **kwargs: CommandResult(
+        service_module._launch_sync = lambda spec, **kwargs: CommandResult(
             ok=True,
             message="sync",
             data={"signature": "ws-1", "remote_path": "/u/user/mcode-launch/workspaces/ws-1"},
@@ -730,7 +730,7 @@ def test_bluevela_launch_records_real_shard_log_paths(tmp_path: Path) -> None:
             state_path=state_path,
         )
     finally:
-        service_module.launch_sync = original_launch_sync
+        service_module._launch_sync = original_launch_sync
         service_module._find_existing_server = original_find_server
         service_module._resolve_bluevela_server = original_resolve_server
         service_module._resolve_bluevela_podman_storage = original_resolve_podman
@@ -752,7 +752,7 @@ def test_bluevela_launch_records_real_shard_log_paths(tmp_path: Path) -> None:
 def test_bluevela_launch_normalizes_job_ids_from_bsub_output(tmp_path: Path) -> None:
     state = LauncherState()
     state_path = tmp_path / "launch-state.json"
-    original_launch_sync = service_module.launch_sync
+    original_launch_sync = service_module._launch_sync
     original_find_server = service_module._find_existing_server
     original_resolve_server = service_module._resolve_bluevela_server
     original_resolve_podman = service_module._resolve_bluevela_podman_storage
@@ -765,7 +765,7 @@ def test_bluevela_launch_normalizes_job_ids_from_bsub_output(tmp_path: Path) -> 
             self.hex = value
 
     try:
-        service_module.launch_sync = lambda spec, **kwargs: CommandResult(
+        service_module._launch_sync = lambda spec, **kwargs: CommandResult(
             ok=True,
             message="sync",
             data={"signature": "ws-1", "remote_path": "/u/user/mcode-launch/workspaces/ws-1"},
@@ -792,7 +792,7 @@ def test_bluevela_launch_normalizes_job_ids_from_bsub_output(tmp_path: Path) -> 
             state_path=state_path,
         )
     finally:
-        service_module.launch_sync = original_launch_sync
+        service_module._launch_sync = original_launch_sync
         service_module._find_existing_server = original_find_server
         service_module._resolve_bluevela_server = original_resolve_server
         service_module._resolve_bluevela_podman_storage = original_resolve_podman

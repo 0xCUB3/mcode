@@ -43,7 +43,10 @@ DEFAULT_DB_PATH = Path("experiments/results/results.db")
 
 
 def _print_launch_result(result, *, json_mode: bool) -> None:
-    console.print(render_result(result, json_mode=json_mode))
+    if json_mode:
+        typer.echo(render_result(result, json_mode=True))
+    else:
+        console.print(render_result(result, json_mode=False))
     if not result.ok:
         raise typer.Exit(1)
 
@@ -294,7 +297,7 @@ def launch_status_cmd(
 ) -> None:
     data = launch_status()
     if json_mode:
-        console.print(json.dumps(data, indent=2, sort_keys=True))
+        typer.echo(json.dumps(data, indent=2, sort_keys=True))
         return
     console.print(json.dumps(data, indent=2, sort_keys=True))
 

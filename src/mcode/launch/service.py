@@ -412,7 +412,7 @@ def _launch_bluevela(
         repo_root=repo_root,
         state=state,
         state_path=state_path,
-        launch_sync=launch_sync,
+        launch_sync=_launch_sync,
         resolve_podman_storage=_resolve_bluevela_podman_storage,
         build_server_reuse_key=build_bluevela_server_reuse_key,
         find_existing_server=_find_existing_server,
