@@ -28,12 +28,19 @@ def test_bluevela_bench_scripts_wait_for_docker() -> None:
     assert "client.ping()" in text
 
 
-
 def test_bluevela_live_launcher_sources_hf_env() -> None:
     text = (BLUEVELA_DIR / "env.sh").read_text()
     assert "BV_HF_ENV" in text
     assert "HF_DATASETS_CACHE" in text
     assert 'source "${BV_HF_ENV}"' in text
+
+
+def test_bluevela_env_defaults_follow_user_environment() -> None:
+    text = (BLUEVELA_DIR / "env.sh").read_text()
+    assert "BV_USER=${BV_USER:-${USER:-user}}" in text
+    assert "BV_LOGIN=${BV_LOGIN:-${BV_USER}@login3.bluevela.rmf.ibm.com}" in text
+    assert "BV_HOME=${BV_HOME:-/u/${BV_USER}}" in text
+    assert "BV_SHARED_DIR=${BV_SHARED_DIR:-/proj/dmfexp/${BV_USER}}" in text
 
 
 def test_bluevela_live_launcher_drops_strategy_flag() -> None:

@@ -2,98 +2,85 @@
 
 mCode is a SWE-bench-focused benchmark harness for agentic coding runs through [Mellea](https://mellea.ai).
 
-- Benchmarks: `swebench-lite`, `swebench-live`
-- LLM interface: Mellea
-- Results: SQLite in `experiments/results/results.db` by default
-
 ## Install
-
-For development:
 
 ```bash
 uv sync --extra dev
 uv run mcode --help
 ```
 
-To sync against the pinned fork revision in `pyproject.toml`:
+Supported environments:
+- macOS and Linux are supported natively
+- Windows should use `WSL2` for `uv run mcode ...`
+- native PowerShell and CMD are not supported launcher environments
+
+Benchmark extras:
 
 ```bash
 uv run mcode deps sync --extra swebench --extra datasets
 ```
 
-If you want to override that temporarily with a local checkout, set
-`MCODE_MELLEA_PATH=/path/to/mellea-fork` before running the command.
+Use `MCODE_MELLEA_PATH=/path/to/mellea-fork` if you want to temporarily override the pinned `mellea` source with a local checkout.
 
-## Run SWE-bench Lite
+## Core Commands
+
+SWE-bench Lite:
 
 ```bash
-mcode bench swebench-lite --model granite3.3:8b --limit 5
+uv run mcode bench swebench-lite --model granite3.3:8b --limit 5
 ```
 
-Useful flags:
-
-- `--loop-budget`: retry budget for the agent
-- `--timeout`: eval timeout per task
-- `--limit`: run the first N tasks
-- `--shard-count/--shard-index`: shard a run across multiple workers
-- `--strategy`: `repair`, `sofai`, or `raw`
-- `--n-samples`: number of patch samples to generate per task
-
-If you need to force local image builds instead of pulling prebuilt images:
+SWE-bench Live:
 
 ```bash
-mcode bench swebench-lite --namespace "" --model granite3.3:8b --limit 5
+uv run mcode bench swebench-live --model granite3.3:8b --limit 5
 ```
 
-## Run SWE-bench Live
+Results:
 
 ```bash
-mcode bench swebench-live --model granite3.3:8b --limit 5
-```
-
-`swebench-live` uses prebuilt evaluation images, so it does not need the lite image-build settings.
-
-## Results
-
-Per-run summaries:
-
-```bash
-mcode results --benchmark swebench-live
-mcode results --benchmark swebench-live --time
-```
-
-HTML report:
-
-```bash
-mcode report --db-dir ./results --benchmark swebench-live --out ./results/report.html
-```
-
-Merge shard DBs:
-
-```bash
-mcode merge-shards --out ./results/merged.db ./results/swebench-live-shard-0.db ./results/swebench-live-shard-1.db
-```
-
-CSV export:
-
-```bash
+uv run mcode results --benchmark swebench-live
+uv run mcode results --benchmark swebench-live --time
+uv run mcode report --db-dir ./results --benchmark swebench-live --out ./results/report.html
+uv run mcode merge-shards --out ./results/merged.db ./results/swebench-live-shard-0.db ./results/swebench-live-shard-1.db
 uv run mcode export-csv -i experiments/results --out-dir experiments/results --prefix mcode
 ```
 
 ## Blue Vela
 
-The maintained Blue Vela path is under `deploy/bluevela/`:
+```bash
+uv run mcode launch
+```
 
-- `setup.sh`
-- `start-vllm.sh`
-- `run-swebench-live.sh`
-- `stop-vllm.sh`
-- `fetch-results.sh`
+Quick checks:
 
-See `deploy/bluevela/README.md` for the remote workflow.
+```bash
+uv run mcode launch --help
+uv run mcode launch doctor --target bluevela
+uv run mcode launch sync --target bluevela --check
+uv run mcode launch status --json
+```
+
+Default run lifecycle:
+
+```bash
+uv run mcode launch --yes
+uv run mcode launch --yes --follow
+uv run mcode launch attach run-12345678
+uv run mcode launch stop run-12345678
+```
+
+Optional per-user defaults live in:
+
+```bash
+~/.config/mcode/launch.toml
+```
+
+The default Blue Vela profile resolves from `$USER`, for example `/u/$USER/mcode-launch` and `/proj/dmfexp/$USER`.
+
+See [`docs/COMMANDS.md`](docs/COMMANDS.md) for the full command cookbook, including local `vllm`, local `ollama`, and generic `openai-compatible` examples, and [`deploy/bluevela/README.md`](deploy/bluevela/README.md) for the Blue Vela quickstart.
 
 ## Notes
 
-- `docs/COMMANDS.md` has the higher-level command cookbook.
-- `docs/benchmarking.md` covers the benchmarking workflow.
-- `research/` is the canonical home for durable benchmark run notes, optimization history, and rendered reports. Start with `research/2026-03-31-swebench-optimization-log/README.md` for the running SWE-bench optimization history.
+- `docs/COMMANDS.md` is the source of truth for operational commands.
+- `research/` holds durable benchmark notes, optimization history, and reports.

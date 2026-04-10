@@ -3,15 +3,16 @@
 # All values can be overridden via environment variables.
 
 # Cluster
-BV_LOGIN=${BV_LOGIN:-skula@login3.bluevela.rmf.ibm.com}
-BV_HOME=${BV_HOME:-/u/skula}
+BV_USER=${BV_USER:-${USER:-user}}
+BV_LOGIN=${BV_LOGIN:-${BV_USER}@login3.bluevela.rmf.ibm.com}
+BV_HOME=${BV_HOME:-/u/${BV_USER}}
 BV_MCODE_DIR=${BV_MCODE_DIR:-${BV_HOME}/mcode}
 BV_RESULTS_DIR=${BV_RESULTS_DIR:-${BV_MCODE_DIR}/results}
 BV_QUEUE=${BV_QUEUE:-normal}
 BV_GROUP=${BV_GROUP:-grp_runtime}
 
 # Shared storage (NFS, visible to all nodes)
-BV_SHARED_DIR=${BV_SHARED_DIR:-/proj/dmfexp/skula}
+BV_SHARED_DIR=${BV_SHARED_DIR:-/proj/dmfexp/${BV_USER}}
 BV_PODMAN_ROOT=${BV_PODMAN_ROOT:-${BV_SHARED_DIR}/podman}
 
 # Hugging Face auth and cache
