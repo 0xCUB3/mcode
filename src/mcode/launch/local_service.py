@@ -122,7 +122,7 @@ def resolve_local_server(
     command: str,
     endpoint_is_healthy: Callable[[str], bool],
     wait_for_endpoint: Callable[[str], None],
-    save_state: Callable[[Path | None, LauncherState], None],
+    merge_server: Callable[[Path | None, ServerHandle], ServerHandle],
     which: Callable[[str], str | None],
     warmup_command: str | None = None,
 ) -> ServerHandle:
@@ -175,9 +175,10 @@ def resolve_local_server(
             metadata=metadata,
             log_path=log_path,
         )
-    state.servers = [entry for entry in state.servers if entry.reuse_key != reuse_key] + [server]
-    save_state(state_path, state)
-    return server
+    state.servers = [entry for entry in state.servers if entry.reuse_key != server.reuse_key] + [
+        server
+    ]
+    return merge_server(state_path, server)
 
 
 def launch_local_benchmark(
@@ -186,7 +187,7 @@ def launch_local_benchmark(
     env: dict[str, str],
     state: LauncherState,
     state_path: Path | None,
-    save_state: Callable[[Path | None, LauncherState], None],
+    merge_run: Callable[[Path | None, RunHandle], RunHandle],
 ) -> CommandResult:
     run_id = f"run-{uuid.uuid4().hex[:8]}"
     run_dir = Path("results") / "launch" / run_id
@@ -238,8 +239,8 @@ def launch_local_benchmark(
         metadata=metadata,
         log_path=log_paths[0],
     )
-    state.runs.append(run)
-    save_state(state_path, state)
+    state.runs = [entry for entry in state.runs if entry.id != run.id] + [run]
+    merge_run(state_path, run)
     return CommandResult(ok=True, message="\n".join(commands), data={"run_id": run.id})
 
 

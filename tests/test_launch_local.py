@@ -20,7 +20,7 @@ from mcode.launch.providers.local_ollama import (
     build_ollama_warmup_command,
 )
 from mcode.launch.providers.local_vllm import build_local_vllm_command, build_local_vllm_reuse_key
-from mcode.launch.state import LauncherState
+from mcode.launch.state import LauncherState, update_state
 
 
 def test_local_vllm_command_uses_profile_flags() -> None:
@@ -192,6 +192,39 @@ def test_stop_run_kills_all_local_shard_pids(tmp_path: Path) -> None:
     assert [pid for pid, _ in killed] == [111, 222, 333]
 
 
+def test_stop_run_ignores_missing_local_shard_pids(tmp_path: Path) -> None:
+    state = LauncherState(
+        runs=[
+            service_module.RunHandle(
+                id="run-1",
+                target=TargetKind.LOCAL_VLLM.value,
+                benchmark="swebench-live",
+                status="running",
+                metadata={"pids": [111, 222]},
+                log_path=str(tmp_path / "benchmark.log"),
+            )
+        ]
+    )
+    state_path = tmp_path / "launch-state.json"
+    original_kill = service_module.os.kill
+    killed: list[int] = []
+
+    def fake_kill(pid: int, sig: int) -> None:
+        del sig
+        killed.append(pid)
+        if pid == 111:
+            raise ProcessLookupError
+
+    try:
+        service_module.os.kill = fake_kill
+        result = service_module._stop_run(state.runs[0], state, state_path)
+    finally:
+        service_module.os.kill = original_kill
+
+    assert result.ok is True
+    assert killed == [111, 222]
+
+
 def test_launch_attach_json_returns_metadata_for_local_run(tmp_path: Path) -> None:
     state = LauncherState(
         runs=[
@@ -206,7 +239,7 @@ def test_launch_attach_json_returns_metadata_for_local_run(tmp_path: Path) -> No
         ]
     )
     state_path = tmp_path / "launch-state.json"
-    service_module.save_state(state_path, state)
+    update_state(state_path, lambda current: setattr(current, "runs", state.runs))
 
     result = service_module.launch_attach("run-1", follow=False, state_path=state_path)
 
@@ -225,7 +258,7 @@ def test_launch_attach_follows_all_local_logs(tmp_path: Path) -> None:
     )
     state = LauncherState(runs=[run])
     state_path = tmp_path / "launch-state.json"
-    service_module.save_state(state_path, state)
+    update_state(state_path, lambda current: setattr(current, "runs", state.runs))
     original_run = service_module.subprocess.run
     commands: list[list[str]] = []
 

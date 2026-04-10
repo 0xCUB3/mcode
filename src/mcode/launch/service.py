@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import time
 import uuid
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
@@ -32,6 +32,7 @@ from mcode.launch.local_service import (
 from mcode.launch.local_service import (
     resolve_local_server as resolve_local_server_impl,
 )
+from mcode.launch.lsf import extract_lsf_job_id
 from mcode.launch.models import (
     BenchSpec,
     BlueVelaTargetSpec,
@@ -63,7 +64,13 @@ from mcode.launch.remote_scripts import (
     build_remote_healthcheck_command,
     build_uv_sync_command,
 )
-from mcode.launch.state import LauncherState, load_state, save_state
+from mcode.launch.state import (
+    LauncherState,
+    load_state,
+    merge_run,
+    merge_server,
+    merge_workspace,
+)
 from mcode.launch.sync import build_sync_plan, list_untracked_files, tracked_overlay_patch
 
 BLUEVELA_VLLM_FAILED_MARKERS = (
@@ -251,10 +258,21 @@ def launch_doctor(spec: LaunchSpec) -> CommandResult:
 def launch_sync(
     spec: LaunchSpec, *, repo_root: Path, state_path: Path | None = None
 ) -> CommandResult:
+    return _launch_sync(spec, repo_root=repo_root, state_path=state_path)
+
+
+def _launch_sync(
+    spec: LaunchSpec,
+    *,
+    repo_root: Path,
+    state_path: Path | None = None,
+    state: LauncherState | None = None,
+) -> CommandResult:
     if not isinstance(spec.target, BlueVelaTargetSpec):
         return CommandResult(ok=True, message="Sync is only required for Blue Vela in V1.")
 
-    state = load_state(state_path)
+    if state is None:
+        state = load_state(state_path)
     existing = next(
         (w for w in state.workspaces if w.path.startswith(spec.target.workspace_root)), None
     )
@@ -296,10 +314,7 @@ def launch_sync(
 
     _sync_bluevela_workspace(spec.target, repo_root, plan)
     workspace = WorkspaceHandle(signature=plan.signature, path=plan.remote_path, metadata=data)
-    state.workspaces = [
-        entry for entry in state.workspaces if entry.signature != workspace.signature
-    ] + [workspace]
-    save_state(state_path, state)
+    merge_workspace(state_path, workspace)
     return CommandResult(ok=True, message=plan.remote_path, data=data)
 
 
@@ -338,8 +353,8 @@ def launch_stop(run_id: str, *, state_path: Path | None = None) -> CommandResult
         server = next((entry for entry in state.servers if entry.id == run_id), None)
         if server is None:
             return CommandResult(ok=False, message=f"Unknown id: {run_id}")
-        return _stop_server(server, state, state_path)
-    return _stop_run(run, state, state_path)
+        return _stop_server(server, state_path)
+    return _stop_run(run, state_path)
 
 
 def launch_attach(
@@ -404,7 +419,8 @@ def _launch_bluevela(
         run_ssh=_run_ssh,
         build_vllm_command=build_bluevela_vllm_command,
         build_bsub_benchmark_command=_build_bluevela_bsub_benchmark_command,
-        save_state=save_state,
+        merge_workspace=merge_workspace,
+        merge_run=merge_run,
     )
 
 
@@ -446,36 +462,77 @@ def _launch_openai_compatible(
     )
 
 
-def _stop_run(run: RunHandle, state: LauncherState, state_path: Path | None) -> CommandResult:
+def _stop_run(
+    run: RunHandle,
+    state_or_path: LauncherState | Path | None,
+    state_path: Path | None = None,
+) -> CommandResult:
+    if state_path is None:
+        state = None
+        state_path = (
+            state_or_path if isinstance(state_or_path, Path) or state_or_path is None else None
+        )
+    else:
+        state = state_or_path if isinstance(state_or_path, LauncherState) else None
     job_id = run.metadata.get("job_id")
     if run.target == TargetKind.BLUEVELA.value and run.metadata.get("job_ids"):
         for current in run.metadata["job_ids"]:
-            _run_ssh(run.metadata["login"], f"bkill {current}")
+            normalized_job_id = extract_lsf_job_id(current)
+            if normalized_job_id:
+                _maybe_bkill_bluevela_job(run.metadata["login"], normalized_job_id)
     elif run.target == TargetKind.BLUEVELA.value and job_id:
-        _run_ssh(run.metadata["login"], f"bkill {job_id}")
+        normalized_job_id = extract_lsf_job_id(job_id)
+        if normalized_job_id:
+            _maybe_bkill_bluevela_job(run.metadata["login"], normalized_job_id)
     elif run.metadata.get("pids"):
         for current in run.metadata["pids"]:
-            os.kill(int(current), 15)
+            try:
+                os.kill(int(current), 15)
+            except ProcessLookupError:
+                continue
     elif "pid" in run.metadata:
-        os.kill(int(run.metadata["pid"]), 15)
+        try:
+            os.kill(int(run.metadata["pid"]), 15)
+        except ProcessLookupError:
+            pass
     run.status = "stopped"
-    save_state(state_path, state)
+    if state is not None:
+        state.runs = [entry for entry in state.runs if entry.id != run.id] + [run]
+    merge_run(state_path, run)
     return CommandResult(ok=True, message=f"Stopped {run.id}")
 
 
 def _stop_server(
-    server: ServerHandle, state: LauncherState, state_path: Path | None
+    server: ServerHandle,
+    state_or_path: LauncherState | Path | None,
+    state_path: Path | None = None,
 ) -> CommandResult:
+    if state_path is None:
+        state = None
+        state_path = (
+            state_or_path if isinstance(state_or_path, Path) or state_or_path is None else None
+        )
+    else:
+        state = state_or_path if isinstance(state_or_path, LauncherState) else None
     job_id = server.metadata.get("job_id")
     if server.target == TargetKind.BLUEVELA.value and job_id:
-        _run_ssh(server.metadata["login"], f"bkill {job_id}")
+        normalized_job_id = extract_lsf_job_id(job_id)
+        if normalized_job_id:
+            _maybe_bkill_bluevela_job(server.metadata["login"], normalized_job_id)
         registry_path = server.metadata.get("registry_path")
         if registry_path:
             _run_ssh(server.metadata["login"], f"rm -f {shlex.quote(registry_path)}")
     elif "pid" in server.metadata:
-        os.kill(int(server.metadata["pid"]), 15)
+        try:
+            os.kill(int(server.metadata["pid"]), 15)
+        except ProcessLookupError:
+            pass
     server.status = "stopped"
-    save_state(state_path, state)
+    if state is not None:
+        state.servers = [
+            entry for entry in state.servers if entry.reuse_key != server.reuse_key
+        ] + [server]
+    merge_server(state_path, server)
     return CommandResult(ok=True, message=f"Stopped {server.id}")
 
 
@@ -494,6 +551,21 @@ def _run_ssh_result(
 def _run_ssh(login: str, command: str) -> str:
     res = _run_ssh_result(login, command)
     return res.stdout.strip() or res.stderr.strip()
+
+
+def _maybe_bkill_bluevela_job(login: str, job_id: str) -> None:
+    result = _run_ssh_result(login, f"bkill {job_id}", check=False)
+    if result.returncode == 0:
+        return
+    output = f"{result.stdout}\n{result.stderr}"
+    if "already finished" in output or "is not found" in output:
+        return
+    raise subprocess.CalledProcessError(
+        result.returncode,
+        result.args,
+        output=result.stdout,
+        stderr=result.stderr,
+    )
 
 
 def _run_bluevela_doctor(target: BlueVelaTargetSpec) -> CommandResult:
@@ -625,6 +697,24 @@ def _read_remote_json(login: str, path: str) -> dict[str, Any] | None:
         return None
 
 
+def _write_remote_json(login: str, path: str, payload: dict[str, Any]) -> None:
+    parent = shlex.quote(str(Path(path).parent))
+    encoded = shlex.quote(json.dumps(payload))
+    _run_ssh(
+        login,
+        f"mkdir -p {parent} && printf %s {encoded} > {shlex.quote(path)}",
+    )
+
+
+def _bluevela_job_is_active(login: str, job_id: str) -> bool:
+    result = _run_ssh_result(
+        login,
+        f"bjobs {shlex.quote(job_id)} >/dev/null 2>&1",
+        check=False,
+    )
+    return result.returncode == 0
+
+
 def _resolve_bluevela_podman_storage(target: BlueVelaTargetSpec) -> tuple[str, str]:
     graphroot_base, runroot_base = _bluevela_podman_base_dirs(target)
     host_tag = _run_ssh(target.login, "hostname -s").strip()
@@ -669,7 +759,7 @@ def _acquire_remote_lock(
     lock_path: str,
     *,
     timeout_s: int = 180,
-    stale_after_s: int = 1800,
+    stale_after_s: int = 60,
 ) -> None:
     deadline = time.time() + timeout_s
     parent_path = str(Path(lock_path).parent)
@@ -710,7 +800,7 @@ def _release_remote_lock(login: str, lock_path: str) -> None:
 def _resolve_bluevela_server(
     spec: LaunchSpec,
     *,
-    state: LauncherState,
+    state: LauncherState | None = None,
     state_path: Path | None,
     reuse_key: str,
     workspace_signature: str,
@@ -720,67 +810,117 @@ def _resolve_bluevela_server(
     target = spec.target
     registry_path = build_bluevela_server_registry_path(target, reuse_key=reuse_key)
     lock_path = build_bluevela_lock_path(target, kind="server", key=reuse_key)
-    _acquire_remote_lock(target.login, lock_path)
-    try:
-        remote_server = _read_remote_json(target.login, registry_path)
-        if remote_server and spec.reuse == ReuseMode.STOP_AND_REPLACE:
-            job_id = remote_server.get("metadata", {}).get("job_id")
-            if job_id:
-                _run_ssh(target.login, f"bkill {job_id}")
-            _run_ssh(target.login, f"rm -f {shlex.quote(registry_path)}")
-            remote_server = None
-        if (
-            remote_server
-            and spec.reuse == ReuseMode.PREFER
-            and _remote_endpoint_is_healthy(target.login, remote_server.get("endpoint", ""))
-        ):
-            server = ServerHandle(**remote_server)
-        elif existing_server and spec.reuse == ReuseMode.PREFER:
-            server = existing_server
-        else:
-            run_dir = Path(target.workspace_root) / "runs" / uuid.uuid4().hex[:12]
-            _run_ssh(target.login, f"mkdir -p {shlex.quote(str(run_dir))}")
-            command = build_bluevela_vllm_command(spec, run_dir=run_dir)
-            job_id = _run_ssh(target.login, command).strip()
-            host = _wait_for_remote_file(target.login, str(run_dir / "vllm_host.txt"))
+
+    def _record_server(server: ServerHandle) -> ServerHandle:
+        if state is not None:
+            state.servers = [entry for entry in state.servers if entry.reuse_key != reuse_key] + [
+                server
+            ]
+        return merge_server(state_path, server)
+
+    def _start_or_reuse_pending(*, allow_reuse: bool) -> ServerHandle:
+        pending_server: ServerHandle | None = None
+
+        _acquire_remote_lock(target.login, lock_path)
+        try:
+            remote_server = _read_remote_json(target.login, registry_path)
+            if remote_server and (spec.reuse == ReuseMode.STOP_AND_REPLACE or not allow_reuse):
+                job_id = extract_lsf_job_id(remote_server.get("metadata", {}).get("job_id"))
+                if job_id and _bluevela_job_is_active(target.login, job_id):
+                    _maybe_bkill_bluevela_job(target.login, job_id)
+                _run_ssh(target.login, f"rm -f {shlex.quote(registry_path)}")
+                remote_server = None
+            if allow_reuse and remote_server and spec.reuse == ReuseMode.PREFER:
+                candidate = ServerHandle(**remote_server)
+                if candidate.status == "healthy" and _remote_endpoint_is_healthy(
+                    target.login, candidate.endpoint
+                ):
+                    return _record_server(candidate)
+                pending_job_id = extract_lsf_job_id(candidate.metadata.get("job_id"))
+                if (
+                    candidate.status == "pending"
+                    and pending_job_id
+                    and _bluevela_job_is_active(target.login, pending_job_id)
+                ):
+                    pending_server = candidate
+                else:
+                    _run_ssh(target.login, f"rm -f {shlex.quote(registry_path)}")
+            if (
+                allow_reuse
+                and pending_server is None
+                and existing_server
+                and spec.reuse == ReuseMode.PREFER
+            ):
+                return _record_server(existing_server)
+            if pending_server is None:
+                run_dir = Path(target.workspace_root) / "runs" / uuid.uuid4().hex[:12]
+                _run_ssh(target.login, f"mkdir -p {shlex.quote(str(run_dir))}")
+                command = build_bluevela_vllm_command(spec, run_dir=run_dir)
+                job_id_output = _run_ssh(target.login, command).strip()
+                job_id = extract_lsf_job_id(job_id_output) or job_id_output
+                pending_server = ServerHandle(
+                    id=f"server-{uuid.uuid4().hex[:8]}",
+                    target=TargetKind.BLUEVELA.value,
+                    reuse_key=reuse_key,
+                    endpoint=f"http://pending:{spec.serving.port}/v1",
+                    status="pending",
+                    metadata={
+                        "job_id": job_id,
+                        "login": target.login,
+                        "run_dir": str(run_dir),
+                        "registry_path": registry_path,
+                        "workspace_signature": workspace_signature,
+                    },
+                    log_path=str(run_dir / "vllm.log"),
+                )
+                _write_remote_json(target.login, registry_path, asdict(pending_server))
+            return pending_server
+        finally:
+            _release_remote_lock(target.login, lock_path)
+
+    pending_server = _start_or_reuse_pending(allow_reuse=True)
+    retries = 0
+    while True:
+        assert pending_server is not None
+        if pending_server.status == "healthy":
+            server = pending_server
+            break
+        try:
+            host_path = Path(pending_server.metadata["run_dir"]) / "vllm_host.txt"
+            host = _wait_for_remote_file(target.login, str(host_path))
             endpoint = f"http://{host}:{spec.serving.port}/v1"
             _wait_for_bluevela_endpoint(
                 target.login,
                 endpoint,
-                log_path=str(run_dir / "vllm.log"),
+                log_path=pending_server.log_path,
             )
-            server = ServerHandle(
-                id=f"server-{uuid.uuid4().hex[:8]}",
-                target=TargetKind.BLUEVELA.value,
-                reuse_key=reuse_key,
-                endpoint=endpoint,
-                status="healthy",
-                metadata={
-                    "job_id": job_id,
-                    "login": target.login,
-                    "run_dir": str(run_dir),
-                    "registry_path": registry_path,
-                    "workspace_signature": workspace_signature,
-                },
-                log_path=str(run_dir / "vllm.log"),
-            )
-            registry_root = f"{target.workspace_root.rstrip('/')}/state/servers"
-            server_payload = shlex.quote(json.dumps(asdict(server)))
-            registry_cmd = (
-                f"mkdir -p {shlex.quote(registry_root)} && "
-                f"printf %s {server_payload} > {shlex.quote(registry_path)}"
-            )
-            _run_ssh(
-                target.login,
-                registry_cmd,
-            )
-        state.servers = [entry for entry in state.servers if entry.reuse_key != reuse_key] + [
-            server
-        ]
-        save_state(state_path, state)
-        return server
+            server = replace(pending_server, endpoint=endpoint, status="healthy")
+            break
+        except RuntimeError:
+            if retries >= 1:
+                raise
+            retries += 1
+            pending_server = _start_or_reuse_pending(allow_reuse=False)
+
+    _acquire_remote_lock(target.login, lock_path)
+    try:
+        remote_server = _read_remote_json(target.login, registry_path)
+        if remote_server:
+            candidate = ServerHandle(**remote_server)
+            candidate_job_id = extract_lsf_job_id(candidate.metadata.get("job_id"))
+            server_job_id = extract_lsf_job_id(server.metadata.get("job_id"))
+            if candidate.status == "healthy" and _remote_endpoint_is_healthy(
+                target.login, candidate.endpoint
+            ):
+                server = candidate
+            elif candidate_job_id == server_job_id:
+                _write_remote_json(target.login, registry_path, asdict(server))
+        else:
+            _write_remote_json(target.login, registry_path, asdict(server))
     finally:
         _release_remote_lock(target.login, lock_path)
+
+    return _record_server(server)
 
 
 def _wait_for_remote_file(login: str, path: str, *, timeout_s: int = 300) -> str:
@@ -816,7 +956,7 @@ def _resolve_local_server(
         command=command,
         endpoint_is_healthy=_endpoint_is_healthy,
         wait_for_endpoint=_wait_for_endpoint,
-        save_state=save_state,
+        merge_server=merge_server,
         which=shutil.which,
         warmup_command=warmup_command,
     )
@@ -966,7 +1106,7 @@ def _launch_local_benchmark(
         env=env,
         state=state,
         state_path=state_path,
-        save_state=save_state,
+        merge_run=merge_run,
     )
 
 

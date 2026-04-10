@@ -26,7 +26,7 @@ from mcode.launch.providers.bluevela import (
     build_bluevela_server_reuse_key,
     build_bluevela_vllm_command,
 )
-from mcode.launch.state import LauncherState
+from mcode.launch.state import LauncherState, update_state
 
 
 def _spec() -> LaunchSpec:
@@ -78,6 +78,12 @@ def test_bluevela_vllm_command_uses_resolved_profile() -> None:
     assert "--gpu-memory-utilization 0.9" in command
     assert "--storage-opt ignore_chown_errors=true" in command
     assert "mode=exclusive_process" in command
+    assert "export HF_HUB_OFFLINE=1;" in command
+    assert "export TRANSFORMERS_OFFLINE=1;" in command
+    assert "-e HF_HUB_OFFLINE -e TRANSFORMERS_OFFLINE" in command
+    assert '-e HF_HOME="/root/.cache/huggingface"' in command
+    assert '-e HF_HUB_CACHE="/root/.cache/huggingface/hub"' in command
+    assert "/proj/shared/user/hf-cache/hub/models--google--gemma-4-31B-it" in command
     assert 'GRAPHROOT="${GRAPHROOT_BASE}/${HOST_TAG}/graphroot"' in command
     assert 'RUNROOT="${RUNROOT_BASE}/${HOST_TAG}/runroot"' in command
     assert "GRAPHROOT_BASE=/proj/shared/user/podman" in command
@@ -179,15 +185,113 @@ def test_stop_run_skips_bkill_for_planned_bluevela_run(tmp_path: Path) -> None:
     state = LauncherState(runs=[run])
     state_path = tmp_path / "launch-state.json"
     original_run_ssh = service_module._run_ssh
+    original_run_ssh_result = service_module._run_ssh_result
     calls: list[tuple[str, str]] = []
     try:
         service_module._run_ssh = lambda login, command: calls.append((login, command)) or ""
+        service_module._run_ssh_result = lambda *args, **kwargs: CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout="",
+            stderr="",
+        )
         result = service_module._stop_run(run, state, state_path)
     finally:
         service_module._run_ssh = original_run_ssh
+        service_module._run_ssh_result = original_run_ssh_result
 
     assert result.ok is True
     assert calls == []
+
+
+def test_stop_run_normalizes_bluevela_submission_messages(tmp_path: Path) -> None:
+    run = service_module.RunHandle(
+        id="run-1",
+        target=TargetKind.BLUEVELA.value,
+        benchmark="swebench-lite",
+        status="running",
+        metadata={
+            "login": "user@login3.example.com",
+            "job_ids": [
+                "Job <845767> is submitted to queue <normal>.",
+                "Job <845768> is submitted to queue <normal>.",
+            ],
+        },
+        log_path="/u/user/mcode-launch/runs/run-1/benchmark-shard-0.log",
+    )
+    state = LauncherState(runs=[run])
+    state_path = tmp_path / "launch-state.json"
+    original_run_ssh = service_module._run_ssh
+    original_run_ssh_result = service_module._run_ssh_result
+    calls: list[tuple[str, str]] = []
+    try:
+        service_module._run_ssh = lambda login, command: calls.append((login, command)) or ""
+        service_module._run_ssh_result = lambda *args, **kwargs: CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout="",
+            stderr="",
+        )
+        result = service_module._stop_run(run, state, state_path)
+    finally:
+        service_module._run_ssh = original_run_ssh
+        service_module._run_ssh_result = original_run_ssh_result
+
+    assert result.ok is True
+    assert calls == []
+
+
+def test_stop_server_normalizes_bluevela_submission_message(tmp_path: Path) -> None:
+    server = ServerHandle(
+        id="server-1",
+        target=TargetKind.BLUEVELA.value,
+        reuse_key="reuse-key",
+        endpoint="http://host:8331/v1",
+        status="healthy",
+        metadata={
+            "job_id": "Job <845766> is submitted to queue <normal>.",
+            "login": "user@login3.example.com",
+            "registry_path": "/u/user/mcode-launch/state/servers/reuse-key.json",
+        },
+        log_path="/u/user/mcode-launch/runs/server-1/vllm.log",
+    )
+    state = LauncherState(servers=[server])
+    state_path = tmp_path / "launch-state.json"
+    original_run_ssh = service_module._run_ssh
+    original_run_ssh_result = service_module._run_ssh_result
+    calls: list[tuple[str, str]] = []
+    try:
+        service_module._run_ssh = lambda login, command: calls.append((login, command)) or ""
+        service_module._run_ssh_result = lambda *args, **kwargs: CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout="",
+            stderr="",
+        )
+        result = service_module._stop_server(server, state, state_path)
+    finally:
+        service_module._run_ssh = original_run_ssh
+        service_module._run_ssh_result = original_run_ssh_result
+
+    assert result.ok is True
+    assert calls == [
+        ("user@login3.example.com", "rm -f /u/user/mcode-launch/state/servers/reuse-key.json"),
+    ]
+
+
+def test_bkill_ignores_already_finished_job() -> None:
+    original_run_ssh_result = service_module._run_ssh_result
+
+    try:
+        service_module._run_ssh_result = lambda *args, **kwargs: CompletedProcess(
+            args=args,
+            returncode=255,
+            stdout="",
+            stderr="Job <845766>: Job has already finished\n",
+        )
+        service_module._maybe_bkill_bluevela_job("user@login3.example.com", "845766")
+    finally:
+        service_module._run_ssh_result = original_run_ssh_result
 
 
 def test_bluevela_server_resolution_reuses_remote_registry(tmp_path: Path) -> None:
@@ -232,6 +336,249 @@ def test_bluevela_server_resolution_reuses_remote_registry(tmp_path: Path) -> No
 
     assert server.id == "server-remote"
     assert state.servers[0].endpoint == "http://host:8331/v1"
+
+
+def test_bluevela_server_resolution_waits_on_pending_remote_registry(tmp_path: Path) -> None:
+    state = LauncherState()
+    state_path = tmp_path / "launch-state.json"
+    remote = asdict(
+        ServerHandle(
+            id="server-pending",
+            target=TargetKind.BLUEVELA.value,
+            reuse_key="reuse-key",
+            endpoint="http://pending:8331/v1",
+            status="pending",
+            metadata={
+                "job_id": "123",
+                "login": "user@login3.example.com",
+                "registry_path": "/u/user/mcode-launch/state/servers/reuse-key.json",
+                "run_dir": "/u/user/mcode-launch/runs/r1",
+                "workspace_signature": "ws-1",
+            },
+            log_path="/u/user/mcode-launch/runs/r1/vllm.log",
+        )
+    )
+    writes: list[dict[str, object]] = []
+    original_acquire = service_module._acquire_remote_lock
+    original_release = service_module._release_remote_lock
+    original_read = service_module._read_remote_json
+    original_job_active = service_module._bluevela_job_is_active
+    original_wait_file = service_module._wait_for_remote_file
+    original_wait_endpoint = service_module._wait_for_bluevela_endpoint
+    original_write = service_module._write_remote_json
+    try:
+        service_module._acquire_remote_lock = lambda *args, **kwargs: None
+        service_module._release_remote_lock = lambda *args, **kwargs: None
+        service_module._read_remote_json = lambda *args, **kwargs: remote
+        service_module._bluevela_job_is_active = lambda *args, **kwargs: True
+        service_module._wait_for_remote_file = lambda *args, **kwargs: "host"
+        service_module._wait_for_bluevela_endpoint = lambda *args, **kwargs: None
+        service_module._write_remote_json = lambda login, path, payload: writes.append(payload)
+        server = service_module._resolve_bluevela_server(
+            _spec(),
+            state=state,
+            state_path=state_path,
+            reuse_key="reuse-key",
+            workspace_signature="ws-1",
+            existing_server=None,
+        )
+    finally:
+        service_module._acquire_remote_lock = original_acquire
+        service_module._release_remote_lock = original_release
+        service_module._read_remote_json = original_read
+        service_module._bluevela_job_is_active = original_job_active
+        service_module._wait_for_remote_file = original_wait_file
+        service_module._wait_for_bluevela_endpoint = original_wait_endpoint
+        service_module._write_remote_json = original_write
+
+    assert server.status == "healthy"
+    assert server.endpoint == "http://host:8331/v1"
+    assert writes[-1]["status"] == "healthy"
+
+
+def test_bluevela_server_resolution_replaces_stale_pending_registry(tmp_path: Path) -> None:
+    state = LauncherState()
+    state_path = tmp_path / "launch-state.json"
+    remote = asdict(
+        ServerHandle(
+            id="server-pending",
+            target=TargetKind.BLUEVELA.value,
+            reuse_key="reuse-key",
+            endpoint="http://pending:8331/v1",
+            status="pending",
+            metadata={
+                "job_id": "123",
+                "login": "user@login3.example.com",
+                "registry_path": "/u/user/mcode-launch/state/servers/reuse-key.json",
+                "run_dir": "/u/user/mcode-launch/runs/r1",
+                "workspace_signature": "ws-1",
+            },
+            log_path="/u/user/mcode-launch/runs/r1/vllm.log",
+        )
+    )
+    writes: list[dict[str, object]] = []
+    original_acquire = service_module._acquire_remote_lock
+    original_release = service_module._release_remote_lock
+    original_read = service_module._read_remote_json
+    original_job_active = service_module._bluevela_job_is_active
+    original_wait_file = service_module._wait_for_remote_file
+    original_wait_endpoint = service_module._wait_for_bluevela_endpoint
+    original_write = service_module._write_remote_json
+    original_run_ssh = service_module._run_ssh
+    original_build = service_module.build_bluevela_vllm_command
+    original_uuid4 = service_module.uuid.uuid4
+    uuids = iter(["aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb"])
+
+    class _UUID:
+        def __init__(self, value: str) -> None:
+            self.hex = value
+
+    try:
+        service_module._acquire_remote_lock = lambda *args, **kwargs: None
+        service_module._release_remote_lock = lambda *args, **kwargs: None
+        reads = {"count": 0}
+        service_module._read_remote_json = (
+            lambda *args, **kwargs: remote
+            if (reads.__setitem__("count", reads["count"] + 1) or reads["count"]) == 1
+            else writes[-1]
+        )
+        service_module._bluevela_job_is_active = lambda *args, **kwargs: False
+        service_module._wait_for_remote_file = lambda *args, **kwargs: "host"
+        service_module._wait_for_bluevela_endpoint = lambda *args, **kwargs: None
+        service_module._write_remote_json = lambda login, path, payload: writes.append(payload)
+        service_module._run_ssh = lambda login, command: (
+            ""
+            if command.startswith("mkdir -p ") or command.startswith("rm -f ")
+            else "Job <456> is submitted to queue <normal>."
+        )
+        service_module.build_bluevela_vllm_command = lambda *args, **kwargs: "launch-vllm"
+        service_module.uuid.uuid4 = lambda: _UUID(next(uuids))
+        server = service_module._resolve_bluevela_server(
+            _spec(),
+            state=state,
+            state_path=state_path,
+            reuse_key="reuse-key",
+            workspace_signature="ws-1",
+            existing_server=None,
+        )
+    finally:
+        service_module._acquire_remote_lock = original_acquire
+        service_module._release_remote_lock = original_release
+        service_module._read_remote_json = original_read
+        service_module._bluevela_job_is_active = original_job_active
+        service_module._wait_for_remote_file = original_wait_file
+        service_module._wait_for_bluevela_endpoint = original_wait_endpoint
+        service_module._write_remote_json = original_write
+        service_module._run_ssh = original_run_ssh
+        service_module.build_bluevela_vllm_command = original_build
+        service_module.uuid.uuid4 = original_uuid4
+
+    assert server.metadata["job_id"] == "456"
+    assert [payload["status"] for payload in writes] == ["pending", "healthy"]
+
+
+def test_bluevela_server_resolution_retries_failed_pending_server(tmp_path: Path) -> None:
+    state = LauncherState()
+    state_path = tmp_path / "launch-state.json"
+    remote = asdict(
+        ServerHandle(
+            id="server-pending",
+            target=TargetKind.BLUEVELA.value,
+            reuse_key="reuse-key",
+            endpoint="http://pending:8331/v1",
+            status="pending",
+            metadata={
+                "job_id": "123",
+                "login": "user@login3.example.com",
+                "registry_path": "/u/user/mcode-launch/state/servers/reuse-key.json",
+                "run_dir": "/u/user/mcode-launch/runs/r1",
+                "workspace_signature": "ws-1",
+            },
+            log_path="/u/user/mcode-launch/runs/r1/vllm.log",
+        )
+    )
+    writes: list[dict[str, object]] = []
+    commands: list[str] = []
+    original_acquire = service_module._acquire_remote_lock
+    original_release = service_module._release_remote_lock
+    original_read = service_module._read_remote_json
+    original_job_active = service_module._bluevela_job_is_active
+    original_wait_file = service_module._wait_for_remote_file
+    original_wait_endpoint = service_module._wait_for_bluevela_endpoint
+    original_write = service_module._write_remote_json
+    original_run_ssh = service_module._run_ssh
+    original_build = service_module.build_bluevela_vllm_command
+    original_uuid4 = service_module.uuid.uuid4
+    uuids = iter(["aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb"])
+
+    class _UUID:
+        def __init__(self, value: str) -> None:
+            self.hex = value
+
+    try:
+        service_module._acquire_remote_lock = lambda *args, **kwargs: None
+        service_module._release_remote_lock = lambda *args, **kwargs: None
+        reads = {"count": 0}
+
+        def _read(*args, **kwargs):
+            reads["count"] += 1
+            if reads["count"] <= 2:
+                return remote
+            return writes[-1] if writes else None
+
+        service_module._read_remote_json = _read
+        job_checks = iter([True, False])
+        service_module._bluevela_job_is_active = lambda *args, **kwargs: next(job_checks)
+        service_module._wait_for_remote_file = lambda *args, **kwargs: "host"
+        wait_calls = {"count": 0}
+
+        def _wait_endpoint(*args, **kwargs):
+            wait_calls["count"] += 1
+            if wait_calls["count"] == 1:
+                raise RuntimeError("Blue Vela vLLM job failed before endpoint was healthy")
+
+        service_module._wait_for_bluevela_endpoint = _wait_endpoint
+        service_module._write_remote_json = lambda login, path, payload: writes.append(payload)
+        service_module._run_ssh = lambda login, command: (
+            commands.append(command)
+            or (
+                ""
+                if command.startswith("mkdir -p ") or command.startswith("rm -f ")
+                else "Job <456> is submitted to queue <normal>."
+            )
+        )
+        service_module.build_bluevela_vllm_command = lambda *args, **kwargs: "launch-vllm"
+        service_module.uuid.uuid4 = lambda: _UUID(next(uuids))
+        server = service_module._resolve_bluevela_server(
+            _spec(),
+            state=state,
+            state_path=state_path,
+            reuse_key="reuse-key",
+            workspace_signature="ws-1",
+            existing_server=None,
+        )
+    finally:
+        service_module._acquire_remote_lock = original_acquire
+        service_module._release_remote_lock = original_release
+        service_module._read_remote_json = original_read
+        service_module._bluevela_job_is_active = original_job_active
+        service_module._wait_for_remote_file = original_wait_file
+        service_module._wait_for_bluevela_endpoint = original_wait_endpoint
+        service_module._write_remote_json = original_write
+        service_module._run_ssh = original_run_ssh
+        service_module.build_bluevela_vllm_command = original_build
+        service_module.uuid.uuid4 = original_uuid4
+
+    assert server.status == "healthy"
+    assert server.metadata["job_id"] == "456"
+    assert any(
+        command.startswith("rm -f /u/user/mcode-launch/state/servers/")
+        and command.endswith(".json")
+        for command in commands
+    )
+    assert "launch-vllm" in commands
+    assert wait_calls["count"] == 2
+    assert [payload["status"] for payload in writes] == ["pending", "healthy"]
 
 
 def test_bluevela_remote_lock_creates_parent_directory() -> None:
@@ -393,12 +740,67 @@ def test_bluevela_launch_records_real_shard_log_paths(tmp_path: Path) -> None:
     assert result.ok is True
     run = state.runs[0]
     assert run.log_path == "/u/user/mcode-launch/runs/run-aaaaaaaa/benchmark-shard-0.log"
+    assert run.metadata["job_ids"] == ["123", "123", "123", "123"]
     assert run.metadata["log_paths"] == [
         "/u/user/mcode-launch/runs/run-aaaaaaaa/benchmark-shard-0.log",
         "/u/user/mcode-launch/runs/run-aaaaaaaa/benchmark-shard-1.log",
         "/u/user/mcode-launch/runs/run-aaaaaaaa/benchmark-shard-2.log",
         "/u/user/mcode-launch/runs/run-aaaaaaaa/benchmark-shard-3.log",
     ]
+
+
+def test_bluevela_launch_normalizes_job_ids_from_bsub_output(tmp_path: Path) -> None:
+    state = LauncherState()
+    state_path = tmp_path / "launch-state.json"
+    original_launch_sync = service_module.launch_sync
+    original_find_server = service_module._find_existing_server
+    original_resolve_server = service_module._resolve_bluevela_server
+    original_resolve_podman = service_module._resolve_bluevela_podman_storage
+    original_run_ssh = service_module._run_ssh
+    original_uuid4 = service_module.uuid.uuid4
+    uuids = iter(["aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb"])
+
+    class _UUID:
+        def __init__(self, value: str) -> None:
+            self.hex = value
+
+    try:
+        service_module.launch_sync = lambda spec, **kwargs: CommandResult(
+            ok=True,
+            message="sync",
+            data={"signature": "ws-1", "remote_path": "/u/user/mcode-launch/workspaces/ws-1"},
+        )
+        service_module._resolve_bluevela_podman_storage = lambda target: ("graphroot", "runroot")
+        service_module._find_existing_server = lambda *args, **kwargs: None
+        service_module._resolve_bluevela_server = lambda *args, **kwargs: ServerHandle(
+            id="server-1",
+            target=TargetKind.BLUEVELA.value,
+            reuse_key="reuse-key",
+            endpoint="http://host:8331/v1",
+            status="healthy",
+            metadata={"login": "user@login3.example.com", "job_id": "1"},
+            log_path="/u/user/mcode-launch/runs/server/vllm.log",
+        )
+        service_module._run_ssh = (
+            lambda *args, **kwargs: "Job <845767> is submitted to queue <normal>."
+        )
+        service_module.uuid.uuid4 = lambda: _UUID(next(uuids))
+        result = service_module._launch_bluevela(
+            _spec(),
+            repo_root=tmp_path,
+            state=state,
+            state_path=state_path,
+        )
+    finally:
+        service_module.launch_sync = original_launch_sync
+        service_module._find_existing_server = original_find_server
+        service_module._resolve_bluevela_server = original_resolve_server
+        service_module._resolve_bluevela_podman_storage = original_resolve_podman
+        service_module._run_ssh = original_run_ssh
+        service_module.uuid.uuid4 = original_uuid4
+
+    assert result.ok is True
+    assert state.runs[0].metadata["job_ids"] == ["845767", "845767", "845767", "845767"]
 
 
 def test_launch_attach_follows_all_bluevela_logs(tmp_path: Path) -> None:
@@ -415,7 +817,7 @@ def test_launch_attach_follows_all_bluevela_logs(tmp_path: Path) -> None:
     )
     state = LauncherState(runs=[run])
     state_path = tmp_path / "launch-state.json"
-    service_module.save_state(state_path, state)
+    update_state(state_path, lambda current: setattr(current, "runs", state.runs))
     original_run = service_module.subprocess.run
     commands: list[list[str]] = []
 

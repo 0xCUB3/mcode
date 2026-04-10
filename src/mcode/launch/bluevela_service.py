@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
+from mcode.launch.lsf import extract_lsf_job_id
 from mcode.launch.models import (
     BlueVelaTargetSpec,
     CommandResult,
@@ -32,7 +33,8 @@ def launch_bluevela(
     run_ssh: Callable[[str, str], str],
     build_vllm_command: Callable[..., str],
     build_bsub_benchmark_command: Callable[..., str],
-    save_state: Callable[[Path | None, LauncherState], None],
+    merge_workspace: Callable[[Path | None, WorkspaceHandle], WorkspaceHandle],
+    merge_run: Callable[[Path | None, RunHandle], RunHandle],
 ) -> CommandResult:
     if spec.yes:
         resolve_podman_storage(spec.target)
@@ -43,6 +45,7 @@ def launch_bluevela(
         ),
         repo_root=repo_root,
         state_path=state_path,
+        state=state,
     )
     if not sync_result.ok:
         return sync_result
@@ -52,7 +55,6 @@ def launch_bluevela(
     if spec.yes:
         server = resolve_bluevela_server(
             spec,
-            state=state,
             state_path=state_path,
             reuse_key=reuse_key,
             workspace_signature=workspace_signature,
@@ -78,8 +80,10 @@ def launch_bluevela(
         )
 
     workspace = WorkspaceHandle(signature=workspace_signature, path=sync_result.data["remote_path"])
-    if not any(entry.signature == workspace.signature for entry in state.workspaces):
-        state.workspaces.append(workspace)
+    state.workspaces = [
+        entry for entry in state.workspaces if entry.signature != workspace.signature
+    ] + [workspace]
+    merge_workspace(state_path, workspace)
 
     run_id = f"run-{uuid.uuid4().hex[:8]}"
     run_dir = Path(spec.target.workspace_root) / "runs" / run_id
@@ -103,9 +107,11 @@ def launch_bluevela(
         )
         for shard_index in range(spec.benchmark.parallelism)
     ]
-    job_ids = (
-        [run_ssh(spec.target.login, command).strip() for command in commands] if spec.yes else []
-    )
+    job_ids: list[str] = []
+    if spec.yes:
+        for command in commands:
+            output = run_ssh(spec.target.login, command).strip()
+            job_ids.append(extract_lsf_job_id(output) or output)
     run = RunHandle(
         id=run_id,
         target=TargetKind.BLUEVELA.value,
@@ -122,8 +128,8 @@ def launch_bluevela(
         },
         log_path=log_paths[0],
     )
-    state.runs.append(run)
-    save_state(state_path, state)
+    state.runs = [entry for entry in state.runs if entry.id != run.id] + [run]
+    merge_run(state_path, run)
     return CommandResult(
         ok=True,
         message="\n".join(job_ids) if spec.yes else "\n".join(commands),

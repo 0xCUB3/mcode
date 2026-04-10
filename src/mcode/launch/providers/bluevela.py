@@ -52,6 +52,19 @@ def _bluevela_podman_base_dirs(target: BlueVelaTargetSpec) -> tuple[str, str]:
     return graphroot.rstrip("/"), runroot.rstrip("/")
 
 
+def _build_hf_offline_probe(hf_cache: str, model: str) -> str:
+    if "/" not in model or model.startswith("/"):
+        return ""
+    owner, name = model.split("/", 1)
+    cache_dir = f"{hf_cache}/hub/models--{owner}--{name}"
+    return (
+        f"if [ -d {shlex.quote(cache_dir)} ]; then "
+        "export HF_HUB_OFFLINE=1; "
+        "export TRANSFORMERS_OFFLINE=1; "
+        "fi; "
+    )
+
+
 def build_bluevela_vllm_command(spec: LaunchSpec, *, run_dir: Path) -> str:
     target = spec.target
     assert isinstance(target, BlueVelaTargetSpec)
@@ -60,6 +73,9 @@ def build_bluevela_vllm_command(spec: LaunchSpec, *, run_dir: Path) -> str:
     log_path = run_dir / "vllm.log"
     host_file = run_dir / "vllm_host.txt"
     hf_cache = f"{target.shared_root.rstrip('/')}/hf-cache"
+    offline_probe = _build_hf_offline_probe(hf_cache, spec.model)
+    container_hf_home = "/root/.cache/huggingface"
+    container_hf_hub_cache = f"{container_hf_home}/hub"
     graphroot_base, runroot_base = _bluevela_podman_base_dirs(target)
     return (
         "bsub "
@@ -79,15 +95,19 @@ def build_bluevela_vllm_command(spec: LaunchSpec, *, run_dir: Path) -> str:
         'RUNROOT="${RUNROOT_BASE}/${HOST_TAG}/runroot"; '
         f'mkdir -p "$GRAPHROOT" "$RUNROOT" {shlex.quote(hf_cache)}; '
         f"if [ -f {shlex.quote(target.hf_env)} ]; then . {shlex.quote(target.hf_env)}; fi; "
+        f"{offline_probe}"
         "export XDG_RUNTIME_DIR=/tmp/podman-run-$(id -u); "
         "mkdir -p /tmp/podman-run-$(id -u); "
         "podman --cgroup-manager=cgroupfs --storage-driver=overlay "
         '--root="$GRAPHROOT" --runroot="$RUNROOT" run --rm --device nvidia.com/gpu=all '
         "--security-opt=label=disable --ipc=host --net=host "
         "--storage-opt ignore_chown_errors=true "
+        "-e HF_HUB_OFFLINE -e TRANSFORMERS_OFFLINE "
         '-e HF_TOKEN="${HF_TOKEN:-}" '
         '-e HUGGINGFACE_HUB_TOKEN="${HF_TOKEN:-}" '
-        f"-v {shlex.quote(hf_cache)}:/root/.cache/huggingface "
+        f'-e HF_HOME="{container_hf_home}" '
+        f'-e HF_HUB_CACHE="{container_hf_hub_cache}" '
+        f"-v {shlex.quote(hf_cache)}:{container_hf_home} "
         f"{shlex.quote(image)} "
         f"--model {shlex.quote(spec.model)} "
         f"--port {spec.serving.port} "

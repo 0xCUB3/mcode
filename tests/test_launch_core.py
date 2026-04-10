@@ -8,7 +8,7 @@ from mcode.launch import service as service_module
 from mcode.launch.config import LaunchConfig, load_launch_config
 from mcode.launch.models import SyncMode
 from mcode.launch.profiles import resolve_serving_profile
-from mcode.launch.state import LauncherState, RunHandle, ServerHandle, load_state, save_state
+from mcode.launch.state import LauncherState, RunHandle, ServerHandle, load_state, update_state
 from mcode.launch.sync import (
     SyncPlan,
     WorkspaceSignatureInput,
@@ -119,7 +119,14 @@ def test_state_round_trip(tmp_path: Path) -> None:
         ],
     )
 
-    save_state(path, state)
+    update_state(
+        path,
+        lambda current: (
+            setattr(current, "servers", state.servers),
+            setattr(current, "runs", state.runs),
+            setattr(current, "workspaces", state.workspaces),
+        ),
+    )
     loaded = load_state(path)
 
     assert loaded == state
