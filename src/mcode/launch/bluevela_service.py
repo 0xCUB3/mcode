@@ -39,6 +39,9 @@ def launch_bluevela(
     reporter: ProgressReporter | None = None,
 ) -> CommandResult:
     reporter = reporter or NullProgressReporter()
+    sync_reporter = reporter.child(5, 35)
+    server_reporter = reporter.child(35, 70)
+    shard_reporter = reporter.child(70, 95)
     if spec.yes:
         resolve_podman_storage(spec.target)
     sync_result = launch_sync(
@@ -49,6 +52,7 @@ def launch_bluevela(
         repo_root=repo_root,
         state_path=state_path,
         state=state,
+        reporter=sync_reporter,
     )
     if not sync_result.ok:
         return sync_result
@@ -104,7 +108,7 @@ def launch_bluevela(
 
     try:
         if spec.yes:
-            reporter.set(35, "Starting or reusing Blue Vela server")
+            server_reporter.set(0, "Starting or reusing Blue Vela server")
             server = resolve_bluevela_server(
                 spec,
                 state_path=state_path,
@@ -112,6 +116,7 @@ def launch_bluevela(
                 workspace_signature=workspace_signature,
                 existing_server=existing_server,
                 on_pending_server=_record_pending_run,
+                reporter=server_reporter,
             )
         elif existing_server and spec.reuse == ReuseMode.PREFER:
             server = existing_server
@@ -173,8 +178,8 @@ def launch_bluevela(
         for command in commands:
             output = run_ssh(spec.target.login, command).strip()
             job_ids.append(extract_lsf_job_id(output) or output)
-            reporter.set(
-                65 + int((len(job_ids) / len(commands)) * 25),
+            shard_reporter.set(
+                int((len(job_ids) / len(commands)) * 100),
                 "Submitting benchmark shards",
             )
     run = replace(

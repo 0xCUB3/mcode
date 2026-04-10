@@ -13,6 +13,7 @@ from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from mcode.launch.bluevela_service import launch_bluevela as launch_bluevela_impl
@@ -492,7 +493,6 @@ def launch_run(
         return CommandResult(ok=False, message="--follow requires --yes")
     state = load_state(state_path)
     if isinstance(spec.target, BlueVelaTargetSpec):
-        reporter.set(5, "Syncing workspace")
         result = _launch_bluevela(
             spec,
             repo_root=repo_root,
@@ -529,18 +529,17 @@ def _launch_bluevela(
     state_path: Path | None,
     reporter: ProgressReporter | None = None,
 ) -> CommandResult:
+    reporter = reporter or NullProgressReporter()
     return launch_bluevela_impl(
         spec,
         repo_root=repo_root,
         state=state,
         state_path=state_path,
-        launch_sync=lambda *args, **kwargs: _launch_sync(*args, reporter=reporter, **kwargs),
+        launch_sync=_launch_sync,
         resolve_podman_storage=_resolve_bluevela_podman_storage,
         build_server_reuse_key=build_bluevela_server_reuse_key,
         find_existing_server=_find_existing_server,
-        resolve_bluevela_server=lambda *args, **kwargs: _resolve_bluevela_server(
-            *args, reporter=reporter, **kwargs
-        ),
+        resolve_bluevela_server=_resolve_bluevela_server,
         run_ssh=_run_ssh,
         build_vllm_command=build_bluevela_vllm_command,
         build_bsub_benchmark_command=_build_bluevela_bsub_benchmark_command,
@@ -824,12 +823,16 @@ def _wait_for_bluevela_endpoint(
     log_path: str,
     job_id: str | None = None,
     timeout_s: int = 300,
+    reporter: ProgressReporter | None = None,
 ) -> None:
+    reporter = reporter or NullProgressReporter()
+    host = urlsplit(base_url).hostname or "remote host"
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         if _remote_endpoint_is_healthy(login, base_url):
             return
         log_tail = _run_ssh(login, f"test -f {log_path} && tail -n 20 {log_path} || true")
+        reporter.set(65, _describe_bluevela_health_wait(host, log_tail))
         failed = any(marker in log_tail for marker in BLUEVELA_VLLM_FAILED_MARKERS)
         if failed:
             raise RuntimeError(
@@ -841,6 +844,33 @@ def _wait_for_bluevela_endpoint(
             )
         time.sleep(2)
     raise RuntimeError(f"Endpoint did not become healthy: {base_url}")
+
+
+def _describe_bluevela_health_wait(host: str, log_tail: str) -> str:
+    lowered = log_tail.lower()
+    if any(
+        marker in lowered
+        for marker in (
+            "trying to pull",
+            "copying blob",
+            "getting image source signatures",
+            "writing manifest to image destination",
+            "storing signatures",
+        )
+    ):
+        return f"Pulling vLLM image on {host}"
+    if any(
+        marker in lowered
+        for marker in (
+            "non-default args:",
+            "api server",
+            "engine process",
+            "uvicorn",
+            "starting vllm",
+        )
+    ):
+        return f"Starting vLLM on {host}"
+    return f"Waiting for server health on {host}"
 
 
 def _read_remote_workspace_manifest(
@@ -1072,6 +1102,7 @@ def _resolve_bluevela_server(
                 endpoint,
                 log_path=pending_server.log_path,
                 job_id=extract_lsf_job_id(pending_server.metadata.get("job_id")),
+                reporter=reporter,
             )
             server = replace(pending_server, endpoint=endpoint, status="healthy")
             break

@@ -26,6 +26,9 @@ class ProgressReporter:
     def finish(self, description: str) -> None:
         self.set(100, description)
 
+    def child(self, start: int, end: int) -> ProgressReporter:
+        return MappedProgressReporter(parent=self, start=start, end=end)
+
 
 class NullProgressReporter(ProgressReporter):
     pass
@@ -47,6 +50,7 @@ class RichProgressReporter(ProgressReporter):
             transient=True,
         )
         self._task_id: int | None = None
+        self._completed = 0
 
     def __enter__(self) -> RichProgressReporter:
         self._progress.__enter__()
@@ -58,5 +62,31 @@ class RichProgressReporter(ProgressReporter):
 
     def set(self, completed: int, description: str) -> None:
         assert self._task_id is not None
-        self._progress.update(self._task_id, completed=completed, description=description)
+        self._completed = max(self._completed, completed)
+        self._progress.update(
+            self._task_id,
+            completed=self._completed,
+            description=description,
+        )
         self._progress.refresh()
+
+
+@dataclass
+class MappedProgressReporter(ProgressReporter):
+    parent: ProgressReporter
+    start: int
+    end: int
+
+    def __post_init__(self) -> None:
+        self._completed = 0
+
+    def set(self, completed: int, description: str) -> None:
+        self._completed = max(self._completed, completed)
+        span = self.end - self.start
+        mapped = self.start + int((self._completed / 100) * span)
+        self.parent.set(mapped, description)
+
+    def child(self, start: int, end: int) -> ProgressReporter:
+        base_start = self.start + int(((max(0, min(100, start))) / 100) * (self.end - self.start))
+        base_end = self.start + int(((max(0, min(100, end))) / 100) * (self.end - self.start))
+        return MappedProgressReporter(parent=self.parent, start=base_start, end=base_end)

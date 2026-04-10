@@ -261,6 +261,15 @@ def test_sync_bluevela_workspace_uses_remote_json_helper_for_manifest(tmp_path: 
     ]
 
 
+def test_describe_bluevela_health_wait_reports_image_pull() -> None:
+    description = service_module._describe_bluevela_health_wait(
+        "p6-r05-n3.bluevela.rmf.ibm.com",
+        "Trying to pull docker.io/vllm/vllm-openai:v0.17.0...\nCopying blob sha256:123",
+    )
+
+    assert description == "Pulling vLLM image on p6-r05-n3.bluevela.rmf.ibm.com"
+
+
 def test_bluevela_launch_preview_computes_sync_without_applying(tmp_path: Path) -> None:
     state = LauncherState()
     state_path = tmp_path / "launch-state.json"
