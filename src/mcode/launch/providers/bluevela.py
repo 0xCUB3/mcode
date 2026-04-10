@@ -152,13 +152,17 @@ def build_bluevela_benchmark_command(
         f"RUNROOT_BASE={shlex.quote(runroot_base)}; "
         "HOST_TAG=$(hostname -s); "
         'GRAPHROOT="${GRAPHROOT_BASE}/${HOST_TAG}/graphroot"; '
-        'RUNROOT="${RUNROOT_BASE}/${HOST_TAG}/runroot"; '
+        'RUNROOT=/tmp/podman-mcode-$(id -u)-swb-${LSB_JOBID:-0}/runroot; '
         f'mkdir -p "$GRAPHROOT" "$RUNROOT" {shlex.quote(hf_cache)}; '
         f"if [ -f {shlex.quote(target.hf_env)} ]; then . {shlex.quote(target.hf_env)}; fi; "
         "export XDG_RUNTIME_DIR=/tmp/podman-$(id -u)-swb-${LSB_JOBID:-0}; "
         "mkdir -p ${XDG_RUNTIME_DIR}; "
         "SOCK=${XDG_RUNTIME_DIR}/podman.sock; "
         "rm -f ${SOCK}; "
+        'rm -rf "$RUNROOT/networks/rootless-netns"; '
+        "podman --cgroup-manager=cgroupfs --storage-driver=overlay "
+        '--root="$GRAPHROOT" --runroot="$RUNROOT" '
+        "rm -af >/dev/null 2>&1 || true; "
         "podman --cgroup-manager=cgroupfs --storage-driver=overlay "
         '--root="$GRAPHROOT" --runroot="$RUNROOT" '
         "system service --time=0 unix://${SOCK} & "

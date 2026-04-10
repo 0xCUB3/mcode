@@ -113,11 +113,18 @@ def test_bluevela_benchmark_command_uses_parallelism_and_openai_backend() -> Non
     assert "export OPENAI_BASE_URL=http://host:8331/v1" in command
     assert "podman --cgroup-manager=cgroupfs --storage-driver=overlay" in command
     assert 'GRAPHROOT="${GRAPHROOT_BASE}/${HOST_TAG}/graphroot"' in command
-    assert 'RUNROOT="${RUNROOT_BASE}/${HOST_TAG}/runroot"' in command
     assert "GRAPHROOT_BASE=/proj/shared/user/podman" in command
     assert "RUNROOT_BASE=/proj/shared/user/podman" in command
     assert '--root="$GRAPHROOT"' in command
     assert '--runroot="$RUNROOT"' in command
+    assert 'RUNROOT="${RUNROOT_BASE}/${HOST_TAG}/runroot"' not in command
+    assert 'RUNROOT=/tmp/podman-mcode-$(id -u)-swb-${LSB_JOBID:-0}/runroot' in command
+    assert 'rm -rf "$RUNROOT/networks/rootless-netns"' in command
+    assert (
+        'podman --cgroup-manager=cgroupfs --storage-driver=overlay '
+        '--root="$GRAPHROOT" --runroot="$RUNROOT" rm -af >/dev/null 2>&1 || true;'
+        in command
+    )
     assert 'export DOCKER_HOST="unix://${SOCK}"' in command
     assert "client.ping()" in command
 
