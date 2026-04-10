@@ -271,6 +271,18 @@ def test_describe_bluevela_health_wait_reports_image_pull() -> None:
     assert description == "Pulling vLLM image on p6-r05-n3.bluevela.rmf.ibm.com"
 
 
+def test_describe_bluevela_health_wait_reports_cuda_graph_capture() -> None:
+    description = service_module._describe_bluevela_health_wait(
+        "p2-r05-n2.bluevela.rmf.ibm.com",
+        (
+            "Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  47%|████▋"
+            "     | 24/51 [00:02<00:02, 11.08it/s]"
+        ),
+    )
+
+    assert description == "Capturing CUDA graphs on p2-r05-n2.bluevela.rmf.ibm.com (24/51)"
+
+
 def test_bluevela_launch_preview_computes_sync_without_applying(tmp_path: Path) -> None:
     state = LauncherState()
     state_path = tmp_path / "launch-state.json"
@@ -583,6 +595,48 @@ def test_wait_for_bluevela_endpoint_fails_immediately_on_invalid_tool_parser() -
 
     assert "failed before endpoint was healthy" in message
     assert "invalid tool call parser: gemma4" in message
+
+
+def test_wait_for_bluevela_endpoint_allows_active_log_progress() -> None:
+    original_remote_health = service_module._remote_endpoint_is_healthy
+    original_run_ssh = service_module._run_ssh
+    original_job_active = service_module._bluevela_job_is_active
+    original_sleep = service_module.time.sleep
+    original_time = service_module.time.time
+
+    health_checks = iter([False, False, False, True])
+    log_tails = iter(
+        [
+            "Copying blob sha256:1",
+            "Loading safetensors checkpoint shards:  50% Completed | 1/2 [00:45<00:45, 45.16s/it]",
+            (
+                "Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  47%|████▋"
+                "     | 24/51 [00:02<00:02, 11.08it/s]"
+            ),
+        ]
+    )
+    now = {"value": 0.0}
+
+    try:
+        service_module._remote_endpoint_is_healthy = lambda *args, **kwargs: next(health_checks)
+        service_module._run_ssh = lambda *args, **kwargs: next(log_tails)
+        service_module._bluevela_job_is_active = lambda *args, **kwargs: True
+        service_module.time.time = lambda: now["value"]
+        service_module.time.sleep = lambda seconds: now.__setitem__("value", now["value"] + seconds)
+        service_module._wait_for_bluevela_endpoint(
+            "user@login3.example.com",
+            "http://host:8331/v1",
+            log_path="/u/user/run/vllm.log",
+            job_id="860088",
+            timeout_s=1,
+            max_timeout_s=10,
+        )
+    finally:
+        service_module._remote_endpoint_is_healthy = original_remote_health
+        service_module._run_ssh = original_run_ssh
+        service_module._bluevela_job_is_active = original_job_active
+        service_module.time.sleep = original_sleep
+        service_module.time.time = original_time
 
 
 def test_bluevela_server_resolution_reuses_remote_registry(tmp_path: Path) -> None:

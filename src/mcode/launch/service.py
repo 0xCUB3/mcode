@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -824,16 +825,25 @@ def _wait_for_bluevela_endpoint(
     log_path: str,
     job_id: str | None = None,
     timeout_s: int = 300,
+    max_timeout_s: int = 1800,
     reporter: ProgressReporter | None = None,
 ) -> None:
     reporter = reporter or NullProgressReporter()
     host = urlsplit(base_url).hostname or "remote host"
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
+    started_at = time.time()
+    last_progress_at = started_at
+    last_log_tail = ""
+    while time.time() - started_at < max_timeout_s:
         if _remote_endpoint_is_healthy(login, base_url):
             return
         log_tail = _run_ssh(login, f"test -f {log_path} && tail -n 20 {log_path} || true")
-        reporter.set(65, _describe_bluevela_health_wait(host, log_tail))
+        if log_tail != last_log_tail:
+            last_progress_at = time.time()
+            last_log_tail = log_tail
+        reporter.set(
+            _bluevela_health_wait_progress(log_tail),
+            _describe_bluevela_health_wait(host, log_tail),
+        )
         failed = any(marker in log_tail for marker in BLUEVELA_VLLM_FAILED_MARKERS)
         if failed:
             raise RuntimeError(
@@ -842,6 +852,11 @@ def _wait_for_bluevela_endpoint(
         if job_id and not _bluevela_job_is_active(login, job_id):
             raise RuntimeError(
                 f"Blue Vela vLLM job exited before endpoint was healthy:\n{log_tail}"
+            )
+        if time.time() - last_progress_at > timeout_s:
+            raise RuntimeError(
+                "Endpoint did not become healthy before startup progress stalled: "
+                f"{base_url}\n{log_tail}"
             )
         time.sleep(2)
     raise RuntimeError(f"Endpoint did not become healthy: {base_url}")
@@ -871,7 +886,55 @@ def _describe_bluevela_health_wait(host: str, log_tail: str) -> str:
         )
     ):
         return f"Starting vLLM on {host}"
+    capture = re.search(r"Capturing CUDA graphs.*?\|\s*(\d+)/(\d+)\s*\[", log_tail)
+    if capture:
+        return f"Capturing CUDA graphs on {host} ({capture.group(1)}/{capture.group(2)})"
+    if "loading safetensors checkpoint shards" in lowered or "starting to load model" in lowered:
+        return f"Loading model weights on {host}"
+    if "gpu kv cache size" in lowered or "available kv cache memory" in lowered:
+        return f"Allocating KV cache on {host}"
+    if "compile and warming up model" in lowered or "initial profiling/warmup run took" in lowered:
+        return f"Warming up model on {host}"
     return f"Waiting for server health on {host}"
+
+
+def _bluevela_health_wait_progress(log_tail: str) -> int:
+    lowered = log_tail.lower()
+    if any(
+        marker in lowered
+        for marker in (
+            "trying to pull",
+            "copying blob",
+            "getting image source signatures",
+            "writing manifest to image destination",
+            "storing signatures",
+        )
+    ):
+        return 35
+    if "loading safetensors checkpoint shards" in lowered:
+        match = re.search(r"(\d+)%\s+Completed", log_tail)
+        if match:
+            return 40 + int(int(match.group(1)) * 0.2)
+        return 45
+    if "starting to load model" in lowered or "resolved architecture" in lowered:
+        return 45
+    if any(
+        marker in lowered
+        for marker in (
+            "dynamo bytecode transform time",
+            "compiling a graph",
+            "torch.compile took",
+        )
+    ):
+        return 60
+    if "gpu kv cache size" in lowered or "available kv cache memory" in lowered:
+        return 70
+    capture = re.search(r"Capturing CUDA graphs.*?(\d+)%", log_tail)
+    if capture:
+        return 75 + int(int(capture.group(1)) * 0.2)
+    if "compile and warming up model" in lowered or "initial profiling/warmup run took" in lowered:
+        return 90
+    return 30
 
 
 def _read_remote_workspace_manifest(
