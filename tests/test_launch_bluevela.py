@@ -657,6 +657,40 @@ def test_wait_for_bluevela_endpoint_allows_active_log_progress() -> None:
         service_module.time.time = original_time
 
 
+def test_wait_for_bluevela_endpoint_does_not_fail_while_job_is_running() -> None:
+    original_remote_health = service_module._remote_endpoint_is_healthy
+    original_run_ssh = service_module._run_ssh
+    original_job_active = service_module._bluevela_job_is_active
+    original_sleep = service_module.time.sleep
+
+    health_checks = iter([False, False, True])
+    log_tails = iter(
+        [
+            "Copying blob sha256:1",
+            "Copying blob sha256:1",
+        ]
+    )
+
+    try:
+        service_module._remote_endpoint_is_healthy = lambda *args, **kwargs: next(health_checks)
+        service_module._run_ssh = lambda *args, **kwargs: next(log_tails)
+        service_module._bluevela_job_is_active = lambda *args, **kwargs: True
+        service_module.time.sleep = lambda *_args, **_kwargs: None
+        service_module._wait_for_bluevela_endpoint(
+            "user@login3.example.com",
+            "http://host:8331/v1",
+            log_path="/u/user/run/vllm.log",
+            job_id="860088",
+            timeout_s=1,
+            max_timeout_s=2,
+        )
+    finally:
+        service_module._remote_endpoint_is_healthy = original_remote_health
+        service_module._run_ssh = original_run_ssh
+        service_module._bluevela_job_is_active = original_job_active
+        service_module.time.sleep = original_sleep
+
+
 def test_bluevela_server_resolution_reuses_remote_registry(tmp_path: Path) -> None:
     state = LauncherState()
     state_path = tmp_path / "launch-state.json"

@@ -834,6 +834,7 @@ def _wait_for_bluevela_endpoint(
     last_progress_at = started_at
     last_log_tail = ""
     while time.time() - started_at < max_timeout_s:
+        job_active = bool(job_id and _bluevela_job_is_active(login, job_id))
         if _remote_endpoint_is_healthy(login, base_url):
             return
         log_tail = _run_ssh(login, f"test -f {log_path} && tail -n 20 {log_path} || true")
@@ -849,11 +850,11 @@ def _wait_for_bluevela_endpoint(
             raise RuntimeError(
                 f"Blue Vela vLLM job failed before endpoint was healthy:\n{log_tail}"
             )
-        if job_id and not _bluevela_job_is_active(login, job_id):
+        if job_id and not job_active:
             raise RuntimeError(
                 f"Blue Vela vLLM job exited before endpoint was healthy:\n{log_tail}"
             )
-        if time.time() - last_progress_at > timeout_s:
+        if not job_active and time.time() - last_progress_at > timeout_s:
             raise RuntimeError(
                 "Endpoint did not become healthy before startup progress stalled: "
                 f"{base_url}\n{log_tail}"
