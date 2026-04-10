@@ -307,6 +307,46 @@ def test_build_launch_spec_defaults_split_for_swebench_live() -> None:
     assert spec.benchmark.split == "verified"
 
 
+def test_build_launch_spec_normalizes_task_id_file_to_inline_ids(tmp_path: Path) -> None:
+    config = load_launch_config(Path("/does/not/exist"))
+    task_file = tmp_path / "task_ids.txt"
+    task_file.write_text("sympy__sympy-1\nsympy__sympy-2\n")
+
+    spec = service_module.build_launch_spec(
+        config=config,
+        target="bluevela",
+        model="google/gemma-4-31B-it",
+        benchmark="swebench-lite",
+        backend=None,
+        split=None,
+        loop_budget=1,
+        timeout=60,
+        parallelism=1,
+        limit=None,
+        task_ids=str(task_file),
+        reuse="prefer",
+        sync_mode="git-overlay",
+        ref="HEAD",
+        json_mode=False,
+        yes=False,
+        follow=False,
+        tp=1,
+        dp=1,
+        api_server_count=1,
+        max_model_len=32768,
+        gpu_memory_utilization=0.9,
+        port=None,
+        serving_profile=None,
+        no_auto_profile=False,
+        keep_alive=None,
+        ollama_num_parallel=None,
+        ollama_max_queue=None,
+        openai_base_url=None,
+    )
+
+    assert spec.benchmark.task_ids == "sympy__sympy-1,sympy__sympy-2"
+
+
 def test_remote_endpoint_health_uses_ssh_result() -> None:
     original = service_module._run_ssh_result
 

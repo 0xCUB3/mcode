@@ -88,6 +88,34 @@ BLUEVELA_VLLM_FAILED_MARKERS = (
 )
 
 
+def _normalize_task_ids_arg(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    try:
+        path = Path(raw)
+        exists = path.exists()
+    except OSError:
+        exists = False
+    if not exists:
+        return raw
+    text = path.read_text()
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        ids = [item.strip() for item in text.replace("\n", ",").split(",") if item.strip()]
+    else:
+        if isinstance(data, list):
+            ids = [str(item).strip() for item in data if str(item).strip()]
+        elif isinstance(data, dict) and "tasks" in data:
+            ids = []
+            for value in data["tasks"].values():
+                if isinstance(value, list):
+                    ids.extend(str(item).strip() for item in value if str(item).strip())
+        else:
+            raise ValueError(f"Cannot parse task IDs from {raw}")
+    return ",".join(ids)
+
+
 def build_launch_spec(
     *,
     config: LaunchConfig,
@@ -183,7 +211,7 @@ def build_launch_spec(
         timeout=timeout,
         parallelism=parallelism,
         limit=limit,
-        task_ids=task_ids,
+        task_ids=_normalize_task_ids_arg(task_ids),
     )
     sync = SyncSpec(mode=SyncMode(sync_mode), ref=ref)
     return LaunchSpec(
@@ -503,14 +531,13 @@ def launch_run(
             reporter=reporter,
         )
     elif isinstance(spec.target, LocalVllmTargetSpec):
-        reporter.set(20, "Resolving local vLLM server")
-        result = _launch_local_vllm(spec, state=state, state_path=state_path)
+        result = _launch_local_vllm(spec, state=state, state_path=state_path, reporter=reporter)
     elif isinstance(spec.target, LocalOllamaTargetSpec):
-        reporter.set(20, "Resolving local Ollama server")
-        result = _launch_local_ollama(spec, state=state, state_path=state_path)
+        result = _launch_local_ollama(spec, state=state, state_path=state_path, reporter=reporter)
     else:
-        reporter.set(40, "Preparing benchmark run")
-        result = _launch_openai_compatible(spec, state=state, state_path=state_path)
+        result = _launch_openai_compatible(
+            spec, state=state, state_path=state_path, reporter=reporter
+        )
     if spec.follow and result.ok and "run_id" in result.data:
         attach_result = launch_attach(result.data["run_id"], state_path=state_path)
         if not attach_result.ok:
@@ -552,7 +579,11 @@ def _launch_bluevela(
 
 
 def _launch_local_vllm(
-    spec: LaunchSpec, *, state: LauncherState, state_path: Path | None
+    spec: LaunchSpec,
+    *,
+    state: LauncherState,
+    state_path: Path | None,
+    reporter: ProgressReporter | None = None,
 ) -> CommandResult:
     return launch_local_vllm_impl(
         spec,
@@ -560,11 +591,16 @@ def _launch_local_vllm(
         state_path=state_path,
         resolve_local_server=_resolve_local_server,
         launch_local_benchmark=_launch_local_benchmark,
+        reporter=reporter,
     )
 
 
 def _launch_local_ollama(
-    spec: LaunchSpec, *, state: LauncherState, state_path: Path | None
+    spec: LaunchSpec,
+    *,
+    state: LauncherState,
+    state_path: Path | None,
+    reporter: ProgressReporter | None = None,
 ) -> CommandResult:
     return launch_local_ollama_impl(
         spec,
@@ -572,6 +608,7 @@ def _launch_local_ollama(
         state_path=state_path,
         resolve_local_server=_resolve_local_server,
         launch_local_benchmark=_launch_local_benchmark,
+        reporter=reporter,
     )
 
 
@@ -580,12 +617,14 @@ def _launch_openai_compatible(
     *,
     state: LauncherState,
     state_path: Path | None,
+    reporter: ProgressReporter | None = None,
 ) -> CommandResult:
     return launch_openai_compatible_impl(
         spec,
         state=state,
         state_path=state_path,
         launch_local_benchmark=_launch_local_benchmark,
+        reporter=reporter,
     )
 
 
@@ -865,6 +904,25 @@ def _wait_for_bluevela_endpoint(
 
 def _describe_bluevela_health_wait(host: str, log_tail: str) -> str:
     lowered = log_tail.lower()
+    # Check most-advanced stage first so early markers lingering in the
+    # 20-line tail don't shadow later stages.
+    if "compile and warming up model" in lowered or "initial profiling/warmup run took" in lowered:
+        return f"Warming up model on {host}"
+    if "capturing cuda graphs" in lowered:
+        return f"Capturing CUDA graphs on {host}"
+    if "gpu kv cache size" in lowered or "available kv cache memory" in lowered:
+        return f"Allocating KV cache on {host}"
+    if any(
+        marker in lowered
+        for marker in (
+            "dynamo bytecode transform time",
+            "compiling a graph",
+            "torch.compile took",
+        )
+    ):
+        return f"Compiling model on {host}"
+    if "loading safetensors checkpoint shards" in lowered or "starting to load model" in lowered:
+        return f"Loading model weights on {host}"
     if any(
         marker in lowered
         for marker in (
@@ -887,19 +945,38 @@ def _describe_bluevela_health_wait(host: str, log_tail: str) -> str:
         )
     ):
         return f"Starting vLLM on {host}"
-    if "capturing cuda graphs" in lowered:
-        return f"Capturing CUDA graphs on {host}"
-    if "loading safetensors checkpoint shards" in lowered or "starting to load model" in lowered:
-        return f"Loading model weights on {host}"
-    if "gpu kv cache size" in lowered or "available kv cache memory" in lowered:
-        return f"Allocating KV cache on {host}"
-    if "compile and warming up model" in lowered or "initial profiling/warmup run took" in lowered:
-        return f"Warming up model on {host}"
     return f"Waiting for server health on {host}"
 
 
 def _bluevela_health_wait_progress(log_tail: str) -> int:
+    """Return 0-100 progress within the health-wait phase.
+
+    Checks most-advanced stage first so early markers lingering in the
+    20-line tail don't shadow later stages.
+    """
     lowered = log_tail.lower()
+    if "compile and warming up model" in lowered or "initial profiling/warmup run took" in lowered:
+        return 95
+    if "capturing cuda graphs" in lowered:
+        return 80
+    if "gpu kv cache size" in lowered or "available kv cache memory" in lowered:
+        return 72
+    if any(
+        marker in lowered
+        for marker in (
+            "dynamo bytecode transform time",
+            "compiling a graph",
+            "torch.compile took",
+        )
+    ):
+        return 60
+    if "loading safetensors checkpoint shards" in lowered:
+        match = re.search(r"(\d+)%\s+Completed", log_tail)
+        if match:
+            return 25 + int(int(match.group(1)) * 0.30)
+        return 25
+    if "starting to load model" in lowered or "resolved architecture" in lowered:
+        return 20
     if any(
         marker in lowered
         for marker in (
@@ -910,30 +987,19 @@ def _bluevela_health_wait_progress(log_tail: str) -> int:
             "storing signatures",
         )
     ):
-        return 40
-    if "loading safetensors checkpoint shards" in lowered:
-        match = re.search(r"(\d+)%\s+Completed", log_tail)
-        if match:
-            return 45 + int(int(match.group(1)) * 0.15)
-        return 45
-    if "starting to load model" in lowered or "resolved architecture" in lowered:
-        return 45
+        return 10
     if any(
         marker in lowered
         for marker in (
-            "dynamo bytecode transform time",
-            "compiling a graph",
-            "torch.compile took",
+            "non-default args:",
+            "api server",
+            "engine process",
+            "uvicorn",
+            "starting vllm",
         )
     ):
-        return 60
-    if "gpu kv cache size" in lowered or "available kv cache memory" in lowered:
-        return 70
-    if "capturing cuda graphs" in lowered:
-        return 78
-    if "compile and warming up model" in lowered or "initial profiling/warmup run took" in lowered:
-        return 92
-    return 35
+        return 5
+    return 2
 
 
 def _read_remote_workspace_manifest(
@@ -1148,7 +1214,7 @@ def _resolve_bluevela_server(
     pending_server = _start_or_reuse_pending(allow_reuse=True)
     if on_pending_server is not None:
         on_pending_server(pending_server)
-    reporter.set(45, "Waiting for Blue Vela server startup")
+    reporter.set(5, "Waiting for Blue Vela server startup")
     retries = 0
     while True:
         assert pending_server is not None
@@ -1157,9 +1223,10 @@ def _resolve_bluevela_server(
             break
         try:
             host_path = Path(pending_server.metadata["run_dir"]) / "vllm_host.txt"
-            host = _wait_for_remote_file(target.login, str(host_path))
+            host = _wait_for_remote_file(
+                target.login, str(host_path), reporter=reporter, host_label=host_path.parent.name
+            )
             endpoint = f"http://{host}:{spec.serving.port}/v1"
-            reporter.set(55, f"Waiting for server health on {host}")
             _wait_for_bluevela_endpoint(
                 target.login,
                 endpoint,
@@ -1176,7 +1243,7 @@ def _resolve_bluevela_server(
             pending_server = _start_or_reuse_pending(allow_reuse=False)
             if on_pending_server is not None:
                 on_pending_server(pending_server)
-            reporter.set(45, "Retrying Blue Vela server startup")
+            reporter.set(5, "Retrying Blue Vela server startup")
 
     _acquire_remote_lock(target.login, lock_path)
     try:
@@ -1199,12 +1266,24 @@ def _resolve_bluevela_server(
     return _record_server(server)
 
 
-def _wait_for_remote_file(login: str, path: str, *, timeout_s: int = 300) -> str:
+def _wait_for_remote_file(
+    login: str,
+    path: str,
+    *,
+    timeout_s: int = 300,
+    reporter: ProgressReporter | None = None,
+    host_label: str | None = None,
+) -> str:
+    reporter = reporter or NullProgressReporter()
+    label = host_label or "remote host"
     deadline = time.time() + timeout_s
+    started = time.time()
     while time.time() < deadline:
         output = _run_ssh(login, f"test -f {path} && cat {path} || true")
         if output:
             return output.strip()
+        elapsed = int(time.time() - started)
+        reporter.set(3 + min(elapsed // 5, 4), f"Waiting for LSF job to start on {label}")
         time.sleep(2)
     raise RuntimeError(f"Remote file did not appear: {path}")
 

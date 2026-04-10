@@ -39,10 +39,11 @@ def launch_bluevela(
     reporter: ProgressReporter | None = None,
 ) -> CommandResult:
     reporter = reporter or NullProgressReporter()
-    sync_reporter = reporter.child(5, 35)
-    server_reporter = reporter.child(35, 70)
-    shard_reporter = reporter.child(70, 95)
+    sync_reporter = reporter.child(2, 20)
+    server_reporter = reporter.child(20, 85)
+    shard_reporter = reporter.child(85, 95)
     if spec.yes:
+        reporter.set(1, "Resolving Podman storage")
         resolve_podman_storage(spec.target)
     sync_result = launch_sync(
         replace(

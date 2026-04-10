@@ -289,7 +289,7 @@ def test_bluevela_health_wait_progress_advances_during_weight_loading() -> None:
         "Loading safetensors checkpoint shards:  50% Completed | 1/2 [00:45<00:45, 45.16s/it]"
     )
 
-    assert progress == 52
+    assert progress == 40
 
 
 def test_bluevela_health_wait_progress_advances_during_cuda_graph_capture() -> None:
@@ -298,7 +298,7 @@ def test_bluevela_health_wait_progress_advances_during_cuda_graph_capture() -> N
         "     | 24/51 [00:02<00:02, 11.08it/s]"
     )
 
-    assert progress == 78
+    assert progress == 80
 
 
 def test_bluevela_launch_preview_computes_sync_without_applying(tmp_path: Path) -> None:

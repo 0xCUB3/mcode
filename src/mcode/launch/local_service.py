@@ -17,6 +17,7 @@ from mcode.launch.models import (
     ServerHandle,
     TargetKind,
 )
+from mcode.launch.progress import NullProgressReporter, ProgressReporter
 from mcode.launch.providers.local_ollama import (
     build_ollama_serve_command,
     build_ollama_warmup_command,
@@ -35,7 +36,10 @@ def launch_local_vllm(
     state_path: Path | None,
     resolve_local_server: Callable[..., ServerHandle],
     launch_local_benchmark: Callable[..., CommandResult],
+    reporter: ProgressReporter | None = None,
 ) -> CommandResult:
+    reporter = reporter or NullProgressReporter()
+    reporter.set(5, "Resolving local vLLM server")
     reuse_key = build_local_vllm_reuse_key(spec)
     endpoint = f"http://127.0.0.1:{spec.serving.port}/v1"
     server = resolve_local_server(
@@ -48,6 +52,7 @@ def launch_local_vllm(
         executable="vllm",
         command=build_local_vllm_command(spec),
     )
+    reporter.set(60, "Server ready, launching benchmark")
     run = launch_local_benchmark(
         spec,
         env={
@@ -58,6 +63,7 @@ def launch_local_vllm(
         state_path=state_path,
     )
     run.data["server_id"] = server.id
+    reporter.set(90, "Benchmark launched")
     return run
 
 
@@ -68,7 +74,10 @@ def launch_local_ollama(
     state_path: Path | None,
     resolve_local_server: Callable[..., ServerHandle],
     launch_local_benchmark: Callable[..., CommandResult],
+    reporter: ProgressReporter | None = None,
 ) -> CommandResult:
+    reporter = reporter or NullProgressReporter()
+    reporter.set(5, "Resolving local Ollama server")
     endpoint = f"http://127.0.0.1:{spec.serving.port}"
     reuse_key = "|".join(
         [
@@ -89,6 +98,7 @@ def launch_local_ollama(
         command=build_ollama_serve_command(spec),
         warmup_command=build_ollama_warmup_command(spec),
     )
+    reporter.set(60, "Server ready, launching benchmark")
     run = launch_local_benchmark(
         spec,
         env={"OLLAMA_HOST": endpoint},
@@ -96,6 +106,7 @@ def launch_local_ollama(
         state_path=state_path,
     )
     run.data["server_id"] = server.id
+    reporter.set(90, "Benchmark launched")
     return run
 
 
@@ -105,14 +116,20 @@ def launch_openai_compatible(
     state: LauncherState,
     state_path: Path | None,
     launch_local_benchmark: Callable[..., CommandResult],
+    reporter: ProgressReporter | None = None,
 ) -> CommandResult:
+    reporter = reporter or NullProgressReporter()
+    reporter.set(10, "Configuring endpoint")
     env = {
         "OPENAI_BASE_URL": spec.target.base_url,
         "OPENAI_API_KEY": os.environ.get(
             spec.target.api_key_env, os.environ.get("OPENAI_API_KEY", "dummy")
         ),
     }
-    return launch_local_benchmark(spec, env=env, state=state, state_path=state_path)
+    reporter.set(30, "Launching benchmark")
+    result = launch_local_benchmark(spec, env=env, state=state, state_path=state_path)
+    reporter.set(90, "Benchmark launched")
+    return result
 
 
 def resolve_local_server(
