@@ -9,6 +9,11 @@ uv sync --extra dev
 uv run mcode --help
 ```
 
+Supported environments:
+- macOS and Linux are supported natively
+- Windows should use `WSL2` for `uv run mcode ...`
+- native PowerShell and CMD are not supported launcher environments
+
 Benchmark extras:
 
 ```bash

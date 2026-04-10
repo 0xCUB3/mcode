@@ -2,6 +2,13 @@
 
 Use `mcode` commands for setup, local runs, and Blue Vela runs. Do not default to raw `ssh`, `rsync`, `bsub`, `bjobs`, or the legacy shell scripts unless you are debugging the launcher or the user explicitly asks for the old flow.
 
+## Supported environments
+
+- macOS and Linux are supported natively
+- Windows should run `uv run mcode ...` inside `WSL2`
+- native PowerShell and CMD are not supported launcher environments
+- Blue Vela can still be driven from Windows, but the launcher should run inside `WSL2`
+
 ## Install and sync
 
 Development environment:
