@@ -184,7 +184,7 @@ def test_stop_run_kills_all_local_shard_pids(tmp_path: Path) -> None:
     killed: list[tuple[int, int]] = []
     try:
         service_module.os.kill = lambda pid, sig: killed.append((pid, sig))
-        result = service_module._stop_run(state.runs[0], state, state_path)
+        result = service_module._stop_run(state.runs[0], state_path, state=state)
     finally:
         service_module.os.kill = original_kill
 
@@ -217,7 +217,7 @@ def test_stop_run_ignores_missing_local_shard_pids(tmp_path: Path) -> None:
 
     try:
         service_module.os.kill = fake_kill
-        result = service_module._stop_run(state.runs[0], state, state_path)
+        result = service_module._stop_run(state.runs[0], state_path, state=state)
     finally:
         service_module.os.kill = original_kill
 

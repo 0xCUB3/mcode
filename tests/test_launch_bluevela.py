@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import subprocess
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from subprocess import CompletedProcess
 
@@ -140,6 +140,93 @@ def test_bluevela_registry_and_lock_paths_are_deterministic() -> None:
     assert lock_path.endswith(".lock")
 
 
+def test_acquire_remote_lock_does_not_double_wrap_bash() -> None:
+    commands: list[str] = []
+    original_run_ssh_result = service_module._run_ssh_result
+    try:
+        service_module._run_ssh_result = lambda login, command, check=False: (
+            commands.append(command)
+            or CompletedProcess(args=[login, command], returncode=0, stdout="", stderr="")
+        )
+        service_module._acquire_remote_lock(
+            "user@login3.example.com",
+            "/u/user/mcode-launch/locks/server-reuse-key.lock",
+        )
+    finally:
+        service_module._run_ssh_result = original_run_ssh_result
+
+    assert len(commands) == 1
+    assert "bash -lc" not in commands[0]
+
+
+@dataclass
+class _Plan:
+    signature: str
+    remote_path: str
+    ref_sha: str
+    diff_summary: str
+    repo_url: str
+    mode: SyncMode
+    bootstrap_key: str
+    is_noop: bool = False
+
+
+def test_sync_bluevela_workspace_uses_remote_json_helper_for_manifest(tmp_path: Path) -> None:
+    target = _spec().target
+    assert isinstance(target, BlueVelaTargetSpec)
+    plan = _Plan(
+        signature="ws-1",
+        remote_path="/u/user/mcode-launch/workspaces/ws-1",
+        ref_sha="deadbeef",
+        diff_summary="summary",
+        repo_url="https://example.com/repo.git",
+        mode=SyncMode.WORKING_TREE,
+        bootstrap_key="uv-sync:swebench,datasets",
+    )
+    captured_payloads: list[tuple[str, str, dict[str, object]]] = []
+    original_acquire = service_module._acquire_remote_lock
+    original_release = service_module._release_remote_lock
+    original_read_manifest = service_module._read_remote_workspace_manifest
+    original_run_ssh = service_module._run_ssh
+    original_write_remote_json = service_module._write_remote_json
+    original_subprocess_run = service_module.subprocess.run
+    try:
+        service_module._acquire_remote_lock = lambda *args, **kwargs: None
+        service_module._release_remote_lock = lambda *args, **kwargs: None
+        service_module._read_remote_workspace_manifest = lambda *args, **kwargs: None
+        service_module._run_ssh = lambda *args, **kwargs: ""
+        service_module._write_remote_json = (
+            lambda login, path, payload: captured_payloads.append((login, path, payload))
+        )
+        service_module.subprocess.run = lambda *args, **kwargs: CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout=b"tracked.py\0" if kwargs.get("capture_output") else "",
+            stderr="",
+        )
+        service_module._sync_bluevela_workspace(target, tmp_path, plan)
+    finally:
+        service_module._acquire_remote_lock = original_acquire
+        service_module._release_remote_lock = original_release
+        service_module._read_remote_workspace_manifest = original_read_manifest
+        service_module._run_ssh = original_run_ssh
+        service_module._write_remote_json = original_write_remote_json
+        service_module.subprocess.run = original_subprocess_run
+
+    assert captured_payloads == [
+        (
+            "user@login3.example.com",
+            "/u/user/mcode-launch/workspaces/ws-1/.mcode-launch-workspace.json",
+            {
+                "signature": "ws-1",
+                "remote_path": "/u/user/mcode-launch/workspaces/ws-1",
+                "ref_sha": "deadbeef",
+                "repo_url": "https://example.com/repo.git",
+            },
+        )
+    ]
+
+
 def test_bluevela_launch_preview_computes_sync_without_applying(tmp_path: Path) -> None:
     state = LauncherState()
     state_path = tmp_path / "launch-state.json"
@@ -195,7 +282,7 @@ def test_stop_run_skips_bkill_for_planned_bluevela_run(tmp_path: Path) -> None:
             stdout="",
             stderr="",
         )
-        result = service_module._stop_run(run, state, state_path)
+        result = service_module._stop_run(run, state_path, state=state)
     finally:
         service_module._run_ssh = original_run_ssh
         service_module._run_ssh_result = original_run_ssh_result
@@ -232,7 +319,7 @@ def test_stop_run_normalizes_bluevela_submission_messages(tmp_path: Path) -> Non
             stdout="",
             stderr="",
         )
-        result = service_module._stop_run(run, state, state_path)
+        result = service_module._stop_run(run, state_path, state=state)
     finally:
         service_module._run_ssh = original_run_ssh
         service_module._run_ssh_result = original_run_ssh_result
@@ -268,7 +355,7 @@ def test_stop_server_normalizes_bluevela_submission_message(tmp_path: Path) -> N
             stdout="",
             stderr="",
         )
-        result = service_module._stop_server(server, state, state_path)
+        result = service_module._stop_server(server, state_path, state=state)
     finally:
         service_module._run_ssh = original_run_ssh
         service_module._run_ssh_result = original_run_ssh_result

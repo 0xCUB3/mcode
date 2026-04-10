@@ -4,6 +4,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
@@ -465,16 +466,10 @@ def _launch_openai_compatible(
 
 def _stop_run(
     run: RunHandle,
-    state_or_path: LauncherState | Path | None,
-    state_path: Path | None = None,
+    state_path: Path | None,
+    *,
+    state: LauncherState | None = None,
 ) -> CommandResult:
-    if state_path is None:
-        state = None
-        state_path = (
-            state_or_path if isinstance(state_or_path, Path) or state_or_path is None else None
-        )
-    else:
-        state = state_or_path if isinstance(state_or_path, LauncherState) else None
     job_id = run.metadata.get("job_id")
     if run.target == TargetKind.BLUEVELA.value and run.metadata.get("job_ids"):
         for current in run.metadata["job_ids"]:
@@ -488,12 +483,12 @@ def _stop_run(
     elif run.metadata.get("pids"):
         for current in run.metadata["pids"]:
             try:
-                os.kill(int(current), 15)
+                os.kill(int(current), signal.SIGTERM)
             except ProcessLookupError:
                 continue
     elif "pid" in run.metadata:
         try:
-            os.kill(int(run.metadata["pid"]), 15)
+            os.kill(int(run.metadata["pid"]), signal.SIGTERM)
         except ProcessLookupError:
             pass
     run.status = "stopped"
@@ -505,16 +500,10 @@ def _stop_run(
 
 def _stop_server(
     server: ServerHandle,
-    state_or_path: LauncherState | Path | None,
-    state_path: Path | None = None,
+    state_path: Path | None,
+    *,
+    state: LauncherState | None = None,
 ) -> CommandResult:
-    if state_path is None:
-        state = None
-        state_path = (
-            state_or_path if isinstance(state_or_path, Path) or state_or_path is None else None
-        )
-    else:
-        state = state_or_path if isinstance(state_or_path, LauncherState) else None
     job_id = server.metadata.get("job_id")
     if server.target == TargetKind.BLUEVELA.value and job_id:
         normalized_job_id = extract_lsf_job_id(job_id)
@@ -525,7 +514,7 @@ def _stop_server(
             _run_ssh(server.metadata["login"], f"rm -f {shlex.quote(registry_path)}")
     elif "pid" in server.metadata:
         try:
-            os.kill(int(server.metadata["pid"]), 15)
+            os.kill(int(server.metadata["pid"]), signal.SIGTERM)
         except ProcessLookupError:
             pass
     server.status = "stopped"
@@ -779,7 +768,6 @@ def _acquire_remote_lock(
         res = _run_ssh_result(
             login,
             (
-                "bash -lc '"
                 f"mkdir -p {shlex.quote(parent_path)}; "
                 "now=$(date +%s); "
                 f"if mkdir {shlex.quote(lock_path)} 2>/dev/null; then "
@@ -792,7 +780,7 @@ def _acquire_remote_lock(
                 f"rm -rf {shlex.quote(lock_path)}; "
                 "exit 3; "
                 "fi; "
-                "exit 1'"
+                "exit 1"
             ),
             check=False,
         )
@@ -1053,30 +1041,23 @@ def _sync_bluevela_workspace(target: BlueVelaTargetSpec, repo_root: Path, plan) 
         )
         sync_command = build_uv_sync_command(plan.bootstrap_key)
         bootstrap_cmd = (
-            "bash -lc '"
             f"mkdir -p {plan.remote_path}; "
             f"{mode_check}"
             f"cd {plan.remote_path} && uv python pin 3.11 && "
             f"{sync_command} && "
             f"printf %s {bootstrap_value} > {bootstrap_marker}; "
-            "fi'"
+            "fi"
         )
         _run_ssh(target.login, bootstrap_cmd)
-        payload = json.dumps(
+        _write_remote_json(
+            target.login,
+            f"{plan.remote_path}/.mcode-launch-workspace.json",
             {
                 "signature": plan.signature,
                 "remote_path": plan.remote_path,
                 "ref_sha": plan.ref_sha,
                 "repo_url": plan.repo_url,
-            }
-        )
-        _run_ssh(
-            target.login,
-            (
-                "bash -lc "
-                f"'printf %s {json.dumps(payload)} > "
-                f"{plan.remote_path}/.mcode-launch-workspace.json'"
-            ),
+            },
         )
     finally:
         _release_remote_lock(target.login, lock_path)
