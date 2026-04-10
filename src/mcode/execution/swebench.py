@@ -285,6 +285,7 @@ class SWEbenchSandbox:
             source_container = client.containers.create(
                 image=_fq_image(test_spec.instance_image_key),
                 command="true",
+                network_disabled=True,
             )
             exec_container = None
             try:
