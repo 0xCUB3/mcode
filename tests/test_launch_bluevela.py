@@ -73,6 +73,7 @@ def _spec() -> LaunchSpec:
 def test_bluevela_vllm_command_uses_resolved_profile() -> None:
     command = build_bluevela_vllm_command(_spec(), run_dir=Path("/u/user/mcode-launch/runs/run-1"))
 
+    assert command.count("bash -lc") == 1
     assert "--tool-call-parser gemma4" in command
     assert "--reasoning-parser gemma4" in command
     assert "docker.io/vllm/vllm-openai:gemma4" in command

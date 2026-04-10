@@ -71,6 +71,10 @@ def _default_bluevela_image(spec: LaunchSpec) -> str:
     return "docker.io/vllm/vllm-openai:v0.17.0"
 
 
+def _quote_bsub_shell(script: str) -> str:
+    return shlex.quote(f"bash -lc {shlex.quote(script)}")
+
+
 def build_bluevela_vllm_command(spec: LaunchSpec, *, run_dir: Path) -> str:
     target = spec.target
     assert isinstance(target, BlueVelaTargetSpec)
@@ -83,15 +87,7 @@ def build_bluevela_vllm_command(spec: LaunchSpec, *, run_dir: Path) -> str:
     container_hf_home = "/root/.cache/huggingface"
     container_hf_hub_cache = f"{container_hf_home}/hub"
     graphroot_base, runroot_base = _bluevela_podman_base_dirs(target)
-    return (
-        "bsub "
-        f"-q {shlex.quote(target.queue)} "
-        f"-G {shlex.quote(target.group)} "
-        '-J "mcode-vllm" '
-        f'-gpu "num={spec.serving.tensor_parallel}:mode=exclusive_process" '
-        "-n 1 -R 'span[hosts=1]' "
-        f"-o {shlex.quote(str(log_path))} -e {shlex.quote(str(log_path))} "
-        "\"bash -lc '"
+    script = (
         f"mkdir -p {shlex.quote(str(run_dir))}; "
         f"hostname > {shlex.quote(str(host_file))}; "
         f"GRAPHROOT_BASE={shlex.quote(graphroot_base)}; "
@@ -121,7 +117,16 @@ def build_bluevela_vllm_command(spec: LaunchSpec, *, run_dir: Path) -> str:
         f"--gpu-memory-utilization {spec.serving.gpu_memory_utilization} "
         f"--tensor-parallel-size {spec.serving.tensor_parallel} "
         f"{flags}"
-        "'\""
+    )
+    return (
+        "bsub "
+        f"-q {shlex.quote(target.queue)} "
+        f"-G {shlex.quote(target.group)} "
+        '-J "mcode-vllm" '
+        f'-gpu "num={spec.serving.tensor_parallel}:mode=exclusive_process" '
+        "-n 1 -R 'span[hosts=1]' "
+        f"-o {shlex.quote(str(log_path))} -e {shlex.quote(str(log_path))} "
+        f"{_quote_bsub_shell(script)}"
     )
 
 
