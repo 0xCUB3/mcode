@@ -97,6 +97,13 @@ BLUEVELA_ACTIVE_JOB_STATUSES = {
     "USUSP",
     "WAIT",
 }
+BLUEVELA_QUEUED_JOB_STATUSES = {
+    "PEND",
+    "PROV",
+    "PSUSP",
+    "WAIT",
+}
+BLUEVELA_DEFAULT_QUEUE = "normal"
 
 
 def _normalize_task_ids_arg(raw: str | None) -> str | None:
@@ -614,6 +621,11 @@ def _launch_bluevela(
     reporter: ProgressReporter | None = None,
 ) -> CommandResult:
     reporter = reporter or NullProgressReporter()
+    target = spec.target
+    assert isinstance(target, BlueVelaTargetSpec)
+    resolved_queue = _resolve_bluevela_queue(target, queue=target.queue)
+    if resolved_queue != target.queue:
+        spec = replace(spec, target=replace(target, queue=resolved_queue))
     return launch_bluevela_impl(
         spec,
         repo_root=repo_root,
@@ -1088,18 +1100,81 @@ def _write_remote_json(login: str, path: str, payload: dict[str, Any]) -> None:
     )
 
 
-def _bluevela_job_is_active(login: str, job_id: str) -> bool:
+def _bluevela_job_status(login: str, job_id: str) -> str | None:
     result = _run_ssh_result(
         login,
         f"bjobs -noheader -o stat {shlex.quote(job_id)} 2>/dev/null",
         check=False,
     )
     if result.returncode != 0:
-        return False
+        return None
     statuses = {line.strip() for line in result.stdout.splitlines() if line.strip()}
-    if not statuses:
+    if len(statuses) != 1:
+        return None
+    return next(iter(statuses))
+
+
+def _bluevela_job_is_active(login: str, job_id: str) -> bool:
+    status = _bluevela_job_status(login, job_id)
+    return bool(status and status in BLUEVELA_ACTIVE_JOB_STATUSES)
+
+
+def _resolve_bluevela_queue(target: BlueVelaTargetSpec, *, queue: str) -> str:
+    if queue != "auto":
+        return queue
+    user = target.login.split("@", 1)[0]
+    command = f'bqueues -u {shlex.quote(user)} -o "QUEUE_NAME PRIO STATUS NJOBS PEND RUN" -noheader'
+    try:
+        output = _run_ssh(target.login, command)
+    except RuntimeError:
+        return BLUEVELA_DEFAULT_QUEUE
+
+    candidates: list[tuple[str, int, int, int, int]] = []
+    for line in output.splitlines():
+        parts = line.split(None, 5)
+        if len(parts) != 6:
+            continue
+        name, priority_raw, status, njobs_raw, pend_raw, run_raw = parts
+        if not status.startswith("Open"):
+            continue
+        if re.search(r"(?:^|[_-])test\d*$", name, re.IGNORECASE):
+            continue
+        try:
+            priority = int(priority_raw)
+            njobs = int(njobs_raw)
+            pend = int(pend_raw)
+            run = int(run_raw)
+        except ValueError:
+            continue
+        candidates.append((name, priority, njobs, pend, run))
+
+    if not candidates:
+        return BLUEVELA_DEFAULT_QUEUE
+
+    highest_priority = max(priority for _, priority, _, _, _ in candidates)
+    preferred = [candidate for candidate in candidates if candidate[1] == highest_priority]
+    ordered = sorted(
+        preferred,
+        key=lambda candidate: (
+            candidate[3] / max(candidate[2], 1),
+            candidate[3],
+            candidate[2],
+            candidate[0],
+        ),
+    )
+    for name, _, _, _, _ in ordered:
+        if _bluevela_queue_accepts_batch_submission(target, name):
+            return name
+    return BLUEVELA_DEFAULT_QUEUE
+
+
+def _bluevela_queue_accepts_batch_submission(target: BlueVelaTargetSpec, queue: str) -> bool:
+    try:
+        output = _run_ssh(target.login, f"bqueues -l {shlex.quote(queue)}")
+    except RuntimeError:
         return False
-    return statuses.issubset(BLUEVELA_ACTIVE_JOB_STATUSES)
+    lowered = output.lower()
+    return "only_interactive" not in lowered and "for interactive jobs only" not in lowered
 
 
 def _bluevela_server_was_stopped_locally(
@@ -1354,18 +1429,30 @@ def _wait_for_remote_file(
 ) -> str:
     reporter = reporter or NullProgressReporter()
     label = host_label or "remote host"
-    deadline = time.time() + timeout_s
     started = time.time()
-    while time.time() < deadline:
+    startup_wait_started: float | None = None
+    while True:
         output = _run_ssh(login, f"test -f {path} && cat {path} || true")
         if output:
             return output.strip()
-        if job_id and not _bluevela_job_is_active(login, job_id):
-            raise RuntimeError(f"Blue Vela vLLM job exited before startup file was written: {path}")
+        if job_id:
+            status = _bluevela_job_status(login, job_id)
+            if not status or status not in BLUEVELA_ACTIVE_JOB_STATUSES:
+                raise RuntimeError(
+                    f"Blue Vela vLLM job exited before startup file was written: {path}"
+                )
+            if status not in BLUEVELA_QUEUED_JOB_STATUSES and startup_wait_started is None:
+                startup_wait_started = time.time()
+            if startup_wait_started is not None and time.time() - startup_wait_started >= timeout_s:
+                raise RuntimeError(f"Remote file did not appear: {path}")
         elapsed = int(time.time() - started)
-        reporter.set(3 + min(elapsed // 5, 4), f"Waiting for LSF job to start on {label}")
+        message = (
+            f"Waiting for LSF job to start on {label}"
+            if startup_wait_started is None
+            else f"Waiting for startup file on {label}"
+        )
+        reporter.set(3 + min(elapsed // 5, 4), message)
         time.sleep(2)
-    raise RuntimeError(f"Remote file did not appear: {path}")
 
 
 def _resolve_local_server(

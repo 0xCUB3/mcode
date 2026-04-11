@@ -14,7 +14,7 @@ DEFAULT_USER = os.environ.get("USER", "user")
 class BlueVelaConfig:
     login: str = f"{DEFAULT_USER}@login3.bluevela.rmf.ibm.com"
     workspace_root: str = f"/u/{DEFAULT_USER}/mcode-launch"
-    queue: str = "normal"
+    queue: str = "auto"
     group: str = "grp_runtime"
     shared_root: str = f"/proj/dmfexp/{DEFAULT_USER}"
     hf_env: str = f"/u/{DEFAULT_USER}/.config/mcode/hf-env.sh"

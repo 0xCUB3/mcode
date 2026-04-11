@@ -97,6 +97,12 @@ shared_root = "/proj/shared/user"
     assert config.bluevela.podman_runroot == "/proj/shared/user/podman/runroot"
 
 
+def test_load_launch_config_defaults_bluevela_queue_to_auto() -> None:
+    config = load_launch_config(Path("/does/not/exist"))
+
+    assert config.bluevela.queue == "auto"
+
+
 def _build_launch_spec(**overrides):
     kwargs = {
         "config": load_launch_config(Path("/does/not/exist")),

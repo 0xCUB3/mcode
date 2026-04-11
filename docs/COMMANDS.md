@@ -59,6 +59,8 @@ Apply sync:
 uv run mcode launch sync --target bluevela --apply --json
 ```
 
+By default, Blue Vela launches probe your accessible queues and pick the least loaded open, batch-capable queue among the highest-priority queues. Set `[bluevela].queue` in `~/.config/mcode/launch.toml` if you need to pin a specific queue.
+
 Launch a Blue Vela run:
 
 ```bash

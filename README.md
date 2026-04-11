@@ -77,6 +77,7 @@ Optional per-user defaults live in:
 ```
 
 The default Blue Vela profile resolves from `$USER`, for example `/u/$USER/mcode-launch` and `/proj/dmfexp/$USER`.
+By default, the launcher probes Blue Vela and picks the least loaded open, batch-capable queue among the highest-priority queues you can use. Set `[bluevela].queue` in `launch.toml` if you need to pin a specific queue.
 
 See [`docs/COMMANDS.md`](docs/COMMANDS.md) for the full command cookbook, including local `vllm`, local `ollama`, and generic `openai-compatible` examples, and [`deploy/bluevela/README.md`](deploy/bluevela/README.md) for the Blue Vela quickstart.
 

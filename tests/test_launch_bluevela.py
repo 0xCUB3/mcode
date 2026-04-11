@@ -1184,6 +1184,67 @@ def test_wait_for_remote_file_fails_when_bluevela_job_exits() -> None:
         service_module._bluevela_job_is_active = original_job_active
 
 
+def test_wait_for_remote_file_does_not_fail_while_bluevela_job_is_pending() -> None:
+    original_run_ssh = service_module._run_ssh
+    original_status = service_module._bluevela_job_status
+    original_sleep = service_module.time.sleep
+    original_time = service_module.time.time
+
+    now = {"value": 0.0}
+    outputs = iter(["", "", "host.example.com\n"])
+
+    try:
+        service_module._run_ssh = lambda *args, **kwargs: next(outputs)
+        service_module._bluevela_job_status = lambda *args, **kwargs: "PEND"
+        service_module.time.time = lambda: now["value"]
+        service_module.time.sleep = lambda seconds: now.__setitem__("value", now["value"] + seconds)
+
+        host = service_module._wait_for_remote_file(
+            "user@login3.example.com",
+            "/u/user/mcode-launch/runs/r1/vllm_host.txt",
+            timeout_s=1,
+            job_id="123",
+        )
+    finally:
+        service_module._run_ssh = original_run_ssh
+        service_module._bluevela_job_status = original_status
+        service_module.time.sleep = original_sleep
+        service_module.time.time = original_time
+
+    assert host == "host.example.com"
+    assert now["value"] >= 2
+
+
+def test_wait_for_remote_file_times_out_after_job_starts_without_host_file() -> None:
+    original_run_ssh = service_module._run_ssh
+    original_status = service_module._bluevela_job_status
+    original_sleep = service_module.time.sleep
+    original_time = service_module.time.time
+
+    now = {"value": 0.0}
+
+    try:
+        service_module._run_ssh = lambda *args, **kwargs: ""
+        service_module._bluevela_job_status = lambda *args, **kwargs: "RUN"
+        service_module.time.time = lambda: now["value"]
+        service_module.time.sleep = lambda seconds: now.__setitem__("value", now["value"] + seconds)
+        try:
+            service_module._wait_for_remote_file(
+                "user@login3.example.com",
+                "/u/user/mcode-launch/runs/r1/vllm_host.txt",
+                timeout_s=1,
+                job_id="123",
+            )
+            assert False, "expected RuntimeError"
+        except RuntimeError as exc:
+            assert "Remote file did not appear" in str(exc)
+    finally:
+        service_module._run_ssh = original_run_ssh
+        service_module._bluevela_job_status = original_status
+        service_module.time.sleep = original_sleep
+        service_module.time.time = original_time
+
+
 def test_bluevela_job_is_active_only_for_live_lsf_statuses() -> None:
     original = service_module._run_ssh_result
 
@@ -1205,6 +1266,96 @@ def test_bluevela_job_is_active_only_for_live_lsf_statuses() -> None:
         assert service_module._bluevela_job_is_active("user@login3.example.com", "123") is True
     finally:
         service_module._run_ssh_result = original
+
+
+def test_bluevela_selects_least_loaded_batch_queue() -> None:
+    original = service_module._run_ssh
+
+    try:
+
+        def _run_ssh(*args, **kwargs):
+            command = args[1]
+            if command.startswith("bqueues -u "):
+                return (
+                    "owners 43 Closed:Inact_Adm 0 0 0\n"
+                    "normal 30 Open:Active 1549 106 1443\n"
+                    "interactive 30 Open:Active 31 2 29\n"
+                    "preemptable 20 Open:Active 226 27 199\n"
+                )
+            if command == "bqueues -l interactive":
+                return (
+                    "QUEUE: interactive\n"
+                    "-- For interactive jobs only\n"
+                    "SCHEDULING POLICIES: ONLY_INTERACTIVE\n"
+                )
+            if command == "bqueues -l normal":
+                return "QUEUE: normal\nSCHEDULING POLICIES: FAIRSHARE EXCLUSIVE\n"
+            raise AssertionError(command)
+
+        service_module._run_ssh = _run_ssh
+        queue = service_module._resolve_bluevela_queue(
+            _spec().target,
+            queue="auto",
+        )
+    finally:
+        service_module._run_ssh = original
+
+    assert queue == "normal"
+
+
+def test_bluevela_selects_non_test_queue_before_test_queue() -> None:
+    original = service_module._run_ssh
+
+    try:
+        service_module._run_ssh = lambda *args, **kwargs: (
+            "interactive_test1 30 Open:Active 0 0 0\n"
+            "normal 30 Open:Active 5 1 4\n"
+            "preemptable_test1 20 Open:Active 0 0 0\n"
+        )
+        queue = service_module._resolve_bluevela_queue(
+            _spec().target,
+            queue="auto",
+        )
+    finally:
+        service_module._run_ssh = original
+
+    assert queue == "normal"
+
+
+def test_bluevela_prefers_standard_priority_queue_over_preemptable() -> None:
+    original = service_module._run_ssh
+
+    try:
+        service_module._run_ssh = lambda *args, **kwargs: (
+            "normal 30 Open:Active 5 1 4\npreemptable 20 Open:Active 0 0 0\n"
+        )
+        queue = service_module._resolve_bluevela_queue(
+            _spec().target,
+            queue="auto",
+        )
+    finally:
+        service_module._run_ssh = original
+
+    assert queue == "normal"
+
+
+def test_bluevela_queue_probe_falls_back_to_normal() -> None:
+    original = service_module._run_ssh
+
+    try:
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("probe failed")
+
+        service_module._run_ssh = _boom
+        queue = service_module._resolve_bluevela_queue(
+            _spec().target,
+            queue="auto",
+        )
+    finally:
+        service_module._run_ssh = original
+
+    assert queue == "normal"
 
 
 def test_bluevela_remote_lock_creates_parent_directory() -> None:

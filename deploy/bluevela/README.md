@@ -63,11 +63,12 @@ Optional per-user defaults:
 [bluevela]
 login = "your-user@login3.bluevela.rmf.ibm.com"
 workspace_root = "/u/your-user/mcode-launch"
+queue = "auto"
 shared_root = "/proj/dmfexp/your-user"
 hf_env = "/u/your-user/.config/mcode/hf-env.sh"
 ```
 
-The launcher resolves defaults from `$USER`, including `/u/$USER/mcode-launch`, `/proj/dmfexp/$USER`, and `/u/$USER/.config/mcode/hf-env.sh`.
+The launcher resolves defaults from `$USER`, including `/u/$USER/mcode-launch`, `/proj/dmfexp/$USER`, and `/u/$USER/.config/mcode/hf-env.sh`. With `queue = "auto"`, it probes Blue Vela and picks the least loaded open, batch-capable queue among the highest-priority queues you can use. Set a concrete queue name if you need to pin one.
 
 ## Legacy Scripts
 
