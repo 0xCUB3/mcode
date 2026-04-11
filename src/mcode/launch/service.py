@@ -88,6 +88,16 @@ BLUEVELA_VLLM_FAILED_MARKERS = (
     "invalid tool call parser",
 )
 
+BLUEVELA_ACTIVE_JOB_STATUSES = {
+    "PEND",
+    "PROV",
+    "PSUSP",
+    "RUN",
+    "SSUSP",
+    "USUSP",
+    "WAIT",
+}
+
 
 def _normalize_task_ids_arg(raw: str | None) -> str | None:
     if not raw:
@@ -1081,10 +1091,27 @@ def _write_remote_json(login: str, path: str, payload: dict[str, Any]) -> None:
 def _bluevela_job_is_active(login: str, job_id: str) -> bool:
     result = _run_ssh_result(
         login,
-        f"bjobs {shlex.quote(job_id)} >/dev/null 2>&1",
+        f"bjobs -noheader -o stat {shlex.quote(job_id)} 2>/dev/null",
         check=False,
     )
-    return result.returncode == 0
+    if result.returncode != 0:
+        return False
+    statuses = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+    if not statuses:
+        return False
+    return statuses.issubset(BLUEVELA_ACTIVE_JOB_STATUSES)
+
+
+def _bluevela_server_was_stopped_locally(
+    server: ServerHandle,
+    *,
+    state_path: Path | None,
+) -> bool:
+    current = next(
+        (entry for entry in load_state(state_path).servers if entry.id == server.id),
+        None,
+    )
+    return current is not None and current.status == "stopped"
 
 
 def _resolve_bluevela_podman_storage(target: BlueVelaTargetSpec) -> tuple[str, str]:
@@ -1248,7 +1275,7 @@ def _resolve_bluevela_server(
                     log_path=str(run_dir / "vllm.log"),
                 )
                 _write_remote_json(target.login, registry_path, asdict(pending_server))
-            return pending_server
+            return _record_server(pending_server)
         finally:
             _release_remote_lock(target.login, lock_path)
 
@@ -1264,20 +1291,29 @@ def _resolve_bluevela_server(
             break
         try:
             host_path = Path(pending_server.metadata["run_dir"]) / "vllm_host.txt"
+            job_id = extract_lsf_job_id(pending_server.metadata.get("job_id"))
             host = _wait_for_remote_file(
-                target.login, str(host_path), reporter=reporter, host_label=host_path.parent.name
+                target.login,
+                str(host_path),
+                reporter=reporter,
+                host_label=host_path.parent.name,
+                job_id=job_id,
             )
             endpoint = f"http://{host}:{spec.serving.port}/v1"
             _wait_for_bluevela_endpoint(
                 target.login,
                 endpoint,
                 log_path=pending_server.log_path,
-                job_id=extract_lsf_job_id(pending_server.metadata.get("job_id")),
+                job_id=job_id,
                 reporter=reporter,
             )
             server = replace(pending_server, endpoint=endpoint, status="healthy")
             break
-        except RuntimeError:
+        except RuntimeError as exc:
+            if _bluevela_server_was_stopped_locally(pending_server, state_path=state_path):
+                raise RuntimeError(
+                    f"Blue Vela server startup was stopped: {pending_server.id}"
+                ) from exc
             if retries >= 1:
                 raise
             retries += 1
@@ -1312,6 +1348,7 @@ def _wait_for_remote_file(
     path: str,
     *,
     timeout_s: int = 300,
+    job_id: str | None = None,
     reporter: ProgressReporter | None = None,
     host_label: str | None = None,
 ) -> str:
@@ -1323,6 +1360,8 @@ def _wait_for_remote_file(
         output = _run_ssh(login, f"test -f {path} && cat {path} || true")
         if output:
             return output.strip()
+        if job_id and not _bluevela_job_is_active(login, job_id):
+            raise RuntimeError(f"Blue Vela vLLM job exited before startup file was written: {path}")
         elapsed = int(time.time() - started)
         reporter.set(3 + min(elapsed // 5, 4), f"Waiting for LSF job to start on {label}")
         time.sleep(2)

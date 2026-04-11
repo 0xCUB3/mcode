@@ -17,7 +17,7 @@ from mcode.launch.models import (
     WorkspaceHandle,
 )
 from mcode.launch.progress import NullProgressReporter, ProgressReporter
-from mcode.launch.state import LauncherState
+from mcode.launch.state import LauncherState, load_state
 
 
 def launch_bluevela(
@@ -112,6 +112,7 @@ def launch_bluevela(
             server_reporter.set(0, "Starting or reusing Blue Vela server")
             server = resolve_bluevela_server(
                 spec,
+                state=state,
                 state_path=state_path,
                 reuse_key=reuse_key,
                 workspace_signature=workspace_signature,
@@ -139,6 +140,20 @@ def launch_bluevela(
             )
             _record_pending_run(server)
     except Exception as exc:
+        persisted_run = next(
+            (entry for entry in load_state(state_path).runs if entry.id == run_id),
+            None,
+        )
+        if persisted_run is not None and persisted_run.status == "stopped":
+            state.runs = [entry for entry in state.runs if entry.id != persisted_run.id] + [
+                persisted_run
+            ]
+            current_run = persisted_run
+            return CommandResult(
+                ok=False,
+                message=str(exc),
+                data={"run_id": run_id, "workspace_signature": workspace_signature},
+            )
         failed_run = replace(
             current_run,
             status="failed",

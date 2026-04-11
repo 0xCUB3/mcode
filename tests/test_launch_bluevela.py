@@ -854,7 +854,14 @@ def test_bluevela_server_resolution_replaces_stale_pending_registry(tmp_path: Pa
     original_run_ssh = service_module._run_ssh
     original_build = service_module.build_bluevela_vllm_command
     original_uuid4 = service_module.uuid.uuid4
-    uuids = iter(["aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb"])
+    uuids = iter(
+        [
+            "aaaaaaaaaaaaaaaa",
+            "bbbbbbbbbbbbbbbb",
+            "cccccccccccccccc",
+            "dddddddddddddddd",
+        ]
+    )
 
     class _UUID:
         def __init__(self, value: str) -> None:
@@ -936,7 +943,14 @@ def test_bluevela_server_resolution_retries_failed_pending_server(tmp_path: Path
     original_run_ssh = service_module._run_ssh
     original_build = service_module.build_bluevela_vllm_command
     original_uuid4 = service_module.uuid.uuid4
-    uuids = iter(["aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb"])
+    uuids = iter(
+        [
+            "aaaaaaaaaaaaaaaa",
+            "bbbbbbbbbbbbbbbb",
+            "cccccccccccccccc",
+            "dddddddddddddddd",
+        ]
+    )
 
     class _UUID:
         def __init__(self, value: str) -> None:
@@ -1006,6 +1020,191 @@ def test_bluevela_server_resolution_retries_failed_pending_server(tmp_path: Path
     assert "launch-vllm" in commands
     assert wait_calls["count"] == 2
     assert [payload["status"] for payload in writes] == ["pending", "healthy"]
+
+
+def test_bluevela_server_resolution_persists_pending_server_before_host_wait(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "launch-state.json"
+    snapshots: list[list[str]] = []
+    original_acquire = service_module._acquire_remote_lock
+    original_release = service_module._release_remote_lock
+    original_read = service_module._read_remote_json
+    original_wait_file = service_module._wait_for_remote_file
+    original_run_ssh = service_module._run_ssh
+    original_build = service_module.build_bluevela_vllm_command
+    original_uuid4 = service_module.uuid.uuid4
+    uuids = iter(
+        [
+            "aaaaaaaaaaaaaaaa",
+            "bbbbbbbbbbbbbbbb",
+            "cccccccccccccccc",
+            "dddddddddddddddd",
+        ]
+    )
+
+    class _UUID:
+        def __init__(self, value: str) -> None:
+            self.hex = value
+
+    try:
+        service_module._acquire_remote_lock = lambda *args, **kwargs: None
+        service_module._release_remote_lock = lambda *args, **kwargs: None
+        service_module._read_remote_json = lambda *args, **kwargs: None
+        service_module._run_ssh = lambda login, command: (
+            "" if command.startswith("mkdir -p ") else "Job <456> is submitted to queue <normal>."
+        )
+        service_module.build_bluevela_vllm_command = lambda *args, **kwargs: "launch-vllm"
+
+        def _wait_file(*args, **kwargs):
+            del args, kwargs
+            snapshots.append(
+                [server.status for server in service_module.load_state(state_path).servers]
+            )
+            raise RuntimeError("host file missing")
+
+        service_module._wait_for_remote_file = _wait_file
+        service_module.uuid.uuid4 = lambda: _UUID(next(uuids))
+        try:
+            service_module._resolve_bluevela_server(
+                _spec(),
+                state_path=state_path,
+                reuse_key="reuse-key",
+                workspace_signature="ws-1",
+                existing_server=None,
+            )
+            assert False, "expected RuntimeError"
+        except RuntimeError as exc:
+            assert str(exc) == "host file missing"
+    finally:
+        service_module._acquire_remote_lock = original_acquire
+        service_module._release_remote_lock = original_release
+        service_module._read_remote_json = original_read
+        service_module._wait_for_remote_file = original_wait_file
+        service_module._run_ssh = original_run_ssh
+        service_module.build_bluevela_vllm_command = original_build
+        service_module.uuid.uuid4 = original_uuid4
+
+    assert snapshots == [["pending"], ["pending"]]
+    state = service_module.load_state(state_path)
+    assert len(state.servers) == 1
+    assert state.servers[0].status == "pending"
+    assert state.servers[0].metadata["job_id"] == "456"
+
+
+def test_bluevela_server_resolution_does_not_retry_after_local_stop(tmp_path: Path) -> None:
+    state_path = tmp_path / "launch-state.json"
+    commands: list[str] = []
+    original_acquire = service_module._acquire_remote_lock
+    original_release = service_module._release_remote_lock
+    original_read = service_module._read_remote_json
+    original_wait_file = service_module._wait_for_remote_file
+    original_run_ssh = service_module._run_ssh
+    original_build = service_module.build_bluevela_vllm_command
+    original_uuid4 = service_module.uuid.uuid4
+    uuids = iter(["aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb"])
+
+    class _UUID:
+        def __init__(self, value: str) -> None:
+            self.hex = value
+
+    try:
+        service_module._acquire_remote_lock = lambda *args, **kwargs: None
+        service_module._release_remote_lock = lambda *args, **kwargs: None
+        service_module._read_remote_json = lambda *args, **kwargs: None
+        service_module._run_ssh = lambda login, command: (
+            commands.append(command)
+            or (
+                ""
+                if command.startswith("mkdir -p ")
+                else "Job <456> is submitted to queue <normal>."
+            )
+        )
+        service_module.build_bluevela_vllm_command = lambda *args, **kwargs: "launch-vllm"
+
+        def _wait_file(*args, **kwargs):
+            del args, kwargs
+            pending = service_module.load_state(state_path).servers[0]
+            update_state(
+                state_path,
+                lambda current: setattr(
+                    current,
+                    "servers",
+                    [
+                        replace(entry, status="stopped") if entry.id == pending.id else entry
+                        for entry in current.servers
+                    ],
+                ),
+            )
+            raise RuntimeError("host file missing")
+
+        service_module._wait_for_remote_file = _wait_file
+        service_module.uuid.uuid4 = lambda: _UUID(next(uuids))
+        try:
+            service_module._resolve_bluevela_server(
+                _spec(),
+                state_path=state_path,
+                reuse_key="reuse-key",
+                workspace_signature="ws-1",
+                existing_server=None,
+            )
+            assert False, "expected RuntimeError"
+        except RuntimeError as exc:
+            assert "startup was stopped" in str(exc)
+    finally:
+        service_module._acquire_remote_lock = original_acquire
+        service_module._release_remote_lock = original_release
+        service_module._read_remote_json = original_read
+        service_module._wait_for_remote_file = original_wait_file
+        service_module._run_ssh = original_run_ssh
+        service_module.build_bluevela_vllm_command = original_build
+        service_module.uuid.uuid4 = original_uuid4
+
+    assert commands.count("launch-vllm") == 1
+
+
+def test_wait_for_remote_file_fails_when_bluevela_job_exits() -> None:
+    original_run_ssh = service_module._run_ssh
+    original_job_active = service_module._bluevela_job_is_active
+
+    try:
+        service_module._run_ssh = lambda *args, **kwargs: ""
+        service_module._bluevela_job_is_active = lambda *args, **kwargs: False
+        try:
+            service_module._wait_for_remote_file(
+                "user@login3.example.com",
+                "/u/user/mcode-launch/runs/r1/vllm_host.txt",
+                job_id="123",
+            )
+            assert False, "expected RuntimeError"
+        except RuntimeError as exc:
+            assert "job exited before startup file was written" in str(exc)
+    finally:
+        service_module._run_ssh = original_run_ssh
+        service_module._bluevela_job_is_active = original_job_active
+
+
+def test_bluevela_job_is_active_only_for_live_lsf_statuses() -> None:
+    original = service_module._run_ssh_result
+
+    try:
+        service_module._run_ssh_result = lambda *args, **kwargs: CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout="EXIT\n",
+            stderr="",
+        )
+        assert service_module._bluevela_job_is_active("user@login3.example.com", "123") is False
+
+        service_module._run_ssh_result = lambda *args, **kwargs: CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout="RUN\n",
+            stderr="",
+        )
+        assert service_module._bluevela_job_is_active("user@login3.example.com", "123") is True
+    finally:
+        service_module._run_ssh_result = original
 
 
 def test_bluevela_remote_lock_creates_parent_directory() -> None:
@@ -1361,6 +1560,75 @@ def test_bluevela_launch_marks_pending_run_failed_when_server_startup_fails(tmp_
     assert result.data["run_id"] == "run-aaaaaaaa"
     assert state.runs[0].status == "failed"
     assert state.runs[0].metadata["error"] == "server failed"
+
+
+def test_bluevela_launch_preserves_stopped_run_when_startup_is_stopped(tmp_path: Path) -> None:
+    state = LauncherState()
+    state_path = tmp_path / "launch-state.json"
+    original_launch_sync = service_module._launch_sync
+    original_find_server = service_module._find_existing_server
+    original_resolve_server = service_module._resolve_bluevela_server
+    original_resolve_podman = service_module._resolve_bluevela_podman_storage
+    original_uuid4 = service_module.uuid.uuid4
+    uuids = iter(["aaaaaaaaaaaaaaaa"])
+
+    class _UUID:
+        def __init__(self, value: str) -> None:
+            self.hex = value
+
+    try:
+        service_module._launch_sync = lambda spec, **kwargs: CommandResult(
+            ok=True,
+            message="sync",
+            data={"signature": "ws-1", "remote_path": "/u/user/mcode-launch/workspaces/ws-1"},
+        )
+        service_module._resolve_bluevela_podman_storage = lambda target: ("graphroot", "runroot")
+        service_module._find_existing_server = lambda *args, **kwargs: None
+
+        def fake_resolve(*args, on_pending_server=None, **kwargs):
+            del args, kwargs
+            pending = ServerHandle(
+                id="server-1",
+                target=TargetKind.BLUEVELA.value,
+                reuse_key="reuse-key",
+                endpoint="http://pending:8331/v1",
+                status="pending",
+                metadata={"login": "user@login3.example.com", "job_id": "1"},
+                log_path="/u/user/mcode-launch/runs/server/vllm.log",
+            )
+            assert on_pending_server is not None
+            on_pending_server(pending)
+            update_state(
+                state_path,
+                lambda current: setattr(
+                    current,
+                    "runs",
+                    [
+                        replace(entry, status="stopped") if entry.id == "run-aaaaaaaa" else entry
+                        for entry in current.runs
+                    ],
+                ),
+            )
+            raise RuntimeError("Blue Vela server startup was stopped: server-1")
+
+        service_module._resolve_bluevela_server = fake_resolve
+        service_module.uuid.uuid4 = lambda: _UUID(next(uuids))
+        result = service_module._launch_bluevela(
+            _spec(),
+            repo_root=tmp_path,
+            state=state,
+            state_path=state_path,
+        )
+    finally:
+        service_module._launch_sync = original_launch_sync
+        service_module._find_existing_server = original_find_server
+        service_module._resolve_bluevela_server = original_resolve_server
+        service_module._resolve_bluevela_podman_storage = original_resolve_podman
+        service_module.uuid.uuid4 = original_uuid4
+
+    assert result.ok is False
+    assert result.data["run_id"] == "run-aaaaaaaa"
+    assert state.runs[0].status == "stopped"
 
 
 def test_launch_attach_follows_all_bluevela_logs(tmp_path: Path) -> None:
