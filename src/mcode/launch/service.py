@@ -18,7 +18,12 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 from warnings import warn
 
-from mcode.launch.bluevela_service import launch_bluevela as launch_bluevela_impl
+from mcode.launch.bluevela_service import (
+    launch_bluevela as launch_bluevela_impl,
+)
+from mcode.launch.bluevela_service import (
+    submit_bluevela_benchmark_shards as submit_bluevela_benchmark_shards_impl,
+)
 from mcode.launch.config import LaunchConfig
 from mcode.launch.follow import follow_run_logs
 from mcode.launch.local_service import (
@@ -672,58 +677,6 @@ def _promote_bluevela_server_if_healthy(
     return healthy_server
 
 
-def _submit_bluevela_benchmark_shards(
-    run: RunHandle,
-    *,
-    server: ServerHandle,
-    workspace: WorkspaceHandle,
-    spec: LaunchSpec,
-    state_path: Path | None,
-) -> RunHandle:
-    assert isinstance(spec.target, BlueVelaTargetSpec)
-    login = str(run.metadata["login"])
-    run_dir = Path(str(run.metadata["run_dir"]))
-    workspace_path = Path(workspace.path)
-    _run_ssh(login, f"mkdir -p {shlex.quote(str(run_dir))}")
-    commands: list[str] = []
-    job_ids: list[str] = []
-    log_paths = [
-        str(run_dir / f"benchmark-shard-{shard_index}.log")
-        for shard_index in range(spec.benchmark.parallelism)
-    ]
-    db_paths = [
-        str(run_dir / f"diagnostic-shard-{shard_index}.db")
-        for shard_index in range(spec.benchmark.parallelism)
-    ]
-    for shard_index in range(spec.benchmark.parallelism):
-        command = _build_bluevela_bsub_benchmark_command(
-            spec,
-            workspace_path=workspace_path,
-            run_dir=run_dir,
-            shard_index=shard_index,
-            endpoint=server.endpoint,
-        )
-        output = _run_ssh(login, command).strip()
-        commands.append(command)
-        job_ids.append(extract_lsf_job_id(output) or output)
-    updated_run = replace(
-        run,
-        status="running",
-        metadata={
-            **run.metadata,
-            "commands": commands,
-            "db_paths": db_paths,
-            "job_ids": job_ids,
-            "log_paths": log_paths,
-            "server_id": server.id,
-            "startup_server_status": server.status,
-        },
-        log_path=log_paths[0],
-    )
-    merge_run(state_path, updated_run)
-    return updated_run
-
-
 def _recover_bluevela_pending_run(
     run: RunHandle,
     *,
@@ -755,12 +708,14 @@ def _recover_bluevela_pending_run(
     if server.status != "healthy":
         return run
     spec = _launch_spec_from_dict(launch_spec_raw)
-    return _submit_bluevela_benchmark_shards(
+    return submit_bluevela_benchmark_shards_impl(
         run,
+        spec=spec,
         server=server,
         workspace=workspace,
-        spec=spec,
-        state_path=state_path,
+        run_ssh=_run_ssh,
+        build_bsub_benchmark_command=_build_bluevela_bsub_benchmark_command,
+        record_run=lambda updated_run: merge_run(state_path, updated_run),
     )
 
 

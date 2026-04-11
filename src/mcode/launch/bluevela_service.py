@@ -21,6 +21,62 @@ from mcode.launch.progress import NullProgressReporter, ProgressReporter
 from mcode.launch.state import LauncherState, load_state
 
 
+def submit_bluevela_benchmark_shards(
+    run: RunHandle,
+    *,
+    spec: LaunchSpec,
+    server: ServerHandle,
+    workspace: WorkspaceHandle,
+    run_ssh: Callable[[str, str], str],
+    build_bsub_benchmark_command: Callable[..., str],
+    record_run: Callable[[RunHandle], RunHandle],
+    reporter: ProgressReporter | None = None,
+) -> RunHandle:
+    reporter = reporter or NullProgressReporter()
+    run_dir = Path(str(run.metadata["run_dir"]))
+    login = str(run.metadata["login"])
+    log_paths = [
+        str(run_dir / f"benchmark-shard-{shard_index}.log")
+        for shard_index in range(spec.benchmark.parallelism)
+    ]
+    db_paths = [
+        str(run_dir / f"diagnostic-shard-{shard_index}.db")
+        for shard_index in range(spec.benchmark.parallelism)
+    ]
+    commands = [
+        build_bsub_benchmark_command(
+            spec,
+            workspace_path=Path(workspace.path),
+            run_dir=run_dir,
+            shard_index=shard_index,
+            endpoint=server.endpoint,
+        )
+        for shard_index in range(spec.benchmark.parallelism)
+    ]
+    job_ids: list[str] = []
+    if spec.yes:
+        run_ssh(login, f"mkdir -p {run_dir}")
+        for index, command in enumerate(commands, start=1):
+            output = run_ssh(login, command).strip()
+            job_ids.append(extract_lsf_job_id(output) or output)
+            reporter.set(int((index / len(commands)) * 100), "Submitting benchmark shards")
+    updated_run = replace(
+        run,
+        status="running" if spec.yes else "planned",
+        metadata={
+            **run.metadata,
+            "commands": commands,
+            "db_paths": db_paths,
+            "job_ids": job_ids,
+            "log_paths": log_paths,
+            "server_id": server.id,
+            "startup_server_status": server.status,
+        },
+        log_path=log_paths[0],
+    )
+    return record_run(updated_run)
+
+
 def launch_bluevela(
     spec: LaunchSpec,
     *,
@@ -172,53 +228,21 @@ def launch_bluevela(
             data={"run_id": run_id, "workspace_signature": workspace_signature},
         )
 
-    if spec.yes:
-        run_ssh(spec.target.login, f"mkdir -p {run_dir}")
-    log_paths = [
-        str(run_dir / f"benchmark-shard-{shard_index}.log")
-        for shard_index in range(spec.benchmark.parallelism)
-    ]
-    db_paths = [
-        str(run_dir / f"diagnostic-shard-{shard_index}.db")
-        for shard_index in range(spec.benchmark.parallelism)
-    ]
-    commands = [
-        build_bsub_benchmark_command(
-            spec,
-            workspace_path=Path(workspace.path),
-            run_dir=run_dir,
-            shard_index=shard_index,
-            endpoint=server.endpoint,
-        )
-        for shard_index in range(spec.benchmark.parallelism)
-    ]
-    job_ids: list[str] = []
-    if spec.yes:
-        for command in commands:
-            output = run_ssh(spec.target.login, command).strip()
-            job_ids.append(extract_lsf_job_id(output) or output)
-            shard_reporter.set(
-                int((len(job_ids) / len(commands)) * 100),
-                "Submitting benchmark shards",
-            )
-    run = replace(
+    run = submit_bluevela_benchmark_shards(
         pending_run,
-        status="running" if spec.yes else "planned",
-        metadata={
-            **pending_run.metadata,
-            "commands": commands,
-            "db_paths": db_paths,
-            "job_ids": job_ids,
-            "log_paths": log_paths,
-            "server_id": server.id,
-            "startup_server_status": server.status,
-        },
-        log_path=log_paths[0],
+        spec=spec,
+        server=server,
+        workspace=workspace,
+        run_ssh=run_ssh,
+        build_bsub_benchmark_command=build_bsub_benchmark_command,
+        record_run=_record_run,
+        reporter=shard_reporter,
     )
-    _record_run(run)
     reporter.set(95, "Finalizing launch metadata")
     return CommandResult(
         ok=True,
-        message="\n".join(job_ids) if spec.yes else "\n".join(commands),
+        message="\n".join(run.metadata["job_ids"])
+        if spec.yes
+        else "\n".join(run.metadata["commands"]),
         data={"run_id": run_id, "server_id": server.id, "workspace_signature": workspace_signature},
     )
