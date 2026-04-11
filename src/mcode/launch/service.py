@@ -48,6 +48,7 @@ from mcode.launch.models import (
     ReuseMode,
     RunHandle,
     ServerHandle,
+    ServingProfile,
     ServingSpec,
     SyncMode,
     SyncSpec,
@@ -566,6 +567,7 @@ def launch_attach(
     run = next((entry for entry in state.runs if entry.id == run_id), None)
     if run is None:
         return CommandResult(ok=False, message=f"Unknown run id: {run_id}")
+    run = _recover_bluevela_pending_run(run, state_path=state_path)
     if follow:
         return _follow_run_logs(run)
     return CommandResult(
@@ -610,6 +612,156 @@ def launch_run(
 
 def _follow_run_logs(run: RunHandle) -> CommandResult:
     return follow_run_logs(run)
+
+
+def _launch_spec_from_dict(raw: dict[str, Any]) -> LaunchSpec:
+    target_raw = dict(raw["target"])
+    target_kind = TargetKind(target_raw.pop("kind"))
+    if target_kind == TargetKind.BLUEVELA:
+        target = BlueVelaTargetSpec(kind=target_kind, **target_raw)
+    elif target_kind == TargetKind.LOCAL_VLLM:
+        target = LocalVllmTargetSpec(kind=target_kind, **target_raw)
+    elif target_kind == TargetKind.LOCAL_OLLAMA:
+        target = LocalOllamaTargetSpec(kind=target_kind, **target_raw)
+    else:
+        target = OpenAICompatibleTargetSpec(kind=target_kind, **target_raw)
+
+    serving_raw = dict(raw["serving"])
+    profile = ServingProfile(**serving_raw.pop("profile", {}))
+    sync_raw = dict(raw["sync"])
+    return LaunchSpec(
+        target=target,
+        model=raw["model"],
+        benchmark=BenchSpec(**raw["benchmark"]),
+        serving=ServingSpec(profile=profile, **serving_raw),
+        sync=SyncSpec(mode=SyncMode(sync_raw.pop("mode")), **sync_raw),
+        reuse=ReuseMode(raw.get("reuse", ReuseMode.PREFER)),
+        json_mode=raw.get("json_mode", False),
+        yes=raw.get("yes", False),
+        follow=raw.get("follow", False),
+    )
+
+
+def _promote_bluevela_server_if_healthy(
+    server: ServerHandle,
+    *,
+    state_path: Path | None,
+) -> ServerHandle:
+    if server.target != TargetKind.BLUEVELA.value or server.status == "healthy":
+        return server
+    login = str(server.metadata.get("login", ""))
+    run_dir = server.metadata.get("run_dir")
+    if not login or not run_dir:
+        return server
+    host_path = Path(run_dir) / "vllm_host.txt"
+    host = _run_ssh(
+        login,
+        f"test -f {shlex.quote(str(host_path))} && cat {shlex.quote(str(host_path))} || true",
+    ).strip()
+    if not host:
+        return server
+    port = urlsplit(server.endpoint).port or 8321
+    endpoint = f"http://{host}:{port}/v1"
+    if not _remote_endpoint_is_healthy(login, endpoint):
+        return server
+    healthy_server = replace(server, status="healthy", endpoint=endpoint)
+    merge_server(state_path, healthy_server)
+    registry_path = healthy_server.metadata.get("registry_path")
+    if registry_path:
+        _write_remote_json(login, registry_path, asdict(healthy_server))
+    return healthy_server
+
+
+def _submit_bluevela_benchmark_shards(
+    run: RunHandle,
+    *,
+    server: ServerHandle,
+    workspace: WorkspaceHandle,
+    spec: LaunchSpec,
+    state_path: Path | None,
+) -> RunHandle:
+    assert isinstance(spec.target, BlueVelaTargetSpec)
+    login = str(run.metadata["login"])
+    run_dir = Path(str(run.metadata["run_dir"]))
+    workspace_path = Path(workspace.path)
+    _run_ssh(login, f"mkdir -p {shlex.quote(str(run_dir))}")
+    commands: list[str] = []
+    job_ids: list[str] = []
+    log_paths = [
+        str(run_dir / f"benchmark-shard-{shard_index}.log")
+        for shard_index in range(spec.benchmark.parallelism)
+    ]
+    db_paths = [
+        str(run_dir / f"diagnostic-shard-{shard_index}.db")
+        for shard_index in range(spec.benchmark.parallelism)
+    ]
+    for shard_index in range(spec.benchmark.parallelism):
+        command = _build_bluevela_bsub_benchmark_command(
+            spec,
+            workspace_path=workspace_path,
+            run_dir=run_dir,
+            shard_index=shard_index,
+            endpoint=server.endpoint,
+        )
+        output = _run_ssh(login, command).strip()
+        commands.append(command)
+        job_ids.append(extract_lsf_job_id(output) or output)
+    updated_run = replace(
+        run,
+        status="running",
+        metadata={
+            **run.metadata,
+            "commands": commands,
+            "db_paths": db_paths,
+            "job_ids": job_ids,
+            "log_paths": log_paths,
+            "server_id": server.id,
+            "startup_server_status": server.status,
+        },
+        log_path=log_paths[0],
+    )
+    merge_run(state_path, updated_run)
+    return updated_run
+
+
+def _recover_bluevela_pending_run(
+    run: RunHandle,
+    *,
+    state_path: Path | None,
+) -> RunHandle:
+    if (
+        run.target != TargetKind.BLUEVELA.value
+        or run.status != "pending"
+        or run.metadata.get("job_ids")
+    ):
+        return run
+    launcher_pid = run.metadata.get("launcher_pid")
+    if isinstance(launcher_pid, int) and _pid_is_alive(launcher_pid):
+        return run
+    launch_spec_raw = run.metadata.get("launch_spec")
+    server_id = run.metadata.get("server_id")
+    workspace_signature = run.metadata.get("workspace_signature")
+    if not isinstance(launch_spec_raw, dict) or not server_id or not workspace_signature:
+        return run
+    state = load_state(state_path)
+    server = next((entry for entry in state.servers if entry.id == server_id), None)
+    workspace = next(
+        (entry for entry in state.workspaces if entry.signature == workspace_signature),
+        None,
+    )
+    if server is None or workspace is None:
+        return run
+    server = _promote_bluevela_server_if_healthy(server, state_path=state_path)
+    if server.status != "healthy":
+        return run
+    spec = _launch_spec_from_dict(launch_spec_raw)
+    return _submit_bluevela_benchmark_shards(
+        run,
+        server=server,
+        workspace=workspace,
+        spec=spec,
+        state_path=state_path,
+    )
 
 
 def _launch_bluevela(

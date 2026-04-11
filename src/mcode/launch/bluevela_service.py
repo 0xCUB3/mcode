@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import os
 import uuid
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 from mcode.launch.lsf import extract_lsf_job_id
@@ -77,6 +78,8 @@ def launch_bluevela(
         metadata={
             "db_paths": [],
             "job_ids": [],
+            "launch_spec": asdict(spec),
+            "launcher_pid": os.getpid(),
             "login": spec.target.login,
             "log_paths": [],
             "run_dir": str(run_dir),

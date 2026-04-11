@@ -1852,6 +1852,179 @@ def test_launch_attach_follows_pending_bluevela_startup_log(tmp_path: Path) -> N
     assert "tail -n 20 -f /u/user/run/vllm.log" in commands[0][3]
 
 
+def test_launch_attach_recovers_pending_bluevela_run_when_server_is_healthy(
+    tmp_path: Path,
+) -> None:
+    spec = replace(_spec(), benchmark=replace(_spec().benchmark, parallelism=2))
+    server_run_dir = "/u/user/mcode-launch/runs/server-1"
+    run = service_module.RunHandle(
+        id="run-1",
+        target=TargetKind.BLUEVELA.value,
+        benchmark="swebench-lite",
+        status="pending",
+        metadata={
+            "db_paths": [],
+            "job_ids": [],
+            "launch_spec": asdict(spec),
+            "login": "user@login3.example.com",
+            "log_paths": [f"{server_run_dir}/vllm.log"],
+            "run_dir": "/u/user/mcode-launch/runs/run-1",
+            "server_id": "server-1",
+            "startup_server_status": "pending",
+            "workspace_signature": "ws-1",
+        },
+        log_path=f"{server_run_dir}/vllm.log",
+    )
+    server = ServerHandle(
+        id="server-1",
+        target=TargetKind.BLUEVELA.value,
+        reuse_key=build_bluevela_server_reuse_key(spec),
+        endpoint="http://pending:8331/v1",
+        status="pending",
+        metadata={
+            "job_id": "123",
+            "login": "user@login3.example.com",
+            "registry_path": "/u/user/mcode-launch/state/servers/server-1.json",
+            "run_dir": server_run_dir,
+            "workspace_signature": "ws-1",
+        },
+        log_path=f"{server_run_dir}/vllm.log",
+    )
+    workspace = service_module.WorkspaceHandle(
+        signature="ws-1",
+        path="/u/user/mcode-launch/workspaces/ws-1",
+    )
+    state_path = tmp_path / "launch-state.json"
+    update_state(
+        state_path,
+        lambda current: (
+            setattr(current, "runs", [run]),
+            setattr(current, "servers", [server]),
+            setattr(current, "workspaces", [workspace]),
+        ),
+    )
+    original_run_ssh = service_module._run_ssh
+    original_remote_health = service_module._remote_endpoint_is_healthy
+    original_follow = service_module._follow_run_logs
+    commands: list[str] = []
+    followed: list[service_module.RunHandle] = []
+    job_outputs = iter(
+        [
+            "Job <700> is submitted to queue <normal>.",
+            "Job <701> is submitted to queue <normal>.",
+        ]
+    )
+
+    def fake_run_ssh(login: str, command: str) -> str:
+        del login
+        commands.append(command)
+        if "vllm_host.txt" in command:
+            return "host.example.com\n"
+        if command.startswith("mkdir -p "):
+            return ""
+        if command.startswith("bsub "):
+            return next(job_outputs)
+        if "state/servers/server-1.json" in command:
+            return ""
+        raise AssertionError(command)
+
+    try:
+        service_module._run_ssh = fake_run_ssh
+        service_module._remote_endpoint_is_healthy = lambda *args, **kwargs: True
+        service_module._follow_run_logs = lambda current: (
+            followed.append(current) or CommandResult(ok=True, message="follow")
+        )
+        result = service_module.launch_attach("run-1", state_path=state_path)
+    finally:
+        service_module._run_ssh = original_run_ssh
+        service_module._remote_endpoint_is_healthy = original_remote_health
+        service_module._follow_run_logs = original_follow
+
+    assert result.ok is True
+    assert followed
+    assert followed[0].status == "running"
+    assert followed[0].metadata["job_ids"] == ["700", "701"]
+    recovered_state = service_module.load_state(state_path)
+    recovered_run = next(entry for entry in recovered_state.runs if entry.id == "run-1")
+    recovered_server = next(entry for entry in recovered_state.servers if entry.id == "server-1")
+    assert recovered_run.status == "running"
+    assert recovered_run.metadata["startup_server_status"] == "healthy"
+    assert recovered_server.status == "healthy"
+    assert recovered_server.endpoint == "http://host.example.com:8331/v1"
+    assert any("benchmark-shard-0.log" in command for command in commands)
+    assert any("benchmark-shard-1.log" in command for command in commands)
+
+
+def test_launch_attach_does_not_recover_while_launcher_process_is_alive(tmp_path: Path) -> None:
+    spec = replace(_spec(), benchmark=replace(_spec().benchmark, parallelism=2))
+    run = service_module.RunHandle(
+        id="run-1",
+        target=TargetKind.BLUEVELA.value,
+        benchmark="swebench-lite",
+        status="pending",
+        metadata={
+            "db_paths": [],
+            "job_ids": [],
+            "launch_spec": asdict(spec),
+            "launcher_pid": service_module.os.getpid(),
+            "login": "user@login3.example.com",
+            "log_paths": ["/u/user/run/vllm.log"],
+            "run_dir": "/u/user/mcode-launch/runs/run-1",
+            "server_id": "server-1",
+            "startup_server_status": "pending",
+            "workspace_signature": "ws-1",
+        },
+        log_path="/u/user/run/vllm.log",
+    )
+    server = ServerHandle(
+        id="server-1",
+        target=TargetKind.BLUEVELA.value,
+        reuse_key=build_bluevela_server_reuse_key(spec),
+        endpoint="http://pending:8331/v1",
+        status="pending",
+        metadata={
+            "job_id": "123",
+            "login": "user@login3.example.com",
+            "registry_path": "/u/user/mcode-launch/state/servers/server-1.json",
+            "run_dir": "/u/user/mcode-launch/runs/server-1",
+            "workspace_signature": "ws-1",
+        },
+        log_path="/u/user/run/vllm.log",
+    )
+    workspace = service_module.WorkspaceHandle(
+        signature="ws-1",
+        path="/u/user/mcode-launch/workspaces/ws-1",
+    )
+    state_path = tmp_path / "launch-state.json"
+    update_state(
+        state_path,
+        lambda current: (
+            setattr(current, "runs", [run]),
+            setattr(current, "servers", [server]),
+            setattr(current, "workspaces", [workspace]),
+        ),
+    )
+    original_run_ssh = service_module._run_ssh
+    original_follow = service_module._follow_run_logs
+    followed: list[service_module.RunHandle] = []
+
+    try:
+        service_module._run_ssh = lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("should not attempt recovery while launcher is alive")
+        )
+        service_module._follow_run_logs = lambda current: (
+            followed.append(current) or CommandResult(ok=True, message="follow")
+        )
+        result = service_module.launch_attach("run-1", state_path=state_path)
+    finally:
+        service_module._run_ssh = original_run_ssh
+        service_module._follow_run_logs = original_follow
+
+    assert result.ok is True
+    assert followed
+    assert followed[0].status == "pending"
+
+
 def test_stop_pending_bluevela_run_stops_pending_server(tmp_path: Path) -> None:
     run = service_module.RunHandle(
         id="run-1",
