@@ -262,8 +262,15 @@ def cmd_stop(
     all_: bool = typer.Option(False, "--all", help="stop everything in state"),
 ) -> None:
     """Stop one server by id, or --all to stop every server. Never uses
-    `bkill 0` or `-u` — only the caller's recorded jobs."""
-    cfg = config_mod.load()
+    `bkill 0` or `-u` — only the caller's recorded jobs.
+
+    Codex verification-pass fixes:
+    - Config is loaded lazily, only for Blue Vela targets, so a broken
+      [bluevela] TOML never prevents stopping a local server.
+    - Honour the return value from bluevela.stop(): False means SSH was
+      down and the record was kept as stop-pending. Print a retry hint and
+      exit nonzero rather than claiming success.
+    """
     s = state.load()
     if all_ and id:
         _print_error(
@@ -281,17 +288,42 @@ def cmd_stop(
             LaunchError(what=f"no server with id {id!r}", why="", next="`mcode launch status`")
         )
         raise typer.Exit(1)
+
+    _cfg: config_mod.LaunchConfig | None = None
+
+    def need_cfg() -> config_mod.LaunchConfig:
+        nonlocal _cfg
+        if _cfg is None:
+            _cfg = _run(config_mod.load)
+        return _cfg
+
+    any_failed = False
     for srv in targets:
         try:
             if srv.target == Target.BLUEVELA:
-                bluevela.stop(srv.id, cfg=cfg)
+                ok = bluevela.stop(srv.id, cfg=need_cfg())
             elif srv.target == Target.LOCAL_VLLM:
-                local_vllm.stop(srv.id)
+                ok = local_vllm.stop(srv.id)
             elif srv.target == Target.LOCAL_OLLAMA:
-                local_ollama.stop(srv.id)
-            print(f"stopped: {srv.id}")
+                ok = local_ollama.stop(srv.id)
+            else:
+                ok = False
+            if ok:
+                print(f"stopped: {srv.id}")
+            else:
+                any_failed = True
+                _print_error(
+                    LaunchError(
+                        what=f"could not confirm stop of {srv.id}",
+                        why="remote kill didn't complete (ssh down?)",
+                        next=f"record kept as stop-pending; `mcode launch stop {srv.id}` to retry",
+                    )
+                )
         except LaunchError as e:
+            any_failed = True
             _print_error(e)
+    if any_failed:
+        raise typer.Exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -309,9 +341,9 @@ def cmd_doctor(
     ),
 ) -> None:
     """Health check for a target. With --init, probe and write launch.toml."""
-    # Codex final-review fix: lazy config load + wrap in _run so a malformed
-    # TOML surfaces as a formatted LaunchError instead of a raw traceback.
-    cfg = _run(config_mod.load)
+    # Codex verification-pass fix: don't load existing config for --init. The
+    # whole point of --init is to repair a missing/broken launch.toml; eager
+    # loading defeats that.
     if init:
         if target != "bluevela":
             _print_error(
@@ -333,6 +365,9 @@ def cmd_doctor(
         print(f"review with `cat {written}` and re-run `mcode launch doctor bluevela`")
         return
 
+    # Health-check path: lazy config load wrapped in _run so a malformed TOML
+    # surfaces as a formatted LaunchError, not a traceback.
+    cfg = _run(config_mod.load)
     if target == "bluevela":
         checks = bluevela.doctor(cfg)
     elif target == "local-vllm":
@@ -390,8 +425,11 @@ def cmd_refresh() -> None:
                 elif srv.target == Target.LOCAL_VLLM:
                     updated = local_vllm.refresh(srv)
                 elif srv.target == Target.LOCAL_OLLAMA:
-                    # local_ollama only needs cfg for host/port; default is fine.
-                    updated = local_ollama.refresh(srv)
+                    # Codex verification-pass fix: pass cfg so custom Ollama
+                    # host/port settings are honoured during refresh. Without
+                    # this, non-default daemons get refreshed against
+                    # 127.0.0.1:11434 and healthy records flip to stopped.
+                    updated = local_ollama.refresh(srv, cfg=need_cfg())
                 else:
                     continue
             except LaunchError:

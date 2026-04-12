@@ -128,10 +128,12 @@ def test_stop_all_scoped_to_local_servers(
 ) -> None:
     """--all must only act on recorded servers, never a blanket bkill."""
     stopped: list[str] = []
-    monkeypatch.setattr(
-        "mcode.launch.cli.local_vllm.stop",
-        lambda sid: stopped.append(sid) or True,
-    )
+
+    def _fake_stop(sid):
+        stopped.append(sid)
+        return True
+
+    monkeypatch.setattr("mcode.launch.cli.local_vllm.stop", _fake_stop)
     state.update(
         isolated_state,
         lambda s: s.upsert_server(
@@ -199,6 +201,74 @@ def test_logs_for_bluevela_prints_ssh_hint(runner: CliRunner, isolated_state: Pa
     assert result.exit_code == 0
     assert "ssh user@host" in result.stdout
     assert "/vllm.log" in result.stdout
+
+
+def test_stop_bluevela_transport_failure_exits_nonzero(
+    runner: CliRunner, isolated_state: Path, monkeypatch
+) -> None:
+    """Codex verification-pass fix: when bluevela.stop() returns False
+    (transport failure, record kept as stop-pending), the CLI must surface
+    that as a failure — not print 'stopped: ...' and exit 0."""
+    monkeypatch.setattr("mcode.launch.cli.bluevela.stop", lambda sid, **_kw: False)
+    state.update(
+        isolated_state,
+        lambda s: s.upsert_server(
+            ServerRecord(
+                id="bv-1",
+                target=Target.BLUEVELA,
+                endpoint="x",
+                model="m",
+                config_hash="h",
+                job_id="123",
+                metadata={"login": "a@b"},
+            )
+        ),
+    )
+    # Write a valid TOML so config loads — the point is the False return path.
+    cfg_path = isolated_state.parent / "launch.toml"
+    cfg_path.write_text(
+        '[bluevela]\nlogin = "a@b"\nworkspace_root = "/u/x"\nshared_root = "/u/y"\n'
+        'queue_order = ["normal"]\ngroup = "g"\n'
+    )
+    monkeypatch.setenv("MCODE_LAUNCH_CONFIG", str(cfg_path))
+    result = runner.invoke(app, ["stop", "bv-1"])
+    assert result.exit_code == 1
+    out = _all_output(result)
+    assert "could not confirm" in out or "stop-pending" in out
+    assert "stopped: bv-1" not in out
+
+
+def test_stop_local_target_works_even_when_bluevela_config_broken(
+    runner: CliRunner, isolated_state: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """Codex verification-pass fix: a malformed [bluevela] TOML must NOT
+    block stopping a local-vllm server."""
+    bad_cfg = tmp_path / "launch.toml"
+    bad_cfg.write_text("not = = toml\n")  # malformed
+    monkeypatch.setenv("MCODE_LAUNCH_CONFIG", str(bad_cfg))
+
+    stopped: list[str] = []
+
+    def _fake_stop(sid):
+        stopped.append(sid)
+        return True
+
+    monkeypatch.setattr("mcode.launch.cli.local_vllm.stop", _fake_stop)
+    state.update(
+        isolated_state,
+        lambda s: s.upsert_server(
+            ServerRecord(
+                id="lv-1",
+                target=Target.LOCAL_VLLM,
+                endpoint="x",
+                model="m",
+                config_hash="h",
+            )
+        ),
+    )
+    result = runner.invoke(app, ["stop", "lv-1"])
+    assert result.exit_code == 0
+    assert stopped == ["lv-1"]
 
 
 def test_doctor_init_writes_config(
