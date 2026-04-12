@@ -987,7 +987,13 @@ def doctor_init(
     def _is_batch_queue(q: str) -> bool | None:
         if not _SAFE_IDENT_RE.match(q):
             return None
-        probe = ssh.run(f"bqueues -l {_q(q)} 2>/dev/null", timeout=60)
+        try:
+            probe = ssh.run(f"bqueues -l {_q(q)} 2>/dev/null", timeout=60)
+        except TransportError:
+            # Transport dropping mid-init must NOT raise out of doctor_init;
+            # let the fail-closed aggregation path raise a formatted
+            # LaunchError instead (Codex pre-merge verification fix).
+            return None
         if not probe.ok or not probe.stdout:
             return None
         return "ONLY_INTERACTIVE" not in probe.stdout

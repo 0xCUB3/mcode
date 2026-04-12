@@ -122,6 +122,33 @@ def test_doctor_init_raises_when_no_parseable_queues(tmp_path: Path) -> None:
     assert "batch-capable" in ei.value.what
 
 
+def test_doctor_init_handles_transport_error_in_queue_probe(tmp_path: Path) -> None:
+    """Codex pre-merge verification fix: a TransportError raised by the
+    `bqueues -l` probe must NOT escape doctor_init. It must be caught and
+    contribute to the fail-closed 'could not confirm any batch-capable
+    queue' LaunchError path so the CLI renders a formatted error, not a
+    traceback."""
+    ssh = MagicMock()
+
+    def run(cmd: str, *, timeout: float = 60.0):
+        if "mcode-doctor-init-ok" in cmd:
+            return _ok(stdout="mcode-doctor-init-ok\n")
+        if cmd.startswith("echo $HOME"):
+            return _ok(stdout="/u/testuser\n")
+        if cmd.startswith("bugroup"):
+            return _ok(stdout="GROUP_NAME USERS GROUP_ADMIN\ngrp_x testuser ( - )\n")
+        if "bqueues -u" in cmd:
+            return _ok(stdout="QUEUE_NAME PRIO STATUS\nnormal 30 Open:Active\n")
+        if cmd.startswith("bqueues -l"):
+            raise TransportError("ssh session dropped")
+        return _ok()
+
+    ssh.run.side_effect = run
+    with pytest.raises(LaunchError) as ei:
+        bluevela.doctor_init(tmp_path / "launch.toml", login="testuser@testhost", ssh_client=ssh)
+    assert "batch-capable" in ei.value.what
+
+
 def test_doctor_init_raises_when_only_interactive_queues_available(tmp_path: Path) -> None:
     """Fail closed if every visible queue is confirmed interactive-only."""
     ssh = MagicMock()
