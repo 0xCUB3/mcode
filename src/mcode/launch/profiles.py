@@ -91,8 +91,8 @@ _PROFILES: list[tuple[str, ServingProfile]] = [
             tensor_parallel=2,
             max_model_len=32768,
             chat_template="tool_chat_template_gemma4.jinja",
-            image="docker.io/vllm/vllm-openai:v0.19.0",
-            min_vllm="0.19.0",
+            image="docker.io/vllm/vllm-openai:gemma4",
+            min_vllm="0.19.0+gemma4",
         ),
     ),
     # Granite 4.x — uses hermes parser (NOT "granite", which is 3.x).
