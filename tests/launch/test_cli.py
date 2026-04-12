@@ -201,6 +201,30 @@ def test_logs_for_bluevela_prints_ssh_hint(runner: CliRunner, isolated_state: Pa
     assert "/vllm.log" in result.stdout
 
 
+def test_doctor_init_writes_config(
+    runner: CliRunner, isolated_state: Path, tmp_path: Path, monkeypatch
+) -> None:
+    written: dict[str, Path] = {}
+
+    def fake_init(*, login, cfg_path=None, **_):
+        p = tmp_path / "launch.toml"
+        p.write_text("[bluevela]\nlogin = '" + login + "'\n")
+        written["path"] = p
+        return p
+
+    monkeypatch.setattr("mcode.launch.cli.bluevela.doctor_init", fake_init)
+    result = runner.invoke(app, ["doctor", "bluevela", "--init", "--login", "alice@host"])
+    assert result.exit_code == 0
+    assert "wrote" in result.stdout
+    assert written["path"].exists()
+
+
+def test_doctor_init_rejects_non_bluevela_target(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["doctor", "local-vllm", "--init"])
+    assert result.exit_code == 1
+    assert "only supported for `bluevela`" in _all_output(result)
+
+
 def test_refresh_walks_state(runner: CliRunner, isolated_state: Path, monkeypatch) -> None:
     refreshed: list[str] = []
 

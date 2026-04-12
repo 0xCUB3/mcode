@@ -301,9 +301,36 @@ def cmd_stop(
 def cmd_doctor(
     target: str = typer.Argument(...),
     deep: bool = typer.Option(False, "--deep"),
+    init: bool = typer.Option(False, "--init", help="bootstrap launch.toml for this account"),
+    login: str | None = typer.Option(
+        None,
+        "--login",
+        help="user@host for --init (e.g. alice@login3.bluevela.rmf.ibm.com)",
+    ),
 ) -> None:
-    """Health check for a target."""
+    """Health check for a target. With --init, probe and write launch.toml."""
     cfg = config_mod.load()
+    if init:
+        if target != "bluevela":
+            _print_error(
+                LaunchError(
+                    what="--init is only supported for `bluevela`",
+                    why=f"target was {target!r}",
+                    next="local targets don't need probing — edit launch.toml by hand",
+                )
+            )
+            raise typer.Exit(1)
+        if not login:
+            login = typer.prompt("Blue Vela login (user@host)")
+
+        def block():
+            return bluevela.doctor_init(login=login)
+
+        written = _run(block)
+        print(f"wrote {written}")
+        print(f"review with `cat {written}` and re-run `mcode launch doctor bluevela`")
+        return
+
     if target == "bluevela":
         checks = bluevela.doctor(cfg)
     elif target == "local-vllm":

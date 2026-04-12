@@ -38,6 +38,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+from mcode.launch import config as config_mod
 from mcode.launch import state
 from mcode.launch.config import BluevelaConfig, LaunchConfig, validate_for_bluevela
 from mcode.launch.models import (
@@ -765,3 +766,133 @@ def doctor(cfg: LaunchConfig | None = None, *, ssh_client: SshClient | None = No
     except TransportError as e:
         checks.append(Check(name="bqueues probe", ok=False, detail=str(e)))
     return checks
+
+
+# ---------------------------------------------------------------------------
+# doctor --init: bootstrap launch.toml for a fresh Blue Vela account
+# ---------------------------------------------------------------------------
+def _parse_bugroup(raw: str) -> list[str]:
+    """Extract the user's groups from `bugroup` output.
+
+    On this cluster the format is `GROUP_NAME USERS ... GROUP_ADMIN`; each row
+    lists a group the caller belongs to (since they called `bugroup` without
+    args). We take the first whitespace-delimited token per row, skipping the
+    header line if present.
+    """
+    out: list[str] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("GROUP_NAME"):
+            continue
+        head = line.split()[0] if line.split() else ""
+        if head and _SAFE_IDENT_RE.match(head):
+            out.append(head)
+    return out
+
+
+def _parse_bqueues(raw: str) -> list[tuple[str, int, str]]:
+    """Parse `bqueues -u $USER -o 'QUEUE_NAME PRIO STATUS'` output.
+
+    Returns (name, priority, status) triples, open queues first, sorted by
+    priority descending. Queues with names that fail the allowlist are skipped
+    (defense in depth — we'll write these to TOML and later feed into bsub).
+    """
+    rows: list[tuple[str, int, str]] = []
+    for line in raw.splitlines():
+        parts = line.split()
+        if not parts or parts[0] in ("QUEUE_NAME",):
+            continue
+        if len(parts) < 3:
+            continue
+        name, prio_raw, status = parts[0], parts[1], parts[2]
+        if not _SAFE_IDENT_RE.match(name):
+            continue
+        try:
+            prio = int(prio_raw)
+        except ValueError:
+            continue
+        rows.append((name, prio, status))
+    # Open-active queues first (by priority desc), then closed (informational).
+    rows.sort(key=lambda r: (not r[2].startswith("Open"), -r[1], r[0]))
+    return rows
+
+
+def doctor_init(
+    cfg_path: Path | None = None,
+    *,
+    login: str,
+    ssh_client: SshClient | None = None,
+) -> Path:
+    """Probe a Blue Vela account and write a launch.toml seeded with real
+    values (user's home, groups, open queues). Caller supplies the login
+    string since we can't invent a hostname.
+
+    Per M7: strict SSH preflight — a 5s connect test runs first. If it fails,
+    the function raises LaunchError with actionable next-steps and does NOT
+    attempt probes against a broken connection.
+
+    Per the portability requirement: never writes the developer's username
+    into a shared file. The only user-specific values it records are the ones
+    the caller's own account actually reports.
+    """
+    if "@" not in login:
+        raise LaunchError(
+            what=f"login {login!r} must be user@host",
+            why="doctor --init needs to know who and where",
+            next="pass --login user@login-host.example",
+        )
+    ssh = ssh_client or SshClient(login)
+
+    # --- preflight: 5s connect test ---------------------------------------
+    try:
+        pf = ssh.run("echo mcode-doctor-init-ok", timeout=10)
+    except TransportError as e:
+        raise LaunchError(
+            what="SSH preflight failed",
+            why=str(e),
+            next=_hint_for(str(e)),
+        ) from e
+    if not pf.ok or "mcode-doctor-init-ok" not in pf.stdout:
+        raise LaunchError(
+            what="SSH preflight did not echo the expected marker",
+            why=(pf.stderr or pf.stdout).strip()[:200],
+            next="verify your shell on the login host isn't printing banners that corrupt stdout",
+        )
+
+    # --- home + user ------------------------------------------------------
+    home = ssh.run("echo $HOME", timeout=10).stdout.strip() or "$HOME"
+    if not _SAFE_POSIX_PATH_RE.match(home):
+        raise LaunchError(
+            what=f"unexpected $HOME value: {home!r}",
+            why="doctor --init needs a POSIX path we can safely write into TOML",
+            next="set [bluevela].workspace_root and shared_root manually",
+        )
+
+    # --- groups -----------------------------------------------------------
+    bg = ssh.run("bugroup 2>/dev/null || true", timeout=15)
+    groups = _parse_bugroup(bg.stdout)
+    group = groups[0] if groups else ""
+
+    # --- queues -----------------------------------------------------------
+    bq = ssh.run("bqueues -u $USER -o 'QUEUE_NAME PRIO STATUS' 2>/dev/null", timeout=15)
+    queue_rows = _parse_bqueues(bq.stdout)
+    # Prefer open queues that aren't interactive-only. We don't have a reliable
+    # way to detect interactive-only from this column set, so we filter later
+    # via bsub -H hold validation when a real launch runs. For init, just grab
+    # the open queues; the user can edit down.
+    open_queues = [name for name, _, status in queue_rows if status.startswith("Open")]
+    queue_order = open_queues[:3] if open_queues else ["normal"]
+
+    # --- compose config ---------------------------------------------------
+    cfg = config_mod.LaunchConfig()
+    cfg.bluevela.login = login
+    cfg.bluevela.workspace_root = f"{home}/mcode-launch"
+    cfg.bluevela.shared_root = f"{home}/mcode-shared"
+    cfg.bluevela.hf_env = f"{home}/.config/mcode/hf-env.sh"
+    cfg.bluevela.group = group
+    cfg.bluevela.queue_order = queue_order
+    cfg.bluevela.gpu_mode = "exclusive_process"  # Phase 0.5 finding
+
+    dst = cfg_path or config_mod.default_config_path()
+    config_mod.save(cfg, dst)
+    return dst
