@@ -13,7 +13,7 @@
     "--tool-call-parser",
     "functiongemma",
     "--attention-backend",
-    "FLASHINFER",
+    "TORCH_SDPA",
     "--chat-template",
     "/chat-template.jinja"
   ],
