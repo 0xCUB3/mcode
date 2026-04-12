@@ -742,11 +742,14 @@ def doctor(cfg: LaunchConfig | None = None, *, ssh_client: SshClient | None = No
     ssh = ssh_client or SshClient(bv.login)
     try:
         r = ssh.run("lsid 2>&1 || true", timeout=15)
+        # First non-blank line of `lsid` carries the LSF version; the rest is
+        # an IBM copyright banner we don't need cluttering the check row.
+        first_line = next((ln for ln in (r.stdout or r.stderr).splitlines() if ln.strip()), "")
         checks.append(
             Check(
                 name="ssh reachable",
                 ok=r.ok,
-                detail=(r.stdout or r.stderr).strip()[:120],
+                detail=first_line.strip()[:120],
                 next=("" if r.ok else _hint_for(r.stderr or "")),
             )
         )
@@ -761,10 +764,13 @@ def doctor(cfg: LaunchConfig | None = None, *, ssh_client: SshClient | None = No
         )
         return checks
 
-    # Group membership.
+    # Group membership — use the same whole-word filter as doctor_init so a
+    # row like `lsfadmins user1 user2 ... ( admin )` doesn't land in the
+    # membership list when the configured user isn't actually in it.
+    user = bv.login.split("@", 1)[0]
     try:
-        r = ssh.run("bugroup 2>&1 | awk '$1 ~ /grp_/' | head", timeout=15)
-        groups = [line.split()[0] for line in (r.stdout or "").splitlines() if line.strip()]
+        r = ssh.run("bugroup 2>/dev/null || true", timeout=15)
+        groups = _parse_bugroup(r.stdout or "", user=user)
         has = bv.group in groups
         checks.append(
             Check(
@@ -774,8 +780,10 @@ def doctor(cfg: LaunchConfig | None = None, *, ssh_client: SshClient | None = No
                 next=(
                     ""
                     if has
-                    else f"ask admin to add you to {bv.group}, or switch [bluevela].group to "
-                    f"one of: {', '.join(groups)}"
+                    else (
+                        f"ask admin to add you to {bv.group}, or switch "
+                        f"[bluevela].group to one of: {', '.join(groups) or '(none found)'}"
+                    )
                 ),
             )
         )
