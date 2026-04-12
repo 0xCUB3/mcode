@@ -41,3 +41,8 @@ report-screenshot.png
 # Planning
 .planning/
 docs/plans/
+
+# mnemos (MCP) local DB
+mnemos.db
+mnemos.db-*
+

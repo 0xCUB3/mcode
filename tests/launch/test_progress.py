@@ -141,3 +141,64 @@ def test_close_without_finish_marks_active_failed() -> None:
     r.start("submit")
     r.close()  # caller forgot to finish()
     assert r._by_key["submit"].status == PhaseStatus.FAILED
+
+
+def test_steady_feed_does_not_trigger_stall_warning() -> None:
+    """Codex fix: a feed that returns the same value every tick is HEALTHY
+    (remote is fine, status just didn't change). Stall anchors on last
+    successful poll, not last detail-change."""
+    r = progress.NullReporter.create(PHASES)
+    r.start("submit", feed=lambda: "PEND: waiting for GPU")
+    import time as _t
+
+    _t.sleep(0.6)  # ≥2 feed ticks
+    ps = r._by_key["submit"]
+    # The feed has been polled successfully several times; last_feed_ok
+    # should have moved even though detail text is unchanged.
+    assert ps.last_feed_ok is not None
+    assert ps.last_feed_ok >= ps.started_at
+    r.finish(PhaseStatus.DONE)
+    r.close()
+
+
+def test_close_emits_failure_transition_to_plain_reporter() -> None:
+    """Codex fix: close() with an active phase must emit a terminal failure
+    event to Plain/Json reporters, not just mutate internal state."""
+    buf = io.StringIO()
+    r = progress.PlainReporter.create(PHASES, stream=buf)
+    r.start("submit")
+    r.close()  # caller forgot to finish()
+    lines = _read_lines(buf)
+    # Expect a ✗ line for the synthetic failure.
+    assert any("✗" in line and "Submit" in line for line in lines), (
+        f"no failure transition emitted; got: {lines!r}"
+    )
+
+
+def test_close_emits_failure_transition_to_json_reporter() -> None:
+    buf = io.StringIO()
+    r = progress.JsonReporter.create(PHASES, stream=buf)
+    r.start("submit")
+    r.close()
+    events = [json.loads(line) for line in _read_lines(buf)]
+    failures = [e for e in events if e["phase"] == "submit" and e["status"] == "failed"]
+    assert failures, f"no failed event emitted; got: {events!r}"
+
+
+def test_closed_reporter_ignores_late_feed_mutations() -> None:
+    """Codex fix: a heartbeat thread blocked on a slow feed must not mutate
+    state or emit output after close() returns."""
+    buf = io.StringIO()
+    r = progress.JsonReporter.create(PHASES, stream=buf)
+    r.start("submit")
+    r.finish(PhaseStatus.DONE)
+    before_close_events = len(_read_lines(buf))
+    r.close()
+    after_close_events = len(_read_lines(buf))
+    # close() itself may emit one extra transition; what must NOT happen is
+    # subsequent writes once _closed is set.
+    r.set_detail("should be ignored")
+    r.transport_warning("should be ignored")
+    assert len(_read_lines(buf)) == after_close_events
+    # Sanity: we saw events from the lifecycle.
+    assert before_close_events > 0

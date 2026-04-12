@@ -86,6 +86,7 @@ class _PhaseState:
     finished_at: float | None = None
     detail: str = ""
     last_detail_change: float | None = None
+    last_feed_ok: float | None = None  # last successful feed poll (even if value unchanged)
     transport_warning: str | None = None
 
     def elapsed(self, now: float | None = None) -> float:
@@ -117,6 +118,9 @@ class _ReporterBase:
         self._feed: Callable[[], str] | None = None
         self._heartbeat_thread: threading.Thread | None = None
         self._heartbeat_stop: threading.Event | None = None
+        # _closed guards all state mutation + output paths after shutdown so
+        # a late heartbeat tick (e.g. feed stuck in SSH I/O) can't lie.
+        self._closed = False
 
     # --- public API ---------------------------------------------------------
     def add_phases(self, phases: list[Phase]) -> None:
@@ -144,7 +148,7 @@ class _ReporterBase:
 
     def set_detail(self, text: str) -> None:
         with self._lock:
-            if self._active is None:
+            if self._closed or self._active is None:
                 return
             if text != self._active.detail:
                 self._active.detail = text
@@ -153,10 +157,16 @@ class _ReporterBase:
 
     def transport_warning(self, text: str | None) -> None:
         with self._lock:
-            if self._active is None:
+            if self._closed or self._active is None:
                 return
             self._active.transport_warning = text
         self._render()
+
+    def _note_feed_ok(self) -> None:
+        with self._lock:
+            if self._closed or self._active is None:
+                return
+            self._active.last_feed_ok = _now()
 
     def finish(self, status: PhaseStatus = PhaseStatus.DONE, detail: str = "") -> None:
         with self._lock:
@@ -176,13 +186,27 @@ class _ReporterBase:
 
     def close(self) -> None:
         self._stop_heartbeat()
+        orphan: _PhaseState | None = None
         with self._lock:
             if self._active is not None:
-                # Leave the active phase as-is if caller didn't finish; mark
-                # failed for safety so the output doesn't lie.
+                # Caller forgot to finish(); mark failed for safety so the
+                # output doesn't lie. Capture before clearing so we can emit
+                # the terminal transition below (Codex review fix).
                 self._active.status = PhaseStatus.FAILED
                 self._active.finished_at = _now()
+                orphan = self._active
                 self._active = None
+            self._feed = None
+            self._closed = True
+        if orphan is not None:
+            # Emit the synthetic failure via the same path as finish(), so
+            # Plain/Json reporters see a terminal transition, not a truncated
+            # run. _on_transition is responsible for ignoring output if the
+            # subclass decides to — but it's given the chance.
+            try:
+                self._on_transition(orphan)
+            except Exception:
+                pass
         self._on_close()
         self._render(final=True)
 
@@ -220,16 +244,24 @@ class _ReporterBase:
     def _stop_heartbeat(self) -> None:
         if self._heartbeat_stop is not None:
             self._heartbeat_stop.set()
-        if self._heartbeat_thread is not None and self._heartbeat_thread.is_alive():
-            self._heartbeat_thread.join(timeout=1.0)
-        self._heartbeat_thread = None
-        self._heartbeat_stop = None
+        t = self._heartbeat_thread
+        if t is not None and t.is_alive():
+            t.join(timeout=1.0)
+        # Keep the thread ref if it didn't actually exit — releasing it would
+        # just orphan a still-running thread that can still mutate state. The
+        # _closed flag (set by close()) prevents it from doing damage, and the
+        # daemon=True means it won't block process exit.
+        if t is None or not t.is_alive():
+            self._heartbeat_thread = None
+            self._heartbeat_stop = None
 
     def _heartbeat_loop(self) -> None:
         assert self._heartbeat_stop is not None
         stop = self._heartbeat_stop
         while not stop.is_set():
             with self._lock:
+                if self._closed:
+                    return
                 active = self._active
                 feed = self._feed
                 schedule = self._current_schedule
@@ -247,7 +279,11 @@ class _ReporterBase:
                     # warnings and keep going.
                     self.transport_warning(f"feed error: {e}")
                 else:
+                    # Successful poll: clear transport warning and mark feed
+                    # alive — even if text is unchanged. This prevents the
+                    # stall warning from triggering on a steady-state feed.
                     self.transport_warning(None)
+                    self._note_feed_ok()
                     if text:
                         self.set_detail(text)
             self._render()
@@ -361,8 +397,13 @@ class RichReporter(_ReporterBase):
                 body = f"⚠ {ps.transport_warning}"
             else:
                 body = ps.detail or "…"
-                if ps.last_detail_change is not None:
-                    stale = _now() - ps.last_detail_change
+                # Stall = no successful FEED POLL for N seconds — not "same
+                # text repeated", which is a healthy steady-state signal.
+                # last_feed_ok may be None if no feed was supplied for this
+                # phase; fall back to last_detail_change in that case.
+                anchor = ps.last_feed_ok if ps.last_feed_ok is not None else ps.last_detail_change
+                if anchor is not None:
+                    stale = _now() - anchor
                     if stale >= _STALL_WARNING_S and body and body != "…":
                         body = f"{body}  (no output for {int(stale)}s)"
             text = f"{elapsed:5.1f}s  {body}"
