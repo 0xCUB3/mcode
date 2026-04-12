@@ -70,13 +70,13 @@ _PROFILES: list[tuple[str, ServingProfile]] = [
         ),
     ),
     # Gemma 4 instruct — chat template is REQUIRED for tool calls (vLLM #39043).
-    # The launcher auto-appends --chat-template /chat-template.jinja when
-    # chat_template is set; do NOT also put --chat-template in `flags`.
-    # Parser name is `functiongemma` in vLLM (verified against the nightly
-    # image's registered parser list on-cluster, 2026-04-12).
-    # vLLM 0.17 can't load the model — its bundled Transformers predates the
-    # `gemma4` architecture. Pin to the nightly image which carries a recent
-    # enough Transformers.
+    # Native Gemma4 support landed in vLLM v0.19.0 (PR #38826, 2026-04-02).
+    # Pin to the exact tag: `:latest` and `:nightly` on DockerHub have been
+    # observed to ship older transformers versions that don't register the
+    # `gemma4` arch, causing a pydantic ValidationError at engine init.
+    #
+    # Flash-attn can't handle Gemma4's head_dim=512; fall back to XFORMERS
+    # (or FLASHINFER). See transformers issue #45202.
     (
         "google/gemma-4*",
         ServingProfile(
@@ -85,12 +85,14 @@ _PROFILES: list[tuple[str, ServingProfile]] = [
                 "--enable-auto-tool-choice",
                 "--tool-call-parser",
                 "functiongemma",
+                "--attention-backend",
+                "XFORMERS",
             ],
             tensor_parallel=2,
             max_model_len=32768,
             chat_template="tool_chat_template_gemma4.jinja",
-            image="docker.io/vllm/vllm-openai:nightly",
-            min_vllm="nightly",
+            image="docker.io/vllm/vllm-openai:v0.19.0",
+            min_vllm="0.19.0",
         ),
     ),
     # Granite 4.x — uses hermes parser (NOT "granite", which is 3.x).
