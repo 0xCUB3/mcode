@@ -1,59 +1,30 @@
 # Blue Vela Deployment
 
-Use the unified launcher. The shell scripts in this directory are fallback/debug tools, not the primary workflow.
-
-## Quickstart
-
-```bash
-uv run mcode launch
-```
-
-Check access and sync state:
-
-```bash
-uv run mcode launch doctor --target bluevela
-uv run mcode launch sync --target bluevela --check
-```
-
-Launch a run:
-
-```bash
-uv run mcode launch \
-  --target bluevela \
-  --model Qwen/Qwen3.5-27B \
-  --benchmark swebench-live \
-  --parallelism 4 \
-  --yes
-```
-
-Launch and follow logs:
-
-```bash
-uv run mcode launch \
-  --target bluevela \
-  --model Qwen/Qwen3.5-27B \
-  --benchmark swebench-live \
-  --parallelism 4 \
-  --yes \
-  --follow
-```
-
-If you run `swebench-lite` against a non-default Hugging Face dataset such as `princeton-nlp/SWE-bench_Verified`, pass `--dataset ...` on `launch` so task-id files are checked against the right slice.
-
-Manage runs:
-
-```bash
-uv run mcode launch status --json
-uv run mcode launch attach run-12345678
-uv run mcode launch fetch run-12345678 --destination results
-uv run mcode launch stop run-12345678
-uv run mcode launch stop server-12345678
-```
+For new work, **use `mcode launch` from the repo root** instead of these scripts — see the root `README.md`. The scripts here are the legacy path kept as a fallback.
 
 ## Prerequisites
 
-- SSH access to `login3.bluevela.rmf.ibm.com`
+- SSH access to a Blue Vela login host (e.g. `login3.bluevela.rmf.ibm.com`)
 - Connected to IBM VPN
+- LSF group membership (e.g. `grp_runtime`)
+
+## Preferred workflow: `mcode launch`
+
+```bash
+# One-time: write ~/.config/mcode/launch.toml
+mcode launch doctor bluevela --init --login <user>@<login-host>
+
+# Launch a server + run bench against it
+mcode launch bluevela --model Qwen/Qwen3.5-35B-A3B
+OPENAI_BASE_URL=$(mcode launch status --json | jq -r '.servers[0].endpoint') \
+OPENAI_API_KEY=dummy \
+mcode bench swebench-live --backend openai --model Qwen/Qwen3.5-35B-A3B --limit 10
+
+# Stop when done
+mcode launch stop --all
+```
+
+## Legacy shell-script workflow
 
 ## Config
 

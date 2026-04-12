@@ -1,0 +1,23 @@
+{
+  "BV_HF_ENV": "/u/testuser/.config/mcode/hf-env.sh",
+  "BV_SHARED_DIR": "/u/testuser/mcode-shared",
+  "CHAT_TEMPLATE_PATH": "/u/testuser/mcode-shared/templates/tool_chat_template_gemma4.jinja",
+  "EXTRA_ENV": {},
+  "GPU_COUNT": "2",
+  "GROUP": "grp_runtime",
+  "MODEL": "google/gemma-4-31B-it",
+  "QUEUE": "normal",
+  "RUN_DIR": "/u/testuser/mcode-shared/runs/bv-FIXED",
+  "VLLM_FLAGS": [
+    "--enable-auto-tool-choice",
+    "--tool-call-parser",
+    "functiongemma",
+    "--attention-backend",
+    "FLEX_ATTENTION",
+    "--chat-template",
+    "/chat-template.jinja"
+  ],
+  "VLLM_IMAGE": "docker.io/vllm/vllm-openai:gemma4",
+  "VLLM_MAX_MODEL_LEN": "32768",
+  "VLLM_PORT": "8321"
+}

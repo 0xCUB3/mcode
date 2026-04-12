@@ -1,12 +1,36 @@
-from mcode.launch.config import LaunchConfig, load_launch_config
-from mcode.launch.models import LaunchSpec
-from mcode.launch.state import LauncherState, load_state, update_state
+"""mcode launcher: submit vLLM + benchmark jobs to Blue Vela LSF or run locally.
+
+Public surface (imported by mcode.cli):
+
+    launch_bluevela(spec, reporter) -> RunRecord
+    launch_local_vllm(spec, reporter) -> RunRecord
+    launch_local_ollama(spec, reporter) -> RunRecord
+
+    doctor(target) -> list[Check]
+    stop(record_id) -> bool
+    fetch(record_id, dest) -> Path
+    refresh(record) -> RunRecord   # re-query LSF/process and update state in place
+
+Each target module is self-contained. There is no unified router — cli.py
+dispatches per target.
+"""
+
+from __future__ import annotations
+
+from mcode.launch.models import (
+    LaunchError,
+    LaunchSpec,
+    Phase,
+    RunRecord,
+    ServerRecord,
+    ServingProfile,
+)
 
 __all__ = [
-    "LaunchConfig",
+    "LaunchError",
     "LaunchSpec",
-    "LauncherState",
-    "load_launch_config",
-    "load_state",
-    "update_state",
+    "Phase",
+    "RunRecord",
+    "ServerRecord",
+    "ServingProfile",
 ]

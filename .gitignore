@@ -41,3 +41,12 @@ report-screenshot.png
 # Planning
 .planning/
 docs/plans/
+
+# mnemos (MCP) local DB
+mnemos.db
+mnemos.db-*
+
+# Per-user launch config — lives at ~/.config/mcode/launch.toml. The tracked
+# template is launch.toml.example.
+/launch.toml
+

@@ -1,0 +1,14 @@
+{
+  "BV_HF_ENV": "/u/testuser/.config/mcode/hf-env.sh",
+  "BV_SHARED_DIR": "/u/testuser/mcode-shared",
+  "EXTRA_ENV": {},
+  "GPU_COUNT": "1",
+  "GROUP": "grp_runtime",
+  "MODEL": "Qwen/Qwen2.5-0.5B",
+  "QUEUE": "normal",
+  "RUN_DIR": "/u/testuser/mcode-shared/runs/bv-FIXED",
+  "VLLM_FLAGS": [],
+  "VLLM_IMAGE": "docker.io/vllm/vllm-openai:v0.17.0",
+  "VLLM_MAX_MODEL_LEN": "8192",
+  "VLLM_PORT": "8321"
+}

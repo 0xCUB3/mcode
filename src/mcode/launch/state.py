@@ -1,23 +1,40 @@
+"""Atomic JSON state file with fcntl locking.
+
+State shape (JSON):
+
+    {"servers": [ServerRecord, ...], "runs": [RunRecord, ...]}
+
+Invariants:
+
+- Writes are atomic (tmp file + rename within the same directory).
+- All reads/writes go through `update_state()` which holds an fcntl exclusive
+  lock on a sibling .lock file. No concurrent writers on the same machine.
+- Workspaces are NOT tracked here — the rewrite rsyncs the working tree every
+  launch (see plan "Sync" section).
+
+The fcntl + atomic-write pattern is consciously ported from main's launcher;
+it survived 19 bug-fix commits untouched.
+"""
+
 from __future__ import annotations
 
 import fcntl
 import json
 import os
 import tempfile
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from pathlib import Path
 from typing import TypeVar
 
-from mcode.launch.models import RunHandle, ServerHandle, WorkspaceHandle, default_state_path
-
-
-@dataclass
-class LauncherState:
-    servers: list[ServerHandle] = field(default_factory=list)
-    runs: list[RunHandle] = field(default_factory=list)
-    workspaces: list[WorkspaceHandle] = field(default_factory=list)
-
+from mcode.launch.models import (
+    RunRecord,
+    RunStatus,
+    ServerRecord,
+    Target,
+    default_state_path,
+)
 
 T = TypeVar("T")
 
@@ -26,26 +43,36 @@ def _resolve_state_path(path: Path | None = None) -> Path:
     return path or Path(os.environ.get("MCODE_LAUNCH_STATE", default_state_path()))
 
 
-def _load_state_from_path(state_path: Path) -> LauncherState:
+def _run_from_dict(data: dict) -> RunRecord:
+    data = dict(data)
+    data["target"] = Target(data["target"])
+    data["status"] = RunStatus(data["status"])
+    return RunRecord(**data)
+
+
+def _server_from_dict(data: dict) -> ServerRecord:
+    data = dict(data)
+    data["target"] = Target(data["target"])
+    return ServerRecord(**data)
+
+
+def _load(state_path: Path) -> tuple[list[ServerRecord], list[RunRecord]]:
     if not state_path.exists():
-        return LauncherState()
+        return [], []
     raw = state_path.read_text().strip()
     if not raw:
-        return LauncherState()
+        return [], []
     data = json.loads(raw)
-    return LauncherState(
-        servers=[ServerHandle(**entry) for entry in data.get("servers", [])],
-        runs=[RunHandle(**entry) for entry in data.get("runs", [])],
-        workspaces=[WorkspaceHandle(**entry) for entry in data.get("workspaces", [])],
-    )
+    servers = [_server_from_dict(s) for s in data.get("servers", [])]
+    runs = [_run_from_dict(r) for r in data.get("runs", [])]
+    return servers, runs
 
 
-def _save_state_to_path(state_path: Path, state: LauncherState) -> None:
+def _save(state_path: Path, servers: list[ServerRecord], runs: list[RunRecord]) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "servers": [asdict(server) for server in state.servers],
-        "runs": [asdict(run) for run in state.runs],
-        "workspaces": [asdict(workspace) for workspace in state.workspaces],
+        "servers": [asdict(s) for s in servers],
+        "runs": [asdict(r) for r in runs],
     }
     with tempfile.NamedTemporaryFile(
         "w",
@@ -54,64 +81,59 @@ def _save_state_to_path(state_path: Path, state: LauncherState) -> None:
         suffix=".tmp",
         delete=False,
         encoding="utf-8",
-    ) as handle:
-        json.dump(payload, handle, indent=2, sort_keys=True)
-        handle.flush()
-        os.fsync(handle.fileno())
-        temp_path = Path(handle.name)
-    os.replace(temp_path, state_path)
+    ) as fh:
+        json.dump(payload, fh, indent=2, sort_keys=True, default=str)
+        fh.flush()
+        os.fsync(fh.fileno())
+        tmp_path = Path(fh.name)
+    os.replace(tmp_path, state_path)
+
+
+class State:
+    """Mutable view of the state file held open under an fcntl lock."""
+
+    def __init__(self, servers: list[ServerRecord], runs: list[RunRecord]) -> None:
+        self.servers = servers
+        self.runs = runs
+
+    def server(self, server_id: str) -> ServerRecord | None:
+        return next((s for s in self.servers if s.id == server_id), None)
+
+    def run(self, run_id: str) -> RunRecord | None:
+        return next((r for r in self.runs if r.id == run_id), None)
+
+    def upsert_server(self, server: ServerRecord) -> ServerRecord:
+        self.servers = [s for s in self.servers if s.id != server.id] + [server]
+        return server
+
+    def upsert_run(self, run: RunRecord) -> RunRecord:
+        self.runs = [r for r in self.runs if r.id != run.id] + [run]
+        return run
 
 
 @contextmanager
-def _locked_state(path: Path | None = None):
+def _locked(path: Path | None = None) -> Iterator[tuple[Path, State]]:
     state_path = _resolve_state_path(path)
     lock_path = state_path.with_name(f"{state_path.name}.lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock_path, "a+", encoding="utf-8") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        state = _load_state_from_path(state_path)
+    with open(lock_path, "a+", encoding="utf-8") as lk:
+        fcntl.flock(lk.fileno(), fcntl.LOCK_EX)
         try:
-            yield state
-        except Exception:
-            raise
-        else:
-            _save_state_to_path(state_path, state)
+            servers, runs = _load(state_path)
+            state = State(servers, runs)
+            yield state_path, state
+            _save(state_path, state.servers, state.runs)
         finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            fcntl.flock(lk.fileno(), fcntl.LOCK_UN)
 
 
-def load_state(path: Path | None = None) -> LauncherState:
-    return _load_state_from_path(_resolve_state_path(path))
+def load(path: Path | None = None) -> State:
+    """Read-only snapshot (no lock held after return)."""
+    servers, runs = _load(_resolve_state_path(path))
+    return State(servers, runs)
 
 
-def update_state(path: Path | None, updater) -> T:
-    with _locked_state(path) as state:
-        return updater(state)
-
-
-def merge_workspace(path: Path | None, workspace: WorkspaceHandle) -> WorkspaceHandle:
-    def _update(state: LauncherState) -> WorkspaceHandle:
-        state.workspaces = [
-            entry for entry in state.workspaces if entry.signature != workspace.signature
-        ] + [workspace]
-        return workspace
-
-    return update_state(path, _update)
-
-
-def merge_server(path: Path | None, server: ServerHandle) -> ServerHandle:
-    def _update(state: LauncherState) -> ServerHandle:
-        state.servers = [
-            entry for entry in state.servers if entry.reuse_key != server.reuse_key
-        ] + [server]
-        return server
-
-    return update_state(path, _update)
-
-
-def merge_run(path: Path | None, run: RunHandle) -> RunHandle:
-    def _update(state: LauncherState) -> RunHandle:
-        state.runs = [entry for entry in state.runs if entry.id != run.id] + [run]
-        return run
-
-    return update_state(path, _update)
+def update(path: Path | None, mutator: Callable[[State], T]) -> T:
+    """Hold the lock, mutate, persist. Return whatever the mutator returned."""
+    with _locked(path) as (_, state):
+        return mutator(state)

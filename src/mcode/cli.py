@@ -20,54 +20,12 @@ from mcode.bench.results import (
     export_csv as export_csv_results,
 )
 from mcode.bench.runner import BenchConfig, BenchmarkRunner
-from mcode.launch.config import load_launch_config
-from mcode.launch.models import CommandResult
-from mcode.launch.progress import NullProgressReporter, RichProgressReporter
-from mcode.launch.service import (
-    build_admin_launch_spec,
-    build_launch_spec,
-    launch_attach,
-    launch_doctor,
-    launch_fetch,
-    launch_run,
-    launch_status,
-    launch_stop,
-    launch_stop_all,
-    launch_sync,
-    render_result,
-)
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 bench_app = typer.Typer(add_completion=False, no_args_is_help=True)
 deps_app = typer.Typer(add_completion=False, no_args_is_help=True)
-launch_app = typer.Typer(add_completion=False, no_args_is_help=False)
 console = Console()
 DEFAULT_DB_PATH = Path("experiments/results/results.db")
-
-
-def _launch_reporter(*, json_mode: bool, title: str):
-    if json_mode:
-        return NullProgressReporter()
-    return RichProgressReporter(console=console, title=title)
-
-
-def _print_launch_result(result, *, json_mode: bool, prominent_ids: bool = False) -> None:
-    if json_mode:
-        typer.echo(render_result(result, json_mode=True))
-    else:
-        if prominent_ids:
-            lines: list[str] = []
-            run_id = result.data.get("run_id")
-            server_id = result.data.get("server_id")
-            if run_id:
-                lines.append(f"run_id: {run_id}")
-            if server_id:
-                lines.append(f"server_id: {server_id}")
-            if lines:
-                console.print("\n".join(lines))
-        console.print(render_result(result, json_mode=False))
-    if not result.ok:
-        raise typer.Exit(1)
 
 
 def _configure_mellea_logging(verbose: bool) -> None:
@@ -200,213 +158,6 @@ def _root(
 ) -> None:
     """mCode benchmarking harness."""
     _configure_mellea_logging(verbose)
-
-
-@launch_app.callback(invoke_without_command=True)
-def launch(
-    ctx: typer.Context,
-    target: Annotated[
-        str | None,
-        typer.Option("--target", help="Launch target"),
-    ] = None,
-    model: Annotated[
-        str | None,
-        typer.Option("--model", help="Model id"),
-    ] = None,
-    benchmark: Annotated[
-        str,
-        typer.Option("--benchmark", help="Benchmark name"),
-    ] = "swebench-live",
-    backend: Annotated[
-        str | None,
-        typer.Option("--backend", help="Override benchmark backend"),
-    ] = None,
-    split: Annotated[
-        str | None,
-        typer.Option("--split", help="Benchmark split (default: verified for live, test for lite)"),
-    ] = None,
-    loop_budget: Annotated[int, typer.Option("--loop-budget", min=1)] = 15,
-    timeout: Annotated[int, typer.Option("--timeout", min=1)] = 1800,
-    parallelism: Annotated[int, typer.Option("--parallelism", min=1)] = 1,
-    limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
-    task_ids: Annotated[str | None, typer.Option("--task-ids")] = None,
-    dataset: Annotated[str | None, typer.Option("--dataset")] = None,
-    reuse: Annotated[str, typer.Option("--reuse")] = "prefer",
-    sync_mode: Annotated[str, typer.Option("--sync-mode")] = "git-overlay",
-    ref: Annotated[str, typer.Option("--ref")] = "HEAD",
-    json_mode: Annotated[bool, typer.Option("--json", help="Emit JSON")] = False,
-    yes: Annotated[bool, typer.Option("--yes", help="Execute without prompt")] = False,
-    follow: Annotated[bool, typer.Option("--follow", help="Follow logs after launch")] = False,
-    tp: Annotated[int, typer.Option("--tp", min=1)] = 1,
-    dp: Annotated[int, typer.Option("--dp", min=1)] = 1,
-    api_server_count: Annotated[int, typer.Option("--api-server-count", min=1)] = 1,
-    max_model_len: Annotated[int, typer.Option("--max-model-len", min=1)] = 32768,
-    gpu_memory_utilization: Annotated[float, typer.Option("--gpu-memory-utilization")] = 0.9,
-    port: Annotated[int | None, typer.Option("--port")] = None,
-    serving_profile: Annotated[str | None, typer.Option("--serving-profile")] = None,
-    no_auto_profile: Annotated[bool, typer.Option("--no-auto-profile")] = False,
-    keep_alive: Annotated[str | None, typer.Option("--keep-alive")] = None,
-    ollama_num_parallel: Annotated[int | None, typer.Option("--ollama-num-parallel", min=1)] = None,
-    ollama_max_queue: Annotated[int | None, typer.Option("--ollama-max-queue", min=1)] = None,
-    openai_base_url: Annotated[str | None, typer.Option("--openai-base-url")] = None,
-) -> None:
-    if ctx.invoked_subcommand:
-        return
-    config = load_launch_config()
-    chosen_target = target or typer.prompt(
-        "Target",
-        default="bluevela",
-    )
-    chosen_model = model or typer.prompt("Model")
-    spec = build_launch_spec(
-        config=config,
-        target=chosen_target,
-        model=chosen_model,
-        benchmark=benchmark,
-        backend=backend,
-        split=split,
-        loop_budget=loop_budget,
-        timeout=timeout,
-        parallelism=parallelism,
-        limit=limit,
-        task_ids=task_ids,
-        dataset=dataset,
-        reuse=reuse,
-        sync_mode=sync_mode,
-        ref=ref,
-        json_mode=json_mode,
-        yes=yes,
-        follow=follow,
-        tp=tp,
-        dp=dp,
-        api_server_count=api_server_count,
-        max_model_len=max_model_len,
-        gpu_memory_utilization=gpu_memory_utilization,
-        port=port,
-        serving_profile=serving_profile,
-        no_auto_profile=no_auto_profile,
-        keep_alive=keep_alive,
-        ollama_num_parallel=ollama_num_parallel,
-        ollama_max_queue=ollama_max_queue,
-        openai_base_url=openai_base_url,
-    )
-    with _launch_reporter(json_mode=json_mode, title="launch") as reporter:
-        result = launch_run(spec, repo_root=Path.cwd(), reporter=reporter)
-    _print_launch_result(result, json_mode=json_mode, prominent_ids=True)
-
-
-@launch_app.command("doctor")
-def launch_doctor_cmd(
-    target: Annotated[str, typer.Option("--target")] = "bluevela",
-    model: Annotated[str, typer.Option("--model")] = "Qwen/Qwen3.5-27B",
-    json_mode: Annotated[bool, typer.Option("--json")] = False,
-    openai_base_url: Annotated[str | None, typer.Option("--openai-base-url")] = None,
-) -> None:
-    config = load_launch_config()
-    spec = build_admin_launch_spec(
-        config=config,
-        target=target,
-        model=model,
-        json_mode=json_mode,
-        openai_base_url=openai_base_url,
-    )
-    _print_launch_result(launch_doctor(spec), json_mode=json_mode)
-
-
-@launch_app.command("status")
-def launch_status_cmd(
-    json_mode: Annotated[bool, typer.Option("--json")] = False,
-) -> None:
-    data = launch_status()
-    if json_mode:
-        typer.echo(json.dumps(data, indent=2, sort_keys=True))
-        return
-    console.print(json.dumps(data, indent=2, sort_keys=True))
-
-
-@launch_app.command("attach")
-def launch_attach_cmd(
-    run_id: Annotated[str, typer.Argument(..., help="Run id")],
-    json_mode: Annotated[bool, typer.Option("--json")] = False,
-) -> None:
-    result = launch_attach(run_id, follow=not json_mode)
-    if json_mode or not result.ok:
-        _print_launch_result(result, json_mode=json_mode)
-
-
-@launch_app.command("stop")
-def launch_stop_cmd(
-    run_id: Annotated[str | None, typer.Argument(help="Run or server id")] = None,
-    all_ids: Annotated[bool, typer.Option("--all", help="Stop everything")] = False,
-    target: Annotated[str | None, typer.Option("--target")] = None,
-    yes: Annotated[bool, typer.Option("--yes", help="Skip confirmation for --all")] = False,
-    json_mode: Annotated[bool, typer.Option("--json")] = False,
-) -> None:
-    if all_ids:
-        if run_id is not None:
-            raise typer.BadParameter("Do not pass an id with --all")
-        if json_mode and not yes:
-            _print_launch_result(
-                CommandResult(ok=False, message="--all with --json requires --yes"),
-                json_mode=True,
-            )
-            return
-        if not yes and not typer.confirm(
-            "This will stop all tracked launcher runs and servers, "
-            "kill matching Blue Vela jobs, and clear stale remote "
-            "locks and registries. Continue?"
-        ):
-            raise typer.Exit(1)
-        config = load_launch_config()
-        with _launch_reporter(json_mode=json_mode, title="stop") as reporter:
-            result = launch_stop_all(
-                target=target,
-                bluevela_login=config.bluevela.login,
-                bluevela_workspace_root=config.bluevela.workspace_root,
-                reporter=reporter,
-            )
-        _print_launch_result(result, json_mode=json_mode)
-        return
-    if run_id is None:
-        raise typer.BadParameter("Run or server id is required unless you pass --all")
-    _print_launch_result(launch_stop(run_id), json_mode=json_mode)
-
-
-@launch_app.command("fetch")
-def launch_fetch_cmd(
-    run_id: Annotated[str, typer.Argument(..., help="Run id")],
-    destination: Annotated[Path, typer.Option("--destination")] = Path("results"),
-    json_mode: Annotated[bool, typer.Option("--json")] = False,
-) -> None:
-    with _launch_reporter(json_mode=json_mode, title="fetch") as reporter:
-        result = launch_fetch(run_id, destination=destination, reporter=reporter)
-    _print_launch_result(result, json_mode=json_mode)
-
-
-@launch_app.command("sync")
-def launch_sync_cmd(
-    target: Annotated[str, typer.Option("--target")] = "bluevela",
-    model: Annotated[str, typer.Option("--model")] = "Qwen/Qwen3.5-27B",
-    sync_mode: Annotated[str, typer.Option("--sync-mode")] = "git-overlay",
-    ref: Annotated[str, typer.Option("--ref")] = "HEAD",
-    check: Annotated[bool, typer.Option("--check")] = False,
-    apply: Annotated[bool, typer.Option("--apply")] = False,
-    json_mode: Annotated[bool, typer.Option("--json")] = False,
-) -> None:
-    config = load_launch_config()
-    spec = build_admin_launch_spec(
-        config=config,
-        target=target,
-        model=model,
-        sync_mode=sync_mode,
-        ref=ref,
-        json_mode=json_mode,
-    )
-    spec.sync.check = check
-    spec.sync.apply = apply
-    with _launch_reporter(json_mode=json_mode, title="sync") as reporter:
-        result = launch_sync(spec, repo_root=Path.cwd(), reporter=reporter)
-    _print_launch_result(result, json_mode=json_mode)
 
 
 @deps_app.command("sync")
@@ -1707,6 +1458,12 @@ def export_csv(
 
 app.add_typer(bench_app, name="bench")
 app.add_typer(deps_app, name="deps")
+
+# Launcher subcommands: `mcode launch bluevela|local-vllm|local-ollama|status|...`.
+# Imported lazily here to keep startup cheap and avoid pulling in rich/typer code
+# paths when only `mcode bench` is used.
+from mcode.launch.cli import app as launch_app  # noqa: E402
+
 app.add_typer(launch_app, name="launch")
 
 
@@ -1911,6 +1668,7 @@ def bench_swebench_lite(
         typer.Option("--dataset", help="HuggingFace dataset name"),
     ] = "SWE-bench/SWE-bench_Lite",
 ) -> None:
+
     shard_count, shard_index = _validate_shards(shard_count=shard_count, shard_index=shard_index)
     if shard_count and shard_count > 1 and db == DEFAULT_DB_PATH:
         typer.echo(
