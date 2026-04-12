@@ -36,12 +36,23 @@ readarray -t VLLM_FLAGS_ARR < <(jq -r '.VLLM_FLAGS[]' "$ENV_JSON")
 mkdir -p "$RUN_DIR"
 hostname > "$RUN_DIR/vllm_host.txt"
 
-# Podman storage roots (B5): graphroot per host, runroot per-job-index.
-HOST_TAG="$(hostname -s)"
-GRAPHROOT="${BV_SHARED_DIR}/podman/graphroot/${HOST_TAG}"
-export XDG_RUNTIME_DIR="/tmp/podman-run-$(id -u)"
+# Podman storage roots — BOTH per-job.
+#
+# Earlier iterations used a per-host shared graphroot under $BV_SHARED_DIR
+# to benefit from image layer caching across runs. In practice, podman's
+# persistent DB inside the graphroot remembers the last job's runroot and
+# every subsequent job on the same host fails with:
+#
+#    Error: database run root "/tmp/.../runroot-A" does not match our run
+#    root "/tmp/.../runroot-B": database configuration mismatch
+#
+# Node-local per-job graphroot fully isolates each launch. Cost: image
+# re-pull on every run (~5-10 min on this cluster). Benefit: reliability.
+# This matches the smoke-test script's approach.
+export XDG_RUNTIME_DIR="/tmp/podman-run-$(id -u)-${LSB_JOBID:-0}"
 mkdir -p "$XDG_RUNTIME_DIR"
-RUNROOT="${XDG_RUNTIME_DIR}/runroot-${LSB_JOBID:-0}-${LSB_JOBINDEX:-0}"
+GRAPHROOT="${XDG_RUNTIME_DIR}/graphroot"
+RUNROOT="${XDG_RUNTIME_DIR}/runroot"
 mkdir -p "$GRAPHROOT" "$RUNROOT"
 
 # Optional HF env file (HF_TOKEN etc.).
