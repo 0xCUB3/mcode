@@ -44,19 +44,32 @@ def test_sync_requires_config(runner: CliRunner, tmp_path: Path, monkeypatch) ->
     assert "config incomplete" in result.output
 
 
-def _fake_subprocess(rsync_rc: int = 0, marker_present: bool = True, ssh_rc: int = 0):
-    """Mock subprocess.run handling the 3 kinds of calls cmd_sync makes:
-    git rev-parse, ssh marker probe, ssh marker touch, rsync."""
+def _fake_subprocess(
+    rsync_rc: int = 0,
+    remote_state: str = "marker",
+    ssh_rc: int = 0,
+):
+    """Mock subprocess.run for cmd_sync. remote_state drives the probe response:
+    - "marker": launcher-owned workspace; rsync proceeds
+    - "empty": first sync, marker gets created; rsync proceeds
+    - "populated": non-empty unmarked dir; rsync refused without --bootstrap
+    """
     seen = {}
 
     def fake(argv, *args, **kwargs):
         if argv and argv[0] == "rsync":
             seen["rsync_argv"] = argv
-            return type("R", (), {"returncode": rsync_rc})()
+            return type("R", (), {"returncode": rsync_rc, "stdout": "", "stderr": ""})()
         if argv and argv[0] == "ssh":
             seen.setdefault("ssh_calls", []).append(argv)
-            stdout = "yes\n" if marker_present else "no\n"
-            return type("R", (), {"returncode": ssh_rc, "stdout": stdout, "stderr": ""})()
+            # The probe command contains the state-detection logic. The touch
+            # command is a follow-up — return empty stdout for that.
+            remote = argv[-1]
+            if "elif" in remote:  # the 3-state probe
+                return type(
+                    "R", (), {"returncode": ssh_rc, "stdout": f"{remote_state}\n", "stderr": ""}
+                )()
+            return type("R", (), {"returncode": ssh_rc, "stdout": "", "stderr": ""})()
         # git rev-parse: fail so fallback fires (test uses --src explicitly)
         return type("R", (), {"returncode": 1, "stdout": "", "stderr": ""})()
 
@@ -103,24 +116,55 @@ def test_sync_fails_closed_when_not_in_git_repo(
     assert "cannot determine source repo" in result.output
 
 
-def test_sync_creates_marker_on_first_run(
+def test_sync_creates_marker_on_empty_remote(
     runner: CliRunner, cfg_path: Path, tmp_path: Path
 ) -> None:
-    """Codex review fix: on first sync, the launcher writes a marker file
-    so subsequent --delete runs have a safety net."""
+    """First sync into an EMPTY remote workspace is safe: create the marker
+    and proceed."""
     src = tmp_path / "repo"
     src.mkdir()
 
-    fake, seen = _fake_subprocess(marker_present=False)
+    fake, seen = _fake_subprocess(remote_state="empty")
     with patch("subprocess.run", side_effect=fake):
         result = runner.invoke(app, ["sync", "bluevela", "--src", str(src)])
     assert result.exit_code == 0, result.output
-    # At least two ssh calls: probe + touch marker.
     ssh_calls = seen.get("ssh_calls", [])
-    assert len(ssh_calls) >= 2
     assert any(
         "touch" in " ".join(c) and ".mcode-launch-workspace" in " ".join(c) for c in ssh_calls
     )
+    assert "rsync_argv" in seen, "rsync should have run after marker creation"
+
+
+def test_sync_refuses_populated_unmarked_remote(
+    runner: CliRunner, cfg_path: Path, tmp_path: Path
+) -> None:
+    """Codex verify-pass fix: `rsync --delete` into a non-empty remote dir
+    without our marker could wipe unrelated data. Must refuse unless
+    --bootstrap is passed."""
+    src = tmp_path / "repo"
+    src.mkdir()
+
+    fake, seen = _fake_subprocess(remote_state="populated")
+    with patch("subprocess.run", side_effect=fake):
+        result = runner.invoke(app, ["sync", "bluevela", "--src", str(src)])
+    assert result.exit_code == 1
+    assert "non-empty" in result.output and "marker" in result.output
+    assert "rsync_argv" not in seen, "rsync MUST NOT run when destination is unvetted"
+
+
+def test_sync_bootstrap_allows_populated_remote(
+    runner: CliRunner, cfg_path: Path, tmp_path: Path
+) -> None:
+    """--bootstrap is the explicit opt-in for populated unmarked remote."""
+    src = tmp_path / "repo"
+    src.mkdir()
+
+    fake, seen = _fake_subprocess(remote_state="populated")
+    with patch("subprocess.run", side_effect=fake):
+        result = runner.invoke(app, ["sync", "bluevela", "--bootstrap", "--src", str(src)])
+    assert result.exit_code == 0, result.output
+    assert "rsync_argv" in seen
+    assert "⚠" in result.output or "bootstrap" in result.output.lower()
 
 
 def test_sync_dry_run_adds_flag_v2(runner: CliRunner, cfg_path: Path, tmp_path: Path) -> None:

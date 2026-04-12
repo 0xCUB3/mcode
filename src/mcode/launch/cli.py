@@ -457,6 +457,11 @@ def cmd_sync(
         "--src",
         help="local repo to push (default: cwd's git-tracked root)",
     ),
+    bootstrap: bool = typer.Option(
+        False,
+        "--bootstrap",
+        help="allow first sync into a non-empty unmarked remote dir (dangerous with --delete)",
+    ),
 ) -> None:
     """Rsync the local repo to `[bluevela].workspace_root` on the cluster.
 
@@ -537,9 +542,16 @@ def cmd_sync(
         "-o",
         "StrictHostKeyChecking=accept-new",
     ]
+    # Probe returns three pieces: marker presence, directory emptiness, and
+    # a count of entries (so we can report something helpful on error).
+    # Codex verify-pass fix: marker missing + non-empty remote = we don't
+    # know who owns those files. Refuse rather than risk `rsync --delete`
+    # nuking them. Only --bootstrap overrides.
     probe_cmd = (
         f"mkdir -p {bv.workspace_root} && "
-        f"test -f {bv.workspace_root}/{marker} && echo yes || echo no"
+        f"if test -f {bv.workspace_root}/{marker}; then echo marker; "
+        f'elif [ -z "$(ls -A {bv.workspace_root} 2>/dev/null)" ]; then echo empty; '
+        f"else echo populated; fi"
     )
     probe = subprocess.run(
         ["ssh", *ssh_opts, bv.login, probe_cmd],
@@ -556,16 +568,60 @@ def cmd_sync(
             )
         )
         raise typer.Exit(1)
-    marker_present = probe.stdout.strip() == "yes"
-    if not marker_present:
-        print(f"note: marker {bv.workspace_root}/{marker} not found on remote")
-        print("      first-time sync will create it (no remote files at risk yet)")
-        # Create the marker so --delete has a safety net for subsequent runs,
-        # but only after we know workspace_root exists and is writable.
+
+    remote_state = probe.stdout.strip()
+    if remote_state == "marker":
+        pass  # launcher-owned workspace; --delete is safe
+    elif remote_state == "empty":
+        # First sync into an empty dir — safe; create marker for future runs.
+        r = subprocess.run(
+            ["ssh", *ssh_opts, bv.login, f"touch {bv.workspace_root}/{marker}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if r.returncode != 0:
+            _print_error(
+                LaunchError(
+                    what="failed to create workspace marker",
+                    why=(r.stderr or "").strip()[:200],
+                    next=f"check write permissions on {bv.workspace_root}",
+                )
+            )
+            raise typer.Exit(1)
+        print(f"note: created marker {bv.workspace_root}/{marker}")
+    elif remote_state == "populated" and bootstrap:
+        print(f"⚠ --bootstrap: treating populated {bv.workspace_root} as owned")
         subprocess.run(
             ["ssh", *ssh_opts, bv.login, f"touch {bv.workspace_root}/{marker}"],
             check=False,
         )
+    elif remote_state == "populated":
+        _print_error(
+            LaunchError(
+                what=f"{bv.workspace_root} is non-empty and has no launcher marker",
+                why=(
+                    f"refusing to `rsync --delete` into a directory we don't own. "
+                    f"marker {marker} is missing and the dir has files"
+                ),
+                next=(
+                    f"either (a) pass --bootstrap to claim the dir (destructive!), "
+                    f"or (b) `ssh {bv.login} touch {bv.workspace_root}/{marker}` "
+                    f"if you manually verified it's safe, or (c) point "
+                    f"[bluevela].workspace_root at a fresh path"
+                ),
+            )
+        )
+        raise typer.Exit(1)
+    else:
+        _print_error(
+            LaunchError(
+                what=f"unexpected remote state probe result: {remote_state!r}",
+                why="ssh returned something other than marker/empty/populated",
+                next="inspect the remote filesystem manually",
+            )
+        )
+        raise typer.Exit(1)
 
     dest = f"{bv.login}:{bv.workspace_root}/"
     gitignore = src / ".gitignore"
