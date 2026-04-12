@@ -12,8 +12,7 @@ Public surface (imported by mcode.cli):
     refresh(record) -> RunRecord   # re-query LSF/process and update state in place
 
 Each target module is self-contained. There is no unified router — cli.py
-dispatches per target. See /Users/skula/.claude/plans/fancy-jingling-bumblebee.md
-for the authoritative design.
+dispatches per target.
 """
 
 from __future__ import annotations

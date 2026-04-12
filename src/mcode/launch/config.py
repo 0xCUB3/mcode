@@ -26,8 +26,8 @@ All paths in the file are raw strings (no Python-side interpolation of
 $HOME/$USER). The remote shell expands them. Local paths expand via
 os.path.expanduser at read time.
 
-Zero skula-specific defaults here. Values that depend on a Blue Vela account
-come from doctor --init probing that account.
+Zero developer-specific defaults here. Values that depend on a Blue Vela
+account come from doctor --init probing that account.
 """
 
 from __future__ import annotations

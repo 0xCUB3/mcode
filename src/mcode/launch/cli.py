@@ -337,7 +337,7 @@ def cmd_doctor(
     login: str | None = typer.Option(
         None,
         "--login",
-        help="user@host for --init (e.g. alice@login3.bluevela.rmf.ibm.com)",
+        help="user@host for --init (e.g. alice@<your-login-host>)",
     ),
 ) -> None:
     """Health check for a target. With --init, probe and write launch.toml."""
