@@ -7,11 +7,11 @@ probes the user's own account. See the plan's "Portability" section.
     [bluevela]
     login = "<user>@<login-host>"
     workspace_root = "<$HOME>/mcode-launch"
-    queue_order = ["normal"]
+    queue_order = ["normal"]     # confirmed via Phase 0.5 probe (login3, grp_runtime)
     group = ""                   # must be set by doctor --init
     shared_root = "<$HOME>/mcode-shared"
     hf_env = "<$HOME>/.config/mcode/hf-env.sh"
-    gpu_mode = "shared"          # flip to exclusive_process only after probe
+    gpu_mode = "exclusive_process"  # Phase 0.5 probe showed shared is deprecated on this cluster
 
     [bluevela.podman]
     # graphroot_base = "..."     # optional; shell derives sensible default
