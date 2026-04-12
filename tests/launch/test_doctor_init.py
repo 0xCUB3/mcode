@@ -121,9 +121,11 @@ def test_doctor_init_falls_back_to_normal_when_no_queues_parsed(tmp_path: Path) 
     assert cfg.bluevela.group == ""  # not fabricated
 
 
-def test_doctor_init_prefers_proj_shared_when_present(tmp_path: Path) -> None:
-    """If /proj/dmfexp/<user> exists and is writable, shared_root should point
-    there — avoids hitting the ~100GB home quota with podman graphroots."""
+def test_doctor_init_shared_root_is_under_home(tmp_path: Path) -> None:
+    """shared_root lives under $HOME — the bluevela_vllm.sh script uses
+    per-job podman graphroots in /tmp, so shared_root only carries small
+    artifacts. Users who need HF_HOME on a quota-free filesystem configure
+    it via hf-env.sh separately."""
     ssh = MagicMock()
 
     def run(cmd: str, *, timeout: float = 60.0):
@@ -137,15 +139,13 @@ def test_doctor_init_prefers_proj_shared_when_present(tmp_path: Path) -> None:
             return _ok(stdout="QUEUE_NAME PRIO STATUS\nnormal 30 Open:Active\n")
         if cmd.startswith("bqueues -l"):
             return _ok(stdout="SCHEDULING POLICIES: FAIRSHARE\n")
-        if "/proj/dmfexp/testuser" in cmd:
-            return _ok(stdout="yes\n")  # proj dir exists
         return _ok()
 
     ssh.run.side_effect = run
     dst = tmp_path / "launch.toml"
     bluevela.doctor_init(dst, login="testuser@testhost", ssh_client=ssh)
     cfg = config_mod.load(dst)
-    assert cfg.bluevela.shared_root == "/proj/dmfexp/testuser/mcode-shared"
+    assert cfg.bluevela.shared_root == "/u/testuser/mcode-shared"
 
 
 def test_doctor_init_rejects_weird_home_path(tmp_path: Path) -> None:

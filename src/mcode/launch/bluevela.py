@@ -62,7 +62,11 @@ PHASES: list[Phase] = [
     Phase("ready", "Server healthy"),
 ]
 
-_STARTUP_ABSOLUTE_DEADLINE_S = 1800  # 30 min from bsub accept to HTTP 200
+_STARTUP_ABSOLUTE_DEADLINE_S = 2400  # 40 min from bsub accept to HTTP 200
+# 40 min not 30: the per-job podman graphroot (in bluevela_vllm.sh) trades
+# cross-run image caching for reliability — every launch cold-pulls the vLLM
+# container (~5-10 min on this cluster) before model load. The old 1800s
+# budget left too little slack for model load + warmup under load.
 _HOST_FILE_DEADLINE_S = 900  # 15 min for LSF to start the job + write host file
 _HEALTH_POLL_SLOW_S = 10.0
 _DEFAULT_VLLM_IMAGE = "docker.io/vllm/vllm-openai:v0.17.0"
@@ -946,46 +950,61 @@ def doctor_init(
     bq = ssh.run("bqueues -u $USER -o 'QUEUE_NAME PRIO STATUS' 2>/dev/null", timeout=15)
     queue_rows = _parse_bqueues(bq.stdout)
 
-    # `bqueues -u` doesn't surface the ONLY_INTERACTIVE policy. We probe each
-    # candidate with `bqueues -l <q>` so an interactive-only queue like
-    # `interactive` doesn't land in queue_order and fail every batch launch.
-    # One SSH call per queue, but this runs only at init.
-    def _is_batch_queue(q: str) -> bool:
+    # `bqueues -u` doesn't surface the ONLY_INTERACTIVE policy. We probe
+    # each candidate with `bqueues -l <q>` so an interactive-only queue
+    # doesn't land in queue_order and fail every batch launch.
+    #
+    # Codex final-review fix: tri-state result. True = confirmed batch-OK,
+    # False = confirmed interactive-only, None = probe failed (transport,
+    # timeout, unknown status). Fail closed if ALL probes are None —
+    # silently writing queue_order=["normal"] under those conditions risks
+    # shipping a bad config that only fails at submit time.
+    def _is_batch_queue(q: str) -> bool | None:
         if not _SAFE_IDENT_RE.match(q):
-            return False
-        probe = ssh.run(f"bqueues -l {_q(q)} 2>/dev/null", timeout=15)
-        if not probe.ok:
-            return False
+            return None
+        probe = ssh.run(f"bqueues -l {_q(q)} 2>/dev/null", timeout=60)
+        if not probe.ok or not probe.stdout:
+            return None
         return "ONLY_INTERACTIVE" not in probe.stdout
 
-    # Drop closed + interactive-only queues.
     open_queues = [name for name, _, status in queue_rows if status.startswith("Open")]
-    queue_order = [q for q in open_queues if _is_batch_queue(q)][:3]
+    confirmed_batch: list[str] = []
+    probe_failed: list[str] = []
+    for q in open_queues:
+        verdict = _is_batch_queue(q)
+        if verdict is True:
+            confirmed_batch.append(q)
+        elif verdict is None:
+            probe_failed.append(q)
+        # False -> interactive, drop silently
+    queue_order = confirmed_batch[:3]
     if not queue_order:
+        # All probes either said "interactive-only" or failed. If *every*
+        # open queue's probe failed, that's a cluster-state issue and we
+        # should not invent a config — raise so the user knows to retry.
+        if probe_failed and not confirmed_batch:
+            raise LaunchError(
+                what="could not confirm any batch-capable queue",
+                why=(
+                    f"bqueues -l failed or timed out for all {len(probe_failed)} "
+                    f"open queues: {probe_failed}"
+                ),
+                next="retry `doctor bluevela --init` (transient SSH/LSF issue?)",
+            )
         queue_order = ["normal"]
 
-    # --- shared_root location --------------------------------------------
-    # Home dirs on Blue Vela have a hard quota (typically 100 GB per user).
-    # Podman graphroots accumulate ~20 GB per compute node we touch; a
-    # handful of vLLM launches will blow the home quota and cause podman
-    # "disk quota exceeded" failures mid-pull. Prefer `/proj/dmfexp/$USER`
-    # (or any other passthrough project dir) if it exists — those typically
-    # have no per-user quota.
-    proj_shared = f"/proj/dmfexp/{user}"
-    test_proj = ssh.run(
-        f"test -d {_q(proj_shared)} && test -w {_q(proj_shared)} && echo yes || echo no",
-        timeout=15,
-    )
-    if test_proj.ok and test_proj.stdout.strip() == "yes":
-        shared_root = f"{proj_shared}/mcode-shared"
-    else:
-        shared_root = f"{home}/mcode-shared"
-
     # --- compose config ---------------------------------------------------
+    # Note on shared_root: an earlier iteration auto-preferred
+    # `/proj/dmfexp/<user>` to escape home-quota failures from per-host
+    # podman graphroots. The bluevela_vllm.sh script now uses per-job
+    # graphroots in /tmp instead, so shared_root only carries small
+    # artifacts (run dirs, templates, log files) — home is fine for that.
+    # Users who want HF cache on a quota-free filesystem can set HF_HOME
+    # in their hf-env.sh, independent of shared_root.
     cfg = config_mod.LaunchConfig()
     cfg.bluevela.login = login
     cfg.bluevela.workspace_root = f"{home}/mcode-launch"
-    cfg.bluevela.shared_root = shared_root
+    cfg.bluevela.shared_root = f"{home}/mcode-shared"
     cfg.bluevela.hf_env = f"{home}/.config/mcode/hf-env.sh"
     cfg.bluevela.group = group
     cfg.bluevela.queue_order = queue_order
