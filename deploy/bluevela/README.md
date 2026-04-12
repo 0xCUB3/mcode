@@ -1,9 +1,30 @@
 # Blue Vela Deployment
 
+For new work, **use `mcode launch` from the repo root** instead of these scripts — see the root `README.md`. The scripts here are the legacy path kept as a fallback.
+
 ## Prerequisites
 
-- SSH access to `login3.bluevela.rmf.ibm.com`
+- SSH access to a Blue Vela login host (e.g. `login3.bluevela.rmf.ibm.com`)
 - Connected to IBM VPN
+- LSF group membership (e.g. `grp_runtime`)
+
+## Preferred workflow: `mcode launch`
+
+```bash
+# One-time: write ~/.config/mcode/launch.toml
+mcode launch doctor bluevela --init --login <user>@<login-host>
+
+# Launch a server + run bench against it
+mcode launch bluevela --model Qwen/Qwen3.5-35B-A3B
+OPENAI_BASE_URL=$(mcode launch status --json | jq -r '.servers[0].endpoint') \
+OPENAI_API_KEY=dummy \
+mcode bench swebench-live --backend openai --model Qwen/Qwen3.5-35B-A3B --limit 10
+
+# Stop when done
+mcode launch stop --all
+```
+
+## Legacy shell-script workflow
 
 ## One-time setup
 
