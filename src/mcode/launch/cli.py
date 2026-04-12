@@ -309,7 +309,9 @@ def cmd_doctor(
     ),
 ) -> None:
     """Health check for a target. With --init, probe and write launch.toml."""
-    cfg = config_mod.load()
+    # Codex final-review fix: lazy config load + wrap in _run so a malformed
+    # TOML surfaces as a formatted LaunchError instead of a raw traceback.
+    cfg = _run(config_mod.load)
     if init:
         if target != "bluevela":
             _print_error(
@@ -365,19 +367,31 @@ def cmd_doctor(
 # ---------------------------------------------------------------------------
 @app.command("refresh")
 def cmd_refresh() -> None:
-    """Re-query each server/run against its target and persist updated status."""
-    cfg = config_mod.load()
+    """Re-query each server/run against its target and persist updated status.
+
+    Codex final-review fix: config is loaded lazily and only if we have a
+    Blue Vela server to refresh. Local records refresh without touching the
+    TOML at all.
+    """
+    _cfg: config_mod.LaunchConfig | None = None
+
+    def need_cfg() -> config_mod.LaunchConfig:
+        nonlocal _cfg
+        if _cfg is None:
+            _cfg = _run(config_mod.load)
+        return _cfg
 
     def _update(s: state.State) -> int:
         count = 0
         for srv in list(s.servers):
             try:
                 if srv.target == Target.BLUEVELA:
-                    updated = bluevela.refresh(srv, cfg=cfg)
+                    updated = bluevela.refresh(srv, cfg=need_cfg())
                 elif srv.target == Target.LOCAL_VLLM:
                     updated = local_vllm.refresh(srv)
                 elif srv.target == Target.LOCAL_OLLAMA:
-                    updated = local_ollama.refresh(srv, cfg=cfg)
+                    # local_ollama only needs cfg for host/port; default is fine.
+                    updated = local_ollama.refresh(srv)
                 else:
                     continue
             except LaunchError:

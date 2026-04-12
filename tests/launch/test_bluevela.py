@@ -376,6 +376,56 @@ def test_stop_bkills_and_drops_record(tmp_path: Path) -> None:
     assert state_mod.load(state_path).server("server-x") is None
 
 
+def test_stop_preserves_record_on_transport_failure(tmp_path: Path) -> None:
+    """Codex final-review fix: if `bkill` can't confirm because SSH is down,
+    the remote LSF job is still running. The launcher MUST keep the state
+    record so the user can retry — deleting it strands the live job."""
+    from mcode.launch import state as state_mod
+
+    state_path = tmp_path / "s.json"
+    server = ServerRecord(
+        id="server-x",
+        target=Target.BLUEVELA,
+        endpoint="x",
+        model="m",
+        config_hash="h",
+        job_id="9000",
+        metadata={"login": "alice@host"},
+    )
+    state_mod.update(state_path, lambda s: s.upsert_server(server))
+    ssh = MagicMock()
+    ssh.run.side_effect = TransportError("Connection timed out")
+
+    ok = bluevela.stop("server-x", cfg=_cfg(), state_path=state_path, ssh_client=ssh)
+    assert ok is False  # didn't confirm kill
+    reloaded = state_mod.load(state_path).server("server-x")
+    assert reloaded is not None
+    assert reloaded.status == "stop-pending"
+
+
+def test_stop_uses_record_login_not_current_config(tmp_path: Path) -> None:
+    """Codex final-review fix: stop routes through the record's login."""
+    from mcode.launch import state as state_mod
+
+    state_path = tmp_path / "s.json"
+    server = ServerRecord(
+        id="server-x",
+        target=Target.BLUEVELA,
+        endpoint="x",
+        model="m",
+        config_hash="h",
+        job_id="9000",
+        metadata={"login": "correct-login@correct-host"},
+    )
+    state_mod.update(state_path, lambda s: s.upsert_server(server))
+    cfg = _cfg()
+    cfg.bluevela.login = "wrong-login@wrong-host"
+    ssh = MagicMock()
+    ssh.run.return_value = _result()
+    ok = bluevela.stop("server-x", cfg=cfg, state_path=state_path, ssh_client=ssh)
+    assert ok is True
+
+
 def test_stop_missing_record_returns_false(tmp_path: Path) -> None:
     assert (
         bluevela.stop("nope", cfg=_cfg(), state_path=tmp_path / "s.json", ssh_client=MagicMock())

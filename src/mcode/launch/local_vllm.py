@@ -153,11 +153,16 @@ def _process_identity(pid: int) -> str | None:
     """Return a stable identifier for the process at pid, or None if the
     process doesn't exist. Used to detect PID reuse across refresh()/stop().
 
-    Uses `ps -o lstart=,etime=` which is portable across macOS and Linux.
+    **Uses `ps -o lstart=` only** — the process's wall-clock start time,
+    which doesn't change while the process lives. An earlier version also
+    included `etime` (elapsed time), but that ticks every second, so two
+    successive identity probes on the same healthy process never compared
+    equal. Result: refresh flipped healthy servers to stopped (Codex final
+    review finding).
     """
     try:
         r = subprocess.run(
-            ["ps", "-o", "lstart=,etime=", "-p", str(pid)],
+            ["ps", "-o", "lstart=", "-p", str(pid)],
             capture_output=True,
             text=True,
             timeout=5,

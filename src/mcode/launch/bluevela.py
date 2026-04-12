@@ -614,21 +614,49 @@ def stop(
     state_path: Path | None = None,
     ssh_client: SshClient | None = None,
 ) -> bool:
-    cfg = cfg or LaunchConfig()
+    """Codex final-review fix: route through the login the record was created
+    with (not the current config), and do NOT drop the state record if the
+    bkill couldn't confirm — that would strand the live job on the cluster
+    with no local handle to stop it.
+    """
     srv = state.load(state_path).server(server_id)
     if srv is None:
         return False
-    ssh = ssh_client or SshClient(cfg.bluevela.login)
-    if srv.job_id:
-        # Codex fix: allowlist the job_id before shell interpolation. A
-        # poisoned state record mustn't let `bkill 0` / `bkill -u` happen.
-        if _SAFE_DIGITS_RE.match(srv.job_id):
-            try:
-                ssh.run(f"bkill {_q(srv.job_id)} 2>&1 || true", timeout=30)
-            except TransportError:
-                # Still drop the state record so --all cleanup can proceed.
-                pass
-        # else: don't touch the cluster, but still drop the stale record
+
+    # Prefer the login captured at launch time; fall back to current cfg.
+    record_login = (srv.metadata or {}).get("login") or ((cfg or LaunchConfig()).bluevela.login)
+    if not record_login:
+        # No way to reach the cluster; keep the record for later retry.
+        return False
+    ssh = ssh_client or SshClient(record_login)
+
+    # If there's no job id we have nothing remote to kill — safe to drop.
+    if not srv.job_id:
+        state.update(state_path, lambda s: _drop_server(s, server_id))
+        return True
+
+    # Poisoned job_id: never touch the cluster, but drop the stale record so
+    # `--all` cleanup doesn't keep tripping on it.
+    if not _SAFE_DIGITS_RE.match(srv.job_id):
+        state.update(state_path, lambda s: _drop_server(s, server_id))
+        return True
+
+    try:
+        ssh.run(f"bkill {_q(srv.job_id)} 2>&1 || true", timeout=30)
+    except TransportError:
+        # Transport unreachable — preserve the record so the user can retry
+        # when connectivity is back. Mark it stop-pending so status reflects
+        # the in-flight intent.
+        def _mark_pending_stop(s: state.State) -> None:
+            entry = s.server(server_id)
+            if entry is not None:
+                entry.status = "stop-pending"
+                s.upsert_server(entry)
+
+        state.update(state_path, _mark_pending_stop)
+        return False
+    # Remote kill attempt made (the `|| true` means we don't verify bkill's
+    # exit). Drop the record; the LSF job will terminate asynchronously.
     state.update(state_path, lambda s: _drop_server(s, server_id))
     return True
 
@@ -646,9 +674,17 @@ def refresh(
     """Codex fix: LSF `RUN` does NOT imply readiness. Only mark healthy when
     both LSF says RUN *and* the HTTP endpoint responds 200 (same contract as
     launch()'s ready phase). Anything in between stays `pending`.
+
+    Final-review fix: use the login captured on the record, not the mutable
+    current config. A user whose current config points at a different host
+    still gets correct per-record refresh.
     """
-    cfg = cfg or LaunchConfig()
-    ssh = ssh_client or SshClient(cfg.bluevela.login)
+    login = None
+    if isinstance(record, ServerRecord):
+        login = (record.metadata or {}).get("login")
+    if not login:
+        login = (cfg or LaunchConfig()).bluevela.login
+    ssh = ssh_client or SshClient(login) if login else ssh_client
     if not isinstance(record, ServerRecord) or not record.job_id:
         return record
     if not _SAFE_DIGITS_RE.match(record.job_id):

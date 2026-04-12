@@ -220,6 +220,61 @@ def test_refresh_marks_stopped_when_pid_gone() -> None:
     assert updated.status == "stopped"
 
 
+def test_process_identity_is_stable_over_time() -> None:
+    """Codex final-review fix: `_process_identity` must NOT include elapsed
+    time (etime). If it did, the same healthy process would report a
+    different identity on every call, and refresh() would flip it to stopped.
+    """
+    import os
+    import time as _t
+
+    pid = os.getpid()
+    first = local_vllm._process_identity(pid)
+    _t.sleep(1.5)  # enough for etime to tick if it were in the identity
+    second = local_vllm._process_identity(pid)
+    assert first is not None
+    assert second is not None
+    assert first == second, (
+        f"identity drifted: {first!r} -> {second!r}; something time-varying leaked in"
+    )
+
+
+def test_refresh_keeps_healthy_status_on_long_lived_pid() -> None:
+    """End-to-end check of the fix above: a real long-lived subprocess must
+    stay 'healthy' across multiple refresh() calls separated by wall-clock."""
+    import subprocess as _subp
+    import sys as _sys
+    import time as _t
+
+    from mcode.launch.models import ServerRecord
+
+    child = _subp.Popen([_sys.executable, "-c", "import time; time.sleep(10)"])
+    try:
+        identity = local_vllm._process_identity(child.pid)
+        assert identity is not None
+        record = ServerRecord(
+            id="s",
+            target=Target.LOCAL_VLLM,
+            endpoint="x",
+            model="m",
+            config_hash="h",
+            job_id=str(child.pid),
+            status="healthy",
+            metadata={"proc_identity": identity},
+        )
+        for _ in range(3):
+            _t.sleep(0.4)
+            updated = local_vllm.refresh(record)
+            assert isinstance(updated, ServerRecord)
+            assert updated.status == "healthy", f"identity drifted on live pid: {updated.status}"
+    finally:
+        child.terminate()
+        try:
+            child.wait(timeout=2)
+        except _subp.TimeoutExpired:
+            child.kill()
+
+
 def test_refresh_detects_pid_reuse() -> None:
     """Codex fix: a recorded proc_identity that doesn't match the live pid's
     identity means the pid was reused. Must flip to stopped and NOT interfere
