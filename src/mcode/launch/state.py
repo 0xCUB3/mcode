@@ -43,17 +43,24 @@ def _resolve_state_path(path: Path | None = None) -> Path:
     return path or Path(os.environ.get("MCODE_LAUNCH_STATE", default_state_path()))
 
 
+def _filter_fields(cls, data: dict) -> dict:
+    # Drop unknown keys so state files written by older launcher versions
+    # (e.g. pre-rewrite `reuse_key`) load cleanly.
+    allowed = {f.name for f in cls.__dataclass_fields__.values()}
+    return {k: v for k, v in data.items() if k in allowed}
+
+
 def _run_from_dict(data: dict) -> RunRecord:
     data = dict(data)
     data["target"] = Target(data["target"])
     data["status"] = RunStatus(data["status"])
-    return RunRecord(**data)
+    return RunRecord(**_filter_fields(RunRecord, data))
 
 
 def _server_from_dict(data: dict) -> ServerRecord:
     data = dict(data)
     data["target"] = Target(data["target"])
-    return ServerRecord(**data)
+    return ServerRecord(**_filter_fields(ServerRecord, data))
 
 
 def _load(state_path: Path) -> tuple[list[ServerRecord], list[RunRecord]]:
@@ -63,8 +70,19 @@ def _load(state_path: Path) -> tuple[list[ServerRecord], list[RunRecord]]:
     if not raw:
         return [], []
     data = json.loads(raw)
-    servers = [_server_from_dict(s) for s in data.get("servers", [])]
-    runs = [_run_from_dict(r) for r in data.get("runs", [])]
+    servers: list[ServerRecord] = []
+    for s in data.get("servers", []):
+        try:
+            servers.append(_server_from_dict(s))
+        except (TypeError, ValueError):
+            # Incompatible record from a prior launcher schema; drop it.
+            continue
+    runs: list[RunRecord] = []
+    for r in data.get("runs", []):
+        try:
+            runs.append(_run_from_dict(r))
+        except (TypeError, ValueError):
+            continue
     return servers, runs
 
 
