@@ -42,6 +42,26 @@ class PatchGenerationMetrics:
         }
 
 
+def _resolve_launch_endpoint(model_id: str) -> str | None:
+    """Look up a healthy launcher server endpoint for this model.
+
+    Lets `mcode bench --backend openai --model X` work without the caller
+    plumbing OPENAI_BASE_URL when `mcode launch` already has a server up.
+    """
+    try:
+        from mcode.launch import state as launch_state
+    except Exception:
+        return None
+    try:
+        snap = launch_state.load()
+    except Exception:
+        return None
+    for s in snap.servers:
+        if s.model == model_id and s.status == "healthy" and s.endpoint:
+            return s.endpoint
+    return None
+
+
 @dataclass
 class LLMSession:
     model_id: str
@@ -61,6 +81,10 @@ class LLMSession:
         elif self.backend_name == "openai":
             base_url = os.environ.get("OPENAI_BASE_URL")
             api_key = os.environ.get("OPENAI_API_KEY")
+            if not base_url:
+                base_url = _resolve_launch_endpoint(self.model_id)
+                if base_url and not api_key:
+                    api_key = "dummy"
             if base_url:
                 kwargs["base_url"] = base_url
             if api_key:

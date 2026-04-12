@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from mcode.launch.models import ServerRecord, Target
 from mcode.llm.session import LLMSession
 
 
@@ -17,3 +18,46 @@ def test_backend_kwargs_for_openai(monkeypatch):
         "base_url": "http://vllm:8000/v1",
         "api_key": "dummy",
     }
+
+
+def test_backend_kwargs_openai_autoresolves_from_launcher(monkeypatch):
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    server = ServerRecord(
+        id="srv-1",
+        target=Target.BLUEVELA,
+        endpoint="http://compute-42:8321/v1",
+        model="ibm-granite/granite-4.0-h-small",
+        config_hash="deadbeef",
+        status="healthy",
+    )
+
+    class FakeSnap:
+        servers = [server]
+
+    monkeypatch.setattr("mcode.launch.state.load", lambda: FakeSnap())
+    s = LLMSession(model_id="ibm-granite/granite-4.0-h-small", backend_name="openai")
+    assert s._backend_kwargs() == {  # noqa: SLF001
+        "base_url": "http://compute-42:8321/v1",
+        "api_key": "dummy",
+    }
+
+
+def test_backend_kwargs_openai_no_autoresolve_when_model_mismatch(monkeypatch):
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    server = ServerRecord(
+        id="srv-1",
+        target=Target.BLUEVELA,
+        endpoint="http://compute-42:8321/v1",
+        model="some-other-model",
+        config_hash="deadbeef",
+        status="healthy",
+    )
+
+    class FakeSnap:
+        servers = [server]
+
+    monkeypatch.setattr("mcode.launch.state.load", lambda: FakeSnap())
+    s = LLMSession(model_id="ibm-granite/granite-4.0-h-small", backend_name="openai")
+    assert s._backend_kwargs() == {}  # noqa: SLF001

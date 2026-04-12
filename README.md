@@ -120,10 +120,10 @@ Blue Vela profiles ship with correct vLLM flags per model: Qwen3.5 (27B / 35B-A3
 Once a server is healthy, point the bench at it:
 
 ```bash
-OPENAI_BASE_URL=$(mcode launch status --json | jq -r '.servers[0].endpoint') \
-OPENAI_API_KEY=dummy \
 mcode bench swebench-live --backend openai --model Qwen/Qwen3.5-35B-A3B --limit 10
 ```
+
+`--backend openai` auto-resolves the endpoint from `mcode launch status` when a healthy server matches `--model`. `OPENAI_BASE_URL` / `OPENAI_API_KEY` still override if set.
 
 The legacy shell scripts under `deploy/bluevela/` still work as a fallback. See `deploy/bluevela/README.md`.
 
