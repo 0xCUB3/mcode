@@ -258,13 +258,17 @@ def _bjobs_state(ssh: SshClient, job_id: str) -> str | None:
 
 
 def _validate_queue(
-    ssh: SshClient, cfg: BluevelaConfig, queue: str, *, timeout: float = 30.0
+    ssh: SshClient, cfg: BluevelaConfig, queue: str, *, timeout: float = 60.0
 ) -> str | None:
     """bsub -H a no-op to validate queue+group+gpu submission. Returns None
     on success (the no-op is bkill'd immediately), error text on rejection.
 
     Per plan B4: cheap validation that catches 'queue closed', 'not in group',
     resource-string mismatches without waiting in the real queue.
+
+    Timeout 60s (not 30): we disable SSH ControlPath multiplexing on purpose,
+    so each call pays the full connect+auth cost. Over VPN that's 5-10s per
+    call before bsub even runs. bsub itself is <100ms.
     """
     _require_safe("queue", queue, _SAFE_IDENT_RE)
     _require_safe("group", cfg.group, _SAFE_IDENT_RE)
