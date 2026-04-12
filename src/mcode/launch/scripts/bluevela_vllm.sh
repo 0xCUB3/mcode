@@ -35,6 +35,7 @@ readarray -t VLLM_FLAGS_ARR < <(jq -r '.VLLM_FLAGS[]' "$ENV_JSON")
 
 mkdir -p "$RUN_DIR"
 hostname > "$RUN_DIR/vllm_host.txt"
+HOST_TAG="$(hostname -s)"
 
 # Podman storage roots — BOTH per-job.
 #
