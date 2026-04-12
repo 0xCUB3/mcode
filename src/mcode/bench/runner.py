@@ -107,11 +107,9 @@ class BenchmarkRunner:
             self.config.cache_dir,
             split=self.config.swebench_split,
             limit=limit,
+            instance_ids=task_ids,
             dataset_name=self.config.swebench_dataset,
         )
-        if task_ids:
-            id_set = set(task_ids)
-            tasks = [t for t in tasks if t.instance_id in id_set]
         tasks = _apply_task_shard(tasks, self.config.task_shard_count, self.config.task_shard_index)
         config = _augment_run_config(asdict(self.config))
         config["planned_task_count"] = len(tasks)
@@ -162,10 +160,8 @@ class BenchmarkRunner:
             self.config.cache_dir,
             split=self.config.swebench_split,
             limit=limit,
+            instance_ids=task_ids,
         )
-        if task_ids:
-            id_set = set(task_ids)
-            tasks = [t for t in tasks if t.instance_id in id_set]
         tasks = _apply_task_shard(tasks, self.config.task_shard_count, self.config.task_shard_index)
         config = _augment_run_config(asdict(self.config))
         config["planned_task_count"] = len(tasks)
