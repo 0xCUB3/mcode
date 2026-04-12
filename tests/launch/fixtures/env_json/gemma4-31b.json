@@ -13,7 +13,7 @@
     "--tool-call-parser",
     "functiongemma",
     "--attention-backend",
-    "TORCH_SDPA",
+    "FLEX_ATTENTION",
     "--chat-template",
     "/chat-template.jinja"
   ],
