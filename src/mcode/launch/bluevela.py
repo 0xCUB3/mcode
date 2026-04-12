@@ -953,8 +953,21 @@ def doctor_init(
             next="verify your shell on the login host isn't printing banners that corrupt stdout",
         )
 
+    # Wrap any post-preflight TransportError in LaunchError so the CLI
+    # renders the formatted ✗/why/next layout instead of a traceback
+    # (Codex final-verify-pass hardening).
+    def _probe(cmd: str, *, timeout: float = 15.0):
+        try:
+            return ssh.run(cmd, timeout=timeout)
+        except TransportError as e:
+            raise LaunchError(
+                what="SSH dropped mid-probe",
+                why=str(e),
+                next=_hint_for(str(e)),
+            ) from e
+
     # --- home + user ------------------------------------------------------
-    home = ssh.run("echo $HOME", timeout=10).stdout.strip() or "$HOME"
+    home = _probe("echo $HOME", timeout=10).stdout.strip() or "$HOME"
     if not _SAFE_POSIX_PATH_RE.match(home):
         raise LaunchError(
             what=f"unexpected $HOME value: {home!r}",
@@ -967,12 +980,12 @@ def doctor_init(
     # _parse_bugroup filters to just this account's groups — without it,
     # catch-all groups like `lsfadmins` win the first-row lottery.
     user = login.split("@", 1)[0]
-    bg = ssh.run("bugroup 2>/dev/null || true", timeout=15)
+    bg = _probe("bugroup 2>/dev/null || true")
     groups = _parse_bugroup(bg.stdout, user=user)
     group = groups[0] if groups else ""
 
     # --- queues -----------------------------------------------------------
-    bq = ssh.run("bqueues -u $USER -o 'QUEUE_NAME PRIO STATUS' 2>/dev/null", timeout=15)
+    bq = _probe("bqueues -u $USER -o 'QUEUE_NAME PRIO STATUS' 2>/dev/null")
     queue_rows = _parse_bqueues(bq.stdout)
 
     # `bqueues -u` doesn't surface the ONLY_INTERACTIVE policy. We probe
