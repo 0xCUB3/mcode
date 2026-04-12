@@ -91,6 +91,14 @@ mcode launch doctor bluevela --init --login <user>@<login-host>
 mcode launch doctor bluevela
 ```
 
+Push the local repo to the cluster (rsync, respects `.gitignore`):
+
+```bash
+mcode launch sync bluevela              # subsequent syncs
+mcode launch sync bluevela --bootstrap  # first sync into a non-empty remote dir
+mcode launch sync bluevela --dry-run    # preview
+```
+
 Launch a server:
 
 ```bash
