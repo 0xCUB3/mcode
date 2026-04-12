@@ -13,6 +13,8 @@ Commands:
     mcode launch stop   <id> | --all
     mcode launch doctor <target> [--deep]
     mcode launch refresh       (walk state and re-check via target modules)
+    mcode launch sync bluevela [--dry-run] [--src DIR]
+                               (rsync local repo to remote workspace_root)
 
 Output:
 - Server launch prints the endpoint as the last line on stdout so callers can
@@ -441,6 +443,102 @@ def cmd_refresh() -> None:
 
     n = state.update(None, _update)
     print(f"refreshed {n} records")
+
+
+# ---------------------------------------------------------------------------
+# sync
+# ---------------------------------------------------------------------------
+@app.command("sync")
+def cmd_sync(
+    target: str = typer.Argument(..., help="only `bluevela` is supported"),
+    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="preview only"),
+    src: Path | None = typer.Option(
+        None,
+        "--src",
+        help="local repo to push (default: cwd's git-tracked root)",
+    ),
+) -> None:
+    """Rsync the local repo to `[bluevela].workspace_root` on the cluster.
+
+    Respects `.gitignore` via `--filter=:- .gitignore`. Use `--dry-run` to
+    preview the file list before transferring.
+    """
+    import subprocess
+
+    if target != "bluevela":
+        _print_error(
+            LaunchError(
+                what=f"sync only supports target=bluevela (got {target!r})",
+                why="local targets don't need a remote push",
+                next="use `rsync` directly or skip sync",
+            )
+        )
+        raise typer.Exit(1)
+
+    cfg = _run(config_mod.load)
+    bv = cfg.bluevela
+    if not bv.login or not bv.workspace_root:
+        _print_error(
+            LaunchError(
+                what="bluevela config incomplete for sync",
+                why="need [bluevela].login and [bluevela].workspace_root",
+                next="run `mcode launch doctor bluevela --init`",
+            )
+        )
+        raise typer.Exit(1)
+
+    # Default source: repo root detected via git, fall back to cwd.
+    if src is None:
+        r = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        src = Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else Path.cwd()
+
+    if not src.is_dir():
+        _print_error(
+            LaunchError(
+                what=f"source {src} is not a directory",
+                why="",
+                next="pass --src /path/to/repo",
+            )
+        )
+        raise typer.Exit(1)
+
+    dest = f"{bv.login}:{bv.workspace_root}/"
+    gitignore = src / ".gitignore"
+    argv = [
+        "rsync",
+        "-az",
+        "--delete",
+        "--info=stats2,progress2" if not dry_run else "--info=name1,stats1",
+        "--exclude=.git/",
+        "--exclude=.venv/",
+        "--exclude=__pycache__/",
+        "--exclude=.pytest_cache/",
+        "--exclude=.ruff_cache/",
+        "--exclude=node_modules/",
+    ]
+    if gitignore.exists():
+        argv.append("--filter=:- .gitignore")
+    if dry_run:
+        argv.append("--dry-run")
+    argv += [str(src) + "/", dest]
+
+    print(f"{'preview' if dry_run else 'sync'}: {src} → {dest}")
+    print(f"  {' '.join(argv)}")
+    r = subprocess.run(argv)
+    if r.returncode != 0:
+        _print_error(
+            LaunchError(
+                what=f"rsync exited {r.returncode}",
+                why="",
+                next="check SSH reachability, quotas, and paths",
+            )
+        )
+        raise typer.Exit(r.returncode)
 
 
 if __name__ == "__main__":
