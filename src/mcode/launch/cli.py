@@ -487,7 +487,10 @@ def cmd_sync(
         )
         raise typer.Exit(1)
 
-    # Default source: repo root detected via git, fall back to cwd.
+    # Default source: repo root detected via git. Codex review fix: fail
+    # closed if we can't detect a repo root. Falling back to cwd is
+    # dangerous with --delete — a user running sync from the wrong dir
+    # could mirror that dir to the remote and wipe the real workspace.
     if src is None:
         r = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
@@ -495,7 +498,16 @@ def cmd_sync(
             text=True,
             check=False,
         )
-        src = Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else Path.cwd()
+        if r.returncode != 0 or not r.stdout.strip():
+            _print_error(
+                LaunchError(
+                    what="cannot determine source repo",
+                    why="not inside a git repo (git rev-parse --show-toplevel failed)",
+                    next="pass --src /path/to/repo explicitly",
+                )
+            )
+            raise typer.Exit(1)
+        src = Path(r.stdout.strip())
 
     if not src.is_dir():
         _print_error(
@@ -507,11 +519,64 @@ def cmd_sync(
         )
         raise typer.Exit(1)
 
+    # Codex review fix: refuse --delete unless the remote destination has
+    # our marker file confirming it's a launcher-managed workspace. Missing
+    # marker = user either misconfigured workspace_root to a broader dir,
+    # or never ran sync before. In both cases, bail and ask them to `touch`
+    # the marker explicitly rather than risk wiping unrelated remote data.
+    marker = ".mcode-launch-workspace"
+    ssh_opts = [
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=10",
+        "-o",
+        "ServerAliveInterval=15",
+        "-o",
+        "ServerAliveCountMax=3",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+    ]
+    probe_cmd = (
+        f"mkdir -p {bv.workspace_root} && "
+        f"test -f {bv.workspace_root}/{marker} && echo yes || echo no"
+    )
+    probe = subprocess.run(
+        ["ssh", *ssh_opts, bv.login, probe_cmd],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if probe.returncode != 0:
+        _print_error(
+            LaunchError(
+                what="ssh to remote failed during sync preflight",
+                why=(probe.stderr or "").strip()[:200],
+                next="check VPN + ssh keys; try `mcode launch doctor bluevela`",
+            )
+        )
+        raise typer.Exit(1)
+    marker_present = probe.stdout.strip() == "yes"
+    if not marker_present:
+        print(f"note: marker {bv.workspace_root}/{marker} not found on remote")
+        print("      first-time sync will create it (no remote files at risk yet)")
+        # Create the marker so --delete has a safety net for subsequent runs,
+        # but only after we know workspace_root exists and is writable.
+        subprocess.run(
+            ["ssh", *ssh_opts, bv.login, f"touch {bv.workspace_root}/{marker}"],
+            check=False,
+        )
+
     dest = f"{bv.login}:{bv.workspace_root}/"
     gitignore = src / ".gitignore"
+    # Codex review fix: rsync must go over SSH with the same safety options
+    # SshClient uses — no interactive prompts, fast failure on transport.
+    ssh_cmd = "ssh " + " ".join(ssh_opts)
     argv = [
         "rsync",
         "-az",
+        "-e",
+        ssh_cmd,
         "--delete",
         "--info=stats2,progress2" if not dry_run else "--info=name1,stats1",
         "--exclude=.git/",
@@ -520,6 +585,7 @@ def cmd_sync(
         "--exclude=.pytest_cache/",
         "--exclude=.ruff_cache/",
         "--exclude=node_modules/",
+        f"--exclude={marker}",  # never delete our own safety marker
     ]
     if gitignore.exists():
         argv.append("--filter=:- .gitignore")

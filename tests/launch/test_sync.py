@@ -44,6 +44,25 @@ def test_sync_requires_config(runner: CliRunner, tmp_path: Path, monkeypatch) ->
     assert "config incomplete" in result.output
 
 
+def _fake_subprocess(rsync_rc: int = 0, marker_present: bool = True, ssh_rc: int = 0):
+    """Mock subprocess.run handling the 3 kinds of calls cmd_sync makes:
+    git rev-parse, ssh marker probe, ssh marker touch, rsync."""
+    seen = {}
+
+    def fake(argv, *args, **kwargs):
+        if argv and argv[0] == "rsync":
+            seen["rsync_argv"] = argv
+            return type("R", (), {"returncode": rsync_rc})()
+        if argv and argv[0] == "ssh":
+            seen.setdefault("ssh_calls", []).append(argv)
+            stdout = "yes\n" if marker_present else "no\n"
+            return type("R", (), {"returncode": ssh_rc, "stdout": stdout, "stderr": ""})()
+        # git rev-parse: fail so fallback fires (test uses --src explicitly)
+        return type("R", (), {"returncode": 1, "stdout": "", "stderr": ""})()
+
+    return fake, seen
+
+
 def test_sync_invokes_rsync_to_correct_destination(
     runner: CliRunner, cfg_path: Path, tmp_path: Path
 ) -> None:
@@ -51,58 +70,76 @@ def test_sync_invokes_rsync_to_correct_destination(
     src.mkdir()
     (src / "README.md").write_text("hi")
 
-    seen = {}
-
-    def fake_run(argv, *args, **kwargs):
-        if argv and argv[0] == "rsync":
-            seen["argv"] = argv
-            return type("R", (), {"returncode": 0})()
-        # git rev-parse: simulate failure so fallback to --src path kicks in.
-        return type("R", (), {"returncode": 1, "stdout": ""})()
-
-    with patch(
-        "mcode.launch.cli.subprocess.run" if False else "subprocess.run", side_effect=fake_run
-    ):
+    fake, seen = _fake_subprocess()
+    with patch("subprocess.run", side_effect=fake):
         result = runner.invoke(app, ["sync", "bluevela", "--src", str(src)])
     assert result.exit_code == 0, result.output
-    argv = seen.get("argv")
+    argv = seen.get("rsync_argv")
     assert argv is not None, "rsync was not invoked"
     assert argv[0] == "rsync"
     assert "-az" in argv and "--delete" in argv
     assert any(a.startswith("--exclude=.git/") for a in argv)
     assert f"{str(src)}/" in argv
     assert "alice@host:/u/alice/mcode/" in argv
+    # Codex review fix: rsync must use SSH with safety options (BatchMode etc).
+    assert "-e" in argv
+    ssh_cmd = argv[argv.index("-e") + 1]
+    assert "BatchMode=yes" in ssh_cmd
+    assert "ConnectTimeout=10" in ssh_cmd
 
 
-def test_sync_dry_run_adds_flag(runner: CliRunner, cfg_path: Path, tmp_path: Path) -> None:
+def test_sync_fails_closed_when_not_in_git_repo(
+    runner: CliRunner, cfg_path: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """Codex review fix: refuse to sync when git rev-parse fails — the old
+    cwd fallback combined with --delete could wipe an unrelated remote dir."""
+    # Make git rev-parse fail; also don't pass --src.
+    fake, _ = _fake_subprocess()
+    with patch("subprocess.run", side_effect=fake):
+        # Invoke from a directory guaranteed not to be a git repo.
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(app, ["sync", "bluevela"])
+    assert result.exit_code == 1
+    assert "cannot determine source repo" in result.output
+
+
+def test_sync_creates_marker_on_first_run(
+    runner: CliRunner, cfg_path: Path, tmp_path: Path
+) -> None:
+    """Codex review fix: on first sync, the launcher writes a marker file
+    so subsequent --delete runs have a safety net."""
     src = tmp_path / "repo"
     src.mkdir()
-    seen = {}
 
-    def fake_run(argv, *args, **kwargs):
-        if argv and argv[0] == "rsync":
-            seen["argv"] = argv
-            return type("R", (), {"returncode": 0})()
-        return type("R", (), {"returncode": 1, "stdout": ""})()
+    fake, seen = _fake_subprocess(marker_present=False)
+    with patch("subprocess.run", side_effect=fake):
+        result = runner.invoke(app, ["sync", "bluevela", "--src", str(src)])
+    assert result.exit_code == 0, result.output
+    # At least two ssh calls: probe + touch marker.
+    ssh_calls = seen.get("ssh_calls", [])
+    assert len(ssh_calls) >= 2
+    assert any(
+        "touch" in " ".join(c) and ".mcode-launch-workspace" in " ".join(c) for c in ssh_calls
+    )
 
-    with patch("subprocess.run", side_effect=fake_run):
+
+def test_sync_dry_run_adds_flag_v2(runner: CliRunner, cfg_path: Path, tmp_path: Path) -> None:
+    src = tmp_path / "repo"
+    src.mkdir()
+    fake, seen = _fake_subprocess()
+    with patch("subprocess.run", side_effect=fake):
         result = runner.invoke(app, ["sync", "bluevela", "--dry-run", "--src", str(src)])
     assert result.exit_code == 0, result.output
-    assert "--dry-run" in seen["argv"]
+    assert "--dry-run" in seen["rsync_argv"]
 
 
-def test_sync_surfaces_rsync_failure_as_launch_error(
+def test_sync_surfaces_rsync_failure_as_launch_error_v2(
     runner: CliRunner, cfg_path: Path, tmp_path: Path
 ) -> None:
     src = tmp_path / "repo"
     src.mkdir()
-
-    def fake_run(argv, *args, **kwargs):
-        if argv and argv[0] == "rsync":
-            return type("R", (), {"returncode": 23})()
-        return type("R", (), {"returncode": 1, "stdout": ""})()
-
-    with patch("subprocess.run", side_effect=fake_run):
+    fake, _ = _fake_subprocess(rsync_rc=23)
+    with patch("subprocess.run", side_effect=fake):
         result = runner.invoke(app, ["sync", "bluevela", "--src", str(src)])
     assert result.exit_code == 23
     assert "rsync exited 23" in result.output
