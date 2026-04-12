@@ -13,7 +13,7 @@
     "--tool-call-parser",
     "functiongemma",
     "--attention-backend",
-    "XFORMERS",
+    "FLASHINFER",
     "--chat-template",
     "/chat-template.jinja"
   ],

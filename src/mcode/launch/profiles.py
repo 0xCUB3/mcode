@@ -86,7 +86,7 @@ _PROFILES: list[tuple[str, ServingProfile]] = [
                 "--tool-call-parser",
                 "functiongemma",
                 "--attention-backend",
-                "XFORMERS",
+                "FLASHINFER",
             ],
             tensor_parallel=2,
             max_model_len=32768,
