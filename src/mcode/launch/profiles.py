@@ -72,6 +72,9 @@ _PROFILES: list[tuple[str, ServingProfile]] = [
     # Gemma 4 instruct — chat template is REQUIRED for tool calls (vLLM #39043).
     # The launcher auto-appends --chat-template /chat-template.jinja when
     # chat_template is set; do NOT also put --chat-template in `flags`.
+    # --limit-mm-per-prompt takes JSON in vLLM 0.17+ (not the comma syntax
+    # vLLM used to accept). Dropping it entirely since Gemma-4 is used here
+    # for text+tool calling and the multimodal heads are idle anyway.
     (
         "google/gemma-4*",
         ServingProfile(
@@ -82,8 +85,6 @@ _PROFILES: list[tuple[str, ServingProfile]] = [
                 "gemma4",
                 "--reasoning-parser",
                 "gemma4",
-                "--limit-mm-per-prompt",
-                "image=0,audio=0",
             ],
             tensor_parallel=2,
             max_model_len=32768,
