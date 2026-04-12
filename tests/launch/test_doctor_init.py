@@ -99,7 +99,10 @@ def test_doctor_init_writes_config_with_probed_values(tmp_path: Path) -> None:
     assert cfg.bluevela.gpu_mode == "exclusive_process"
 
 
-def test_doctor_init_falls_back_to_normal_when_no_queues_parsed(tmp_path: Path) -> None:
+def test_doctor_init_raises_when_no_parseable_queues(tmp_path: Path) -> None:
+    """Codex pre-merge-review fix: if bqueues returns nothing parseable, we
+    must NOT silently write queue_order=['normal']. That ships a config that
+    fails at submit time."""
     ssh = MagicMock()
 
     def run(cmd: str, *, timeout: float = 60.0):
@@ -114,11 +117,32 @@ def test_doctor_init_falls_back_to_normal_when_no_queues_parsed(tmp_path: Path) 
         return _ok()
 
     ssh.run.side_effect = run
-    dst = tmp_path / "launch.toml"
-    bluevela.doctor_init(dst, login="testuser@testhost", ssh_client=ssh)
-    cfg = config_mod.load(dst)
-    assert cfg.bluevela.queue_order == ["normal"]
-    assert cfg.bluevela.group == ""  # not fabricated
+    with pytest.raises(LaunchError) as ei:
+        bluevela.doctor_init(tmp_path / "launch.toml", login="testuser@testhost", ssh_client=ssh)
+    assert "batch-capable" in ei.value.what
+
+
+def test_doctor_init_raises_when_only_interactive_queues_available(tmp_path: Path) -> None:
+    """Fail closed if every visible queue is confirmed interactive-only."""
+    ssh = MagicMock()
+
+    def run(cmd: str, *, timeout: float = 60.0):
+        if "mcode-doctor-init-ok" in cmd:
+            return _ok(stdout="mcode-doctor-init-ok\n")
+        if cmd.startswith("echo $HOME"):
+            return _ok(stdout="/u/testuser\n")
+        if cmd.startswith("bugroup"):
+            return _ok(stdout="GROUP_NAME USERS GROUP_ADMIN\ngrp_x testuser ( - )\n")
+        if "bqueues -u" in cmd:
+            return _ok(stdout="QUEUE_NAME PRIO STATUS\ninteractive 30 Open:Active\n")
+        if cmd.startswith("bqueues -l"):
+            return _ok(stdout="SCHEDULING POLICIES: FAIRSHARE ONLY_INTERACTIVE\n")
+        return _ok()
+
+    ssh.run.side_effect = run
+    with pytest.raises(LaunchError) as ei:
+        bluevela.doctor_init(tmp_path / "launch.toml", login="testuser@testhost", ssh_client=ssh)
+    assert "batch-capable" in ei.value.what
 
 
 def test_doctor_init_shared_root_is_under_home(tmp_path: Path) -> None:

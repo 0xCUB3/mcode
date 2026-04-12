@@ -478,9 +478,14 @@ def launch(
                     why=str(e),
                     next=_hint_for(str(e)),
                 ) from e
-            if stat is None or stat.upper() in ("RUN", "DONE"):
+            if stat is None or stat.upper() == "RUN":
                 break
-            if stat.upper() in ("EXIT", "PSUSP", "USUSP"):
+            # Codex pre-merge-review fix: DONE before the endpoint is even
+            # ready means the job exited cleanly without ever serving.
+            # Previously we fell through to the starting loop which would
+            # then wait the full 40 min deadline for an endpoint that
+            # never appears. Treat DONE-before-ready as terminal.
+            if stat.upper() in ("DONE", "EXIT", "PSUSP", "USUSP"):
                 tail = _remote_log_tail(ssh, run_dir)
                 reporter.finish(PhaseStatus.FAILED, detail=f"LSF {stat}")
                 raise LaunchError(
@@ -515,7 +520,11 @@ def launch(
                 ok, status = _http_health(ssh, host, _DEFAULT_VLLM_PORT)
                 if ok:
                     break
-            if _bjobs_state(ssh, job_id) in (None, "EXIT"):
+            # Codex pre-merge-review fix: also treat DONE as terminal-before-
+            # ready. A job that exited cleanly without becoming healthy has
+            # failed from our perspective and we should surface it immediately
+            # instead of waiting the 40 min deadline.
+            if _bjobs_state(ssh, job_id) in (None, "EXIT", "DONE"):
                 tail = _remote_log_tail(ssh, run_dir)
                 reporter.finish(PhaseStatus.FAILED, detail="job exited early")
                 raise LaunchError(
@@ -649,22 +658,38 @@ def stop(
         state.update(state_path, lambda s: _drop_server(s, server_id))
         return True
 
-    try:
-        ssh.run(f"bkill {_q(srv.job_id)} 2>&1 || true", timeout=30)
-    except TransportError:
-        # Transport unreachable — preserve the record so the user can retry
-        # when connectivity is back. Mark it stop-pending so status reflects
-        # the in-flight intent.
-        def _mark_pending_stop(s: state.State) -> None:
-            entry = s.server(server_id)
-            if entry is not None:
-                entry.status = "stop-pending"
-                s.upsert_server(entry)
+    # Codex pre-merge-review fix: don't `|| true` the bkill — inspect it.
+    # If bkill succeeded OR the job is already absent from LSF, drop the
+    # record. If bkill failed for any other reason (permission denied,
+    # transient LSF hiccup), preserve the record as stop-pending so the
+    # user can retry. Otherwise we lose the only local handle to a live job.
+    def _mark_pending_stop(s: state.State) -> None:
+        entry = s.server(server_id)
+        if entry is not None:
+            entry.status = "stop-pending"
+            s.upsert_server(entry)
 
+    try:
+        r = ssh.run(f"bkill {_q(srv.job_id)}", timeout=30)
+    except TransportError:
         state.update(state_path, _mark_pending_stop)
         return False
-    # Remote kill attempt made (the `|| true` means we don't verify bkill's
-    # exit). Drop the record; the LSF job will terminate asynchronously.
+
+    kill_confirmed = r.ok or any(
+        phrase in (r.stdout + r.stderr).lower()
+        for phrase in (
+            "is being terminated",
+            "already finished",
+            "job not found",
+            "job has already finished",
+        )
+    )
+    if not kill_confirmed:
+        # bkill returned non-zero and stderr didn't match "already gone"
+        # phrases — assume the job is still alive. Preserve record.
+        state.update(state_path, _mark_pending_stop)
+        return False
+
     state.update(state_path, lambda s: _drop_server(s, server_id))
     return True
 
@@ -979,19 +1004,27 @@ def doctor_init(
         # False -> interactive, drop silently
     queue_order = confirmed_batch[:3]
     if not queue_order:
-        # All probes either said "interactive-only" or failed. If *every*
-        # open queue's probe failed, that's a cluster-state issue and we
-        # should not invent a config — raise so the user knows to retry.
-        if probe_failed and not confirmed_batch:
-            raise LaunchError(
-                what="could not confirm any batch-capable queue",
-                why=(
-                    f"bqueues -l failed or timed out for all {len(probe_failed)} "
-                    f"open queues: {probe_failed}"
-                ),
-                next="retry `doctor bluevela --init` (transient SSH/LSF issue?)",
-            )
-        queue_order = ["normal"]
+        # Codex pre-merge-review fix: fail closed unless at least one queue
+        # was positively confirmed batch-capable. This covers three cases:
+        # (a) all probes errored → transient issue, retry
+        # (b) all open queues are interactive-only → user needs a group /
+        #     project that unlocks a batch queue
+        # (c) bqueues -u returned nothing parseable → cluster state issue
+        # Previously we silently wrote queue_order=["normal"] which shipped
+        # a plausible config that only failed at submit time.
+        raise LaunchError(
+            what="could not confirm any batch-capable queue",
+            why=(
+                f"{len(probe_failed)} queue policy probe(s) failed ({probe_failed!r}); "
+                f"remaining open queues are interactive-only or none. "
+                f"open={open_queues!r}"
+            ),
+            next=(
+                "retry `doctor bluevela --init` if this looks transient; "
+                "otherwise check `bqueues -u $USER` on the cluster and set "
+                "[bluevela].queue_order manually in your launch.toml"
+            ),
+        )
 
     # --- compose config ---------------------------------------------------
     # Note on shared_root: an earlier iteration auto-preferred

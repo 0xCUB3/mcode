@@ -254,6 +254,52 @@ def test_launch_rejects_incomplete_config() -> None:
     assert "incomplete" in ei.value.what
 
 
+def test_launch_fails_fast_on_done_before_ready(tmp_path: Path) -> None:
+    """Codex pre-merge-review fix: if the LSF job transitions to DONE before
+    the endpoint ever becomes healthy, surface the failure immediately —
+    don't sit in `starting` phase waiting for the 40-min deadline."""
+    ssh = MagicMock()
+    stage = {"n": 0}
+
+    def run(cmd: str, *, timeout: float = 60.0):
+        if cmd.startswith("bsub -H "):
+            return _result(stdout="Job <100> submitted.\n")
+        if cmd.startswith("bkill 100"):
+            return _result()
+        if cmd.startswith("mkdir -p"):
+            return _result()
+        if cmd.startswith("bsub -G") and "mcode-vllm-" in cmd:
+            return _result(stdout="Job <999> is submitted to queue <normal>.\n")
+        if "bjobs" in cmd:
+            stage["n"] += 1
+            # PEND briefly, then DONE before any health can succeed.
+            if stage["n"] < 2:
+                return _result(stdout="PEND\n")
+            return _result(stdout="DONE\n")
+        if "vllm.log" in cmd:
+            return _result(stdout="(no output)")
+        if "vllm_host.txt" in cmd:
+            return _result()  # host file never appears
+        if "curl" in cmd:
+            return _result()
+        return _result()
+
+    ssh.run.side_effect = run
+    ssh.upload = MagicMock()
+
+    with pytest.raises(LaunchError) as ei:
+        bluevela.launch(
+            _spec(),
+            NullReporter.create(bluevela.PHASES),
+            cfg=_cfg(),
+            state_path=tmp_path / "s.json",
+            ssh_client=ssh,
+        )
+    # Must surface BEFORE the absolute startup deadline (not 40 min wait).
+    msg = (ei.value.what + ei.value.why).lower()
+    assert "done" in msg or "exited" in msg or "before running" in msg
+
+
 def test_launch_surfaces_transport_error_with_hint() -> None:
     ssh = MagicMock()
     ssh.run.side_effect = TransportError("Connection timed out")
@@ -373,6 +419,68 @@ def test_stop_bkills_and_drops_record(tmp_path: Path) -> None:
     # bkill was called
     assert any("bkill 9000" in c.args[0] for c in ssh.run.call_args_list)
     # Record dropped
+    assert state_mod.load(state_path).server("server-x") is None
+
+
+def test_stop_preserves_record_when_bkill_returns_nonzero(tmp_path: Path) -> None:
+    """Codex pre-merge-review fix: if bkill fails (permission denied, LSF
+    hiccup) without transport failure, we MUST NOT drop the state record.
+    Previously `bkill ... || true` masked all non-zero exits."""
+    from mcode.launch import state as state_mod
+
+    state_path = tmp_path / "s.json"
+    server = ServerRecord(
+        id="server-x",
+        target=Target.BLUEVELA,
+        endpoint="x",
+        model="m",
+        config_hash="h",
+        job_id="9000",
+        metadata={"login": "alice@host"},
+    )
+    state_mod.update(state_path, lambda s: s.upsert_server(server))
+    ssh = MagicMock()
+    # bkill exits non-zero with an unexpected stderr (not an "already gone" phrase)
+    ssh.run.return_value = SshResult(
+        returncode=1,
+        stdout="",
+        stderr="Permission denied: somebody else's job",
+        duration_s=0.01,
+    )
+
+    ok = bluevela.stop("server-x", cfg=_cfg(), state_path=state_path, ssh_client=ssh)
+    assert ok is False
+    reloaded = state_mod.load(state_path).server("server-x")
+    assert reloaded is not None
+    assert reloaded.status == "stop-pending"
+
+
+def test_stop_drops_record_when_bkill_reports_already_gone(tmp_path: Path) -> None:
+    """If LSF says the job is already finished, treat as success and drop
+    the record — it's a no-op, not a failure."""
+    from mcode.launch import state as state_mod
+
+    state_path = tmp_path / "s.json"
+    server = ServerRecord(
+        id="server-x",
+        target=Target.BLUEVELA,
+        endpoint="x",
+        model="m",
+        config_hash="h",
+        job_id="9000",
+        metadata={"login": "alice@host"},
+    )
+    state_mod.update(state_path, lambda s: s.upsert_server(server))
+    ssh = MagicMock()
+    ssh.run.return_value = SshResult(
+        returncode=1,
+        stdout="",
+        stderr="Job <9000>: Job has already finished\n",
+        duration_s=0.01,
+    )
+
+    ok = bluevela.stop("server-x", cfg=_cfg(), state_path=state_path, ssh_client=ssh)
+    assert ok is True
     assert state_mod.load(state_path).server("server-x") is None
 
 

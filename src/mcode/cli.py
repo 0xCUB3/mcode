@@ -1459,6 +1459,13 @@ def export_csv(
 app.add_typer(bench_app, name="bench")
 app.add_typer(deps_app, name="deps")
 
+# Launcher subcommands: `mcode launch bluevela|local-vllm|local-ollama|status|...`.
+# Imported lazily here to keep startup cheap and avoid pulling in rich/typer code
+# paths when only `mcode bench` is used.
+from mcode.launch.cli import app as launch_app  # noqa: E402
+
+app.add_typer(launch_app, name="launch")
+
 
 def _print_run_summary(
     *,
