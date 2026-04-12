@@ -964,11 +964,28 @@ def doctor_init(
     if not queue_order:
         queue_order = ["normal"]
 
+    # --- shared_root location --------------------------------------------
+    # Home dirs on Blue Vela have a hard quota (typically 100 GB per user).
+    # Podman graphroots accumulate ~20 GB per compute node we touch; a
+    # handful of vLLM launches will blow the home quota and cause podman
+    # "disk quota exceeded" failures mid-pull. Prefer `/proj/dmfexp/$USER`
+    # (or any other passthrough project dir) if it exists — those typically
+    # have no per-user quota.
+    proj_shared = f"/proj/dmfexp/{user}"
+    test_proj = ssh.run(
+        f"test -d {_q(proj_shared)} && test -w {_q(proj_shared)} && echo yes || echo no",
+        timeout=15,
+    )
+    if test_proj.ok and test_proj.stdout.strip() == "yes":
+        shared_root = f"{proj_shared}/mcode-shared"
+    else:
+        shared_root = f"{home}/mcode-shared"
+
     # --- compose config ---------------------------------------------------
     cfg = config_mod.LaunchConfig()
     cfg.bluevela.login = login
     cfg.bluevela.workspace_root = f"{home}/mcode-launch"
-    cfg.bluevela.shared_root = f"{home}/mcode-shared"
+    cfg.bluevela.shared_root = shared_root
     cfg.bluevela.hf_env = f"{home}/.config/mcode/hf-env.sh"
     cfg.bluevela.group = group
     cfg.bluevela.queue_order = queue_order

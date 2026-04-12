@@ -121,6 +121,33 @@ def test_doctor_init_falls_back_to_normal_when_no_queues_parsed(tmp_path: Path) 
     assert cfg.bluevela.group == ""  # not fabricated
 
 
+def test_doctor_init_prefers_proj_shared_when_present(tmp_path: Path) -> None:
+    """If /proj/dmfexp/<user> exists and is writable, shared_root should point
+    there — avoids hitting the ~100GB home quota with podman graphroots."""
+    ssh = MagicMock()
+
+    def run(cmd: str, *, timeout: float = 60.0):
+        if "mcode-doctor-init-ok" in cmd:
+            return _ok(stdout="mcode-doctor-init-ok\n")
+        if cmd.startswith("echo $HOME"):
+            return _ok(stdout="/u/testuser\n")
+        if cmd.startswith("bugroup"):
+            return _ok(stdout="GROUP_NAME USERS GROUP_ADMIN\ngrp_runtime testuser ( - )\n")
+        if "bqueues -u" in cmd:
+            return _ok(stdout="QUEUE_NAME PRIO STATUS\nnormal 30 Open:Active\n")
+        if cmd.startswith("bqueues -l"):
+            return _ok(stdout="SCHEDULING POLICIES: FAIRSHARE\n")
+        if "/proj/dmfexp/testuser" in cmd:
+            return _ok(stdout="yes\n")  # proj dir exists
+        return _ok()
+
+    ssh.run.side_effect = run
+    dst = tmp_path / "launch.toml"
+    bluevela.doctor_init(dst, login="testuser@testhost", ssh_client=ssh)
+    cfg = config_mod.load(dst)
+    assert cfg.bluevela.shared_root == "/proj/dmfexp/testuser/mcode-shared"
+
+
 def test_doctor_init_rejects_weird_home_path(tmp_path: Path) -> None:
     """If $HOME contains characters that can't safely round-trip through TOML,
     hard-fail instead of writing a bad config."""
