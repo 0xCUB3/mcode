@@ -1,0 +1,32 @@
+# mcode launch config template.
+#
+# For Blue Vela users: the recommended path is to let `doctor --init` generate
+# this for you by probing your account:
+#
+#     uv run mcode launch doctor bluevela --init \
+#         --login <user>@<login-host>
+#
+# It writes the real file to ~/.config/mcode/launch.toml.
+# This example is for reference / manual editing only.
+
+[bluevela]
+login = "<user>@<login-host>"
+workspace_root = "<$HOME>/mcode-launch"
+shared_root = "<$HOME>/mcode-shared"
+queue_order = ["normal"]          # first match wins; validated via bsub -H
+group = "<group>"                  # -G value on every bsub
+gpu_mode = "exclusive_process"     # "shared" is deprecated on this cluster
+hf_env = "<$HOME>/.config/mcode/hf-env.sh"
+
+# Optional podman overrides. Leave commented to use the shell-script defaults
+# (per-host graphroot, per-job-index runroot).
+# [bluevela.podman]
+# graphroot_base = "..."
+# runroot_base = "..."
+
+[local_vllm]
+port = 8000
+
+[local_ollama]
+host = "127.0.0.1"
+port = 11434

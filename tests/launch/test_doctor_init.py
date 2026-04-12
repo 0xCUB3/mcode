@@ -16,14 +16,27 @@ def _ok(stdout: str = "", stderr: str = "") -> SshResult:
     return SshResult(returncode=0, stdout=stdout, stderr=stderr, duration_s=0.01)
 
 
-def test_parse_bugroup_extracts_all_user_groups() -> None:
+def test_parse_bugroup_filters_by_user() -> None:
+    """Codex/live-probe fix: bugroup (no args) lists ALL groups. Must filter
+    to rows that actually contain the user, otherwise the first row wins
+    regardless of membership (e.g. 'lsfadmins' swept in incorrectly)."""
     raw = (
         "GROUP_NAME    USERS                     GROUP_ADMIN\n"
-        "grp_runtime   alice bob carol           (admin)\n"
-        "grp_models    xdang issei ...           ( admin )\n"
-        "grp_weird!    nope                      -\n"  # invalid name -> skipped
+        "lsfadmins     bmbelgod lsfadmin jcolino ( - )\n"
+        "grp_runtime   alice bob skula carol     (admin)\n"
+        "grp_models    xdang issei skula         ( admin )\n"
+        "grp_weird!    skula                     -\n"  # invalid name -> skipped
     )
-    assert bluevela._parse_bugroup(raw) == ["grp_runtime", "grp_models"]
+    # With user filter, lsfadmins excluded; skula is in runtime+models.
+    assert bluevela._parse_bugroup(raw, user="skula") == ["grp_runtime", "grp_models"]
+    # Without user filter, returns every well-formed row (internal use).
+    assert bluevela._parse_bugroup(raw) == ["lsfadmins", "grp_runtime", "grp_models"]
+
+
+def test_parse_bugroup_rejects_substring_match() -> None:
+    """Whole-word member matching: `skula` must NOT match `skulapp`."""
+    raw = "grp_x  skulapp other  ( - )\n"
+    assert bluevela._parse_bugroup(raw, user="skula") == []
 
 
 def test_parse_bqueues_orders_open_queues_by_priority() -> None:
@@ -79,7 +92,9 @@ def test_doctor_init_writes_config_with_probed_values(tmp_path: Path) -> None:
     assert cfg.bluevela.login == "testuser@testhost"
     assert cfg.bluevela.workspace_root == "/u/testuser/mcode-launch"
     assert cfg.bluevela.shared_root == "/u/testuser/mcode-shared"
+    # Filtered: lsfadmins excluded (testuser not a member), grp_runtime picked.
     assert cfg.bluevela.group == "grp_runtime"
+    # Filtered: `interactive` queue dropped via ONLY_INTERACTIVE policy check.
     assert cfg.bluevela.queue_order == ["normal", "preempt"]
     assert cfg.bluevela.gpu_mode == "exclusive_process"
 

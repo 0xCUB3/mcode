@@ -807,22 +807,39 @@ def doctor(cfg: LaunchConfig | None = None, *, ssh_client: SshClient | None = No
 # ---------------------------------------------------------------------------
 # doctor --init: bootstrap launch.toml for a fresh Blue Vela account
 # ---------------------------------------------------------------------------
-def _parse_bugroup(raw: str) -> list[str]:
-    """Extract the user's groups from `bugroup` output.
+def _parse_bugroup(raw: str, *, user: str = "") -> list[str]:
+    """Extract groups from `bugroup` output.
 
-    On this cluster the format is `GROUP_NAME USERS ... GROUP_ADMIN`; each row
-    lists a group the caller belongs to (since they called `bugroup` without
-    args). We take the first whitespace-delimited token per row, skipping the
-    header line if present.
+    The cluster's `bugroup` (no args) lists ALL groups with their members in
+    the format `GROUP_NAME  user1 user2 ... ( admin )`. We want only groups
+    that contain `user` — without that filter, admin/catchall groups like
+    `lsfadmins` bleed through and doctor-init picks the wrong one.
+
+    An empty `user` returns every well-formed row (internal use only). Member
+    match is whole-word, not substring, so `skula` doesn't match `skulapp`.
     """
     out: list[str] = []
     for line in raw.splitlines():
         line = line.strip()
         if not line or line.startswith("GROUP_NAME"):
             continue
-        head = line.split()[0] if line.split() else ""
-        if head and _SAFE_IDENT_RE.match(head):
-            out.append(head)
+        parts = line.split()
+        if not parts:
+            continue
+        head = parts[0]
+        if not _SAFE_IDENT_RE.match(head):
+            continue
+        if user:
+            # Members run from after GROUP_NAME to the opening `(` of the
+            # admin column.
+            members: list[str] = []
+            for tok in parts[1:]:
+                if tok.startswith("("):
+                    break
+                members.append(tok)
+            if user not in members:
+                continue
+        out.append(head)
     return out
 
 
@@ -905,19 +922,35 @@ def doctor_init(
         )
 
     # --- groups -----------------------------------------------------------
+    # bugroup (no args) lists ALL groups + members. Pass the SSH user so
+    # _parse_bugroup filters to just this account's groups — without it,
+    # catch-all groups like `lsfadmins` win the first-row lottery.
+    user = login.split("@", 1)[0]
     bg = ssh.run("bugroup 2>/dev/null || true", timeout=15)
-    groups = _parse_bugroup(bg.stdout)
+    groups = _parse_bugroup(bg.stdout, user=user)
     group = groups[0] if groups else ""
 
     # --- queues -----------------------------------------------------------
     bq = ssh.run("bqueues -u $USER -o 'QUEUE_NAME PRIO STATUS' 2>/dev/null", timeout=15)
     queue_rows = _parse_bqueues(bq.stdout)
-    # Prefer open queues that aren't interactive-only. We don't have a reliable
-    # way to detect interactive-only from this column set, so we filter later
-    # via bsub -H hold validation when a real launch runs. For init, just grab
-    # the open queues; the user can edit down.
+
+    # `bqueues -u` doesn't surface the ONLY_INTERACTIVE policy. We probe each
+    # candidate with `bqueues -l <q>` so an interactive-only queue like
+    # `interactive` doesn't land in queue_order and fail every batch launch.
+    # One SSH call per queue, but this runs only at init.
+    def _is_batch_queue(q: str) -> bool:
+        if not _SAFE_IDENT_RE.match(q):
+            return False
+        probe = ssh.run(f"bqueues -l {_q(q)} 2>/dev/null", timeout=15)
+        if not probe.ok:
+            return False
+        return "ONLY_INTERACTIVE" not in probe.stdout
+
+    # Drop closed + interactive-only queues.
     open_queues = [name for name, _, status in queue_rows if status.startswith("Open")]
-    queue_order = open_queues[:3] if open_queues else ["normal"]
+    queue_order = [q for q in open_queues if _is_batch_queue(q)][:3]
+    if not queue_order:
+        queue_order = ["normal"]
 
     # --- compose config ---------------------------------------------------
     cfg = config_mod.LaunchConfig()
