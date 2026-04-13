@@ -1668,7 +1668,6 @@ def bench_swebench_lite(
         typer.Option("--dataset", help="HuggingFace dataset name"),
     ] = "SWE-bench/SWE-bench_Lite",
 ) -> None:
-
     shard_count, shard_index = _validate_shards(shard_count=shard_count, shard_index=shard_index)
     if shard_count and shard_count > 1 and db == DEFAULT_DB_PATH:
         typer.echo(

@@ -30,7 +30,7 @@ def _default_cache_dir() -> Path:
 class BenchConfig:
     model_id: str
     backend_name: str = "ollama"
-    loop_budget: int = 3
+    loop_budget: int = 15
     temperature: float | None = None
     seed: int | None = None
     timeout_s: int = 60

@@ -66,7 +66,7 @@ def _resolve_launch_endpoint(model_id: str) -> str | None:
 class LLMSession:
     model_id: str
     backend_name: str = "ollama"
-    loop_budget: int = 3
+    loop_budget: int = 15
     temperature: float | None = None
     seed: int | None = None
     _m: object | None = field(default=None, repr=False)
