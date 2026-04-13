@@ -1507,7 +1507,7 @@ def bench_swebench_live(
     loop_budget: Annotated[
         int,
         typer.Option("--loop-budget", min=1, help="Max attempts per task (with error feedback)"),
-    ] = 3,
+    ] = 15,
     temperature: Annotated[
         float | None,
         typer.Option("--temperature", help="Sampling temperature"),
@@ -1598,7 +1598,7 @@ def bench_swebench_lite(
     loop_budget: Annotated[
         int,
         typer.Option("--loop-budget", min=1, help="Max attempts per task (with error feedback)"),
-    ] = 3,
+    ] = 15,
     temperature: Annotated[
         float | None,
         typer.Option("--temperature", help="Sampling temperature"),
