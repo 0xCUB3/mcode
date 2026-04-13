@@ -85,6 +85,11 @@ class LLMSession:
                 base_url = _resolve_launch_endpoint(self.model_id)
                 if base_url and not api_key:
                     api_key = "dummy"
+                # mellea.agent.text_react reads these from env directly, so
+                # we must export them — session kwargs alone are not enough.
+                if base_url:
+                    os.environ.setdefault("OPENAI_BASE_URL", base_url)
+                    os.environ.setdefault("OPENAI_API_KEY", api_key or "dummy")
             if base_url:
                 kwargs["base_url"] = base_url
             if api_key:
