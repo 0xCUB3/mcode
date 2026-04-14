@@ -226,7 +226,8 @@ class SWEbenchLiveSandbox:
                     volumes={str(testbed): {"bind": "/testbed", "mode": "rw"}},
                     cap_drop=["ALL"],
                     security_opt=["no-new-privileges"],
-                    network_disabled=True,
+                    # Network enabled for agent-side setup scripts; hermetic
+                    # grading in evaluate_patch still runs with network off.
                     mem_limit=self.mem_limit,
                     pids_limit=self.pids_limit,
                 )

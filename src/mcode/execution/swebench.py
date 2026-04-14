@@ -306,7 +306,9 @@ class SWEbenchSandbox:
                     volumes={str(testbed): {"bind": "/testbed", "mode": "rw"}},
                     cap_drop=["ALL"],
                     security_opt=["no-new-privileges"],
-                    network_disabled=True,
+                    # Network enabled: per-task setup scripts (e.g. astropy's
+                    # `pip install -e .`) fetch build deps from pypi. The
+                    # hermetic grading in evaluate_patch keeps network off.
                     mem_limit=self.mem_limit,
                     pids_limit=self.pids_limit,
                 )
