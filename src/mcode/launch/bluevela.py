@@ -67,7 +67,7 @@ _STARTUP_ABSOLUTE_DEADLINE_S = 2400  # 40 min from bsub accept to HTTP 200
 # cross-run image caching for reliability — every launch cold-pulls the vLLM
 # container (~5-10 min on this cluster) before model load. The old 1800s
 # budget left too little slack for model load + warmup under load.
-_HOST_FILE_DEADLINE_S = 900  # 15 min for LSF to start the job + write host file
+_HOST_FILE_DEADLINE_S = 3600  # 1 h for LSF to start the job + write host file
 _HEALTH_POLL_SLOW_S = 10.0
 _DEFAULT_VLLM_IMAGE = "docker.io/vllm/vllm-openai:v0.17.0"
 _DEFAULT_VLLM_PORT = 8321
