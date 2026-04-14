@@ -521,12 +521,25 @@ def launch(
         reporter.start("starting", feed=starting_feed, mode="slow")
         deadline = time.monotonic() + _STARTUP_ABSOLUTE_DEADLINE_S
         host: str | None = None
+        starting_fail_streak = 0
         while True:
-            host = _remote_host_file(ssh, run_dir)
-            if host:
-                ok, status = _http_health(ssh, host, _DEFAULT_VLLM_PORT)
-                if ok:
-                    break
+            try:
+                host = _remote_host_file(ssh, run_dir)
+                if host:
+                    ok, status = _http_health(ssh, host, _DEFAULT_VLLM_PORT)
+                    if ok:
+                        break
+                starting_fail_streak = 0
+            except TransportError as e:
+                starting_fail_streak += 1
+                if starting_fail_streak >= _MAX_SSH_FAILS:
+                    raise LaunchError(
+                        what="lost SSH during startup",
+                        why=f"{_MAX_SSH_FAILS} consecutive ssh failures: {e}",
+                        next=_hint_for(str(e)),
+                    ) from e
+                time.sleep(min(2**starting_fail_streak, 30))
+                continue
             # Codex pre-merge-review fix: also treat DONE as terminal-before-
             # ready. A job that exited cleanly without becoming healthy has
             # failed from our perspective and we should surface it immediately
