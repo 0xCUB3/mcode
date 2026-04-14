@@ -469,15 +469,22 @@ def launch(
 
         reporter.start("queued", feed=queued_feed, mode="slow")
         host_deadline = time.monotonic() + _HOST_FILE_DEADLINE_S
+        ssh_fail_streak = 0
+        _MAX_SSH_FAILS = 5
         while True:
             try:
                 stat = _bjobs_state(ssh, job_id)
+                ssh_fail_streak = 0
             except TransportError as e:
-                raise LaunchError(
-                    what="lost SSH during queue wait",
-                    why=str(e),
-                    next=_hint_for(str(e)),
-                ) from e
+                ssh_fail_streak += 1
+                if ssh_fail_streak >= _MAX_SSH_FAILS:
+                    raise LaunchError(
+                        what="lost SSH during queue wait",
+                        why=f"{_MAX_SSH_FAILS} consecutive ssh failures: {e}",
+                        next=_hint_for(str(e)),
+                    ) from e
+                time.sleep(min(2**ssh_fail_streak, 30))
+                continue
             if stat is None or stat.upper() == "RUN":
                 break
             # Codex pre-merge-review fix: DONE before the endpoint is even
