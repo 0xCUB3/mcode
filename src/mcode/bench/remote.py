@@ -109,24 +109,23 @@ def run_bench_on_bluevela(
 set -euo pipefail
 cd {shlex.quote(bv.workspace_root)}
 [ -f {shlex.quote(hf_env)} ] && source {shlex.quote(hf_env)}
-# /tmp on login3 is a tiny shared fs (49G, often full). Keep socket + runroot
-# there (small, needs unix-domain) but put graphroot + TMPDIR under the
-# workspace (GPFS, tens of TB free). storage-driver=vfs works on GPFS;
-# overlay is unreliable.
+# Keep podman socket/runroot/graphroot on /tmp (overlay needs a local fs;
+# GPFS rejects overlay). Put TMPDIR (where pulled image layers are unpacked
+# before moving into graphroot) on the workspace — that dir can be big.
+# Clean up any old bench dirs to protect /tmp's quota.
 export XDG_RUNTIME_DIR="/tmp/mcode-bench-$(id -u)-$$"
 mkdir -p "$XDG_RUNTIME_DIR"
-STORAGE_DIR={shlex.quote(remote_dir + "/podman")}
-mkdir -p "$STORAGE_DIR"
-export TMPDIR="$STORAGE_DIR/tmp"
-mkdir -p "$TMPDIR"
-# Best-effort cleanup of prior runs' /tmp droppings (>1 day old).
-find /tmp -maxdepth 1 -user "$(id -u)" -name 'mcode-bench-*' -mtime +0 \\
+WORKSPACE_TMP={shlex.quote(remote_dir + "/tmp")}
+mkdir -p "$WORKSPACE_TMP"
+export TMPDIR="$WORKSPACE_TMP"
+find /tmp -maxdepth 1 -user "$(id -u)" -name 'mcode-bench-*' \\
+  ! -path "$XDG_RUNTIME_DIR" -mtime +0 \\
   -exec rm -rf {{}} + 2>/dev/null || true
 SOCK="$XDG_RUNTIME_DIR/podman.sock"
-GRAPHROOT="$STORAGE_DIR/graphroot"
+GRAPHROOT="$XDG_RUNTIME_DIR/graphroot"
 RUNROOT="$XDG_RUNTIME_DIR/runroot"
 nohup podman \\
-  --cgroup-manager=cgroupfs --storage-driver=vfs \\
+  --cgroup-manager=cgroupfs --storage-driver=overlay \\
   --root "$GRAPHROOT" --runroot "$RUNROOT" \\
   --storage-opt ignore_chown_errors=true \\
   system service --time=0 "unix://$SOCK" \\
