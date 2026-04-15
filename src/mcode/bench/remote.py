@@ -109,15 +109,24 @@ def run_bench_on_bluevela(
 set -euo pipefail
 cd {shlex.quote(bv.workspace_root)}
 [ -f {shlex.quote(hf_env)} ] && source {shlex.quote(hf_env)}
+# /tmp on login3 is a tiny shared fs (49G, often full). Keep socket + runroot
+# there (small, needs unix-domain) but put graphroot + TMPDIR under the
+# workspace (GPFS, tens of TB free). storage-driver=vfs works on GPFS;
+# overlay is unreliable.
 export XDG_RUNTIME_DIR="/tmp/mcode-bench-$(id -u)-$$"
 mkdir -p "$XDG_RUNTIME_DIR"
-export TMPDIR="$XDG_RUNTIME_DIR/tmp"
+STORAGE_DIR={shlex.quote(remote_dir + "/podman")}
+mkdir -p "$STORAGE_DIR"
+export TMPDIR="$STORAGE_DIR/tmp"
 mkdir -p "$TMPDIR"
+# Best-effort cleanup of prior runs' /tmp droppings (>1 day old).
+find /tmp -maxdepth 1 -user "$(id -u)" -name 'mcode-bench-*' -mtime +0 \\
+  -exec rm -rf {{}} + 2>/dev/null || true
 SOCK="$XDG_RUNTIME_DIR/podman.sock"
-GRAPHROOT="$XDG_RUNTIME_DIR/graphroot"
+GRAPHROOT="$STORAGE_DIR/graphroot"
 RUNROOT="$XDG_RUNTIME_DIR/runroot"
 nohup podman \\
-  --cgroup-manager=cgroupfs --storage-driver=overlay \\
+  --cgroup-manager=cgroupfs --storage-driver=vfs \\
   --root "$GRAPHROOT" --runroot "$RUNROOT" \\
   --storage-opt ignore_chown_errors=true \\
   system service --time=0 "unix://$SOCK" \\
