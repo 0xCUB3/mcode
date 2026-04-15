@@ -642,6 +642,9 @@ def cmd_sync(
         "--exclude=.pytest_cache/",
         "--exclude=.ruff_cache/",
         "--exclude=node_modules/",
+        # Remote-only dirs that the launcher writes and sync must never wipe.
+        "--exclude=bench-runs/",
+        "--exclude=runs/",
         f"--exclude={marker}",  # never delete our own safety marker
     ]
     if gitignore.exists():
