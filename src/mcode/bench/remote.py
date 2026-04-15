@@ -90,20 +90,30 @@ def run_bench_on_bluevela(
     # if absent, export DOCKER_HOST + OPENAI_BASE_URL, cd, exec bench.
     hf_env = bv.hf_env
     bench_cmd = "uv run mcode bench " + " ".join(shlex.quote(a) for a in argv)
+    # Rootless podman on Blue Vela login nodes hits chown errors on default
+    # storage (subuid/subgid maps are too small for some images). Mirror the
+    # vllm launch script's pattern: isolated XDG_RUNTIME_DIR, explicit root +
+    # runroot, --storage-opt ignore_chown_errors=true. One socket per bench
+    # invocation ($$ ensures no cross-run stomp).
     remote_script = f"""
 set -euo pipefail
 cd {shlex.quote(bv.workspace_root)}
 [ -f {shlex.quote(hf_env)} ] && source {shlex.quote(hf_env)}
-SOCK="/tmp/podman-run-$(id -u)/podman.sock"
-if ! curl -s --unix-socket "$SOCK" http://localhost/version >/dev/null 2>&1; then
-  rm -f "$SOCK"
-  mkdir -p "$(dirname "$SOCK")"
-  nohup podman system service --time=0 "unix://$SOCK" >/tmp/mcode-podman-svc.log 2>&1 &
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    curl -s --unix-socket "$SOCK" http://localhost/version >/dev/null 2>&1 && break
-    sleep 1
-  done
-fi
+export XDG_RUNTIME_DIR="/tmp/mcode-bench-$(id -u)-$$"
+mkdir -p "$XDG_RUNTIME_DIR"
+SOCK="$XDG_RUNTIME_DIR/podman.sock"
+GRAPHROOT="$XDG_RUNTIME_DIR/graphroot"
+RUNROOT="$XDG_RUNTIME_DIR/runroot"
+nohup podman \\
+  --cgroup-manager=cgroupfs --storage-driver=overlay \\
+  --root "$GRAPHROOT" --runroot "$RUNROOT" \\
+  --storage-opt ignore_chown_errors=true \\
+  system service --time=0 "unix://$SOCK" \\
+  >"$XDG_RUNTIME_DIR/podman-svc.log" 2>&1 &
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  curl -s --unix-socket "$SOCK" http://localhost/version >/dev/null 2>&1 && break
+  sleep 1
+done
 export DOCKER_HOST="unix://$SOCK"
 export OPENAI_BASE_URL={shlex.quote(endpoint)}
 export OPENAI_API_KEY=dummy
