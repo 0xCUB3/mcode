@@ -95,10 +95,14 @@ set -euo pipefail
 cd {shlex.quote(bv.workspace_root)}
 [ -f {shlex.quote(hf_env)} ] && source {shlex.quote(hf_env)}
 SOCK="/tmp/podman-run-$(id -u)/podman.sock"
-if [ ! -S "$SOCK" ]; then
+if ! curl -s --unix-socket "$SOCK" http://localhost/version >/dev/null 2>&1; then
+  rm -f "$SOCK"
   mkdir -p "$(dirname "$SOCK")"
-  nohup podman system service --time=0 "unix://$SOCK" >/dev/null 2>&1 &
-  for _ in 1 2 3 4 5; do [ -S "$SOCK" ] && break; sleep 1; done
+  nohup podman system service --time=0 "unix://$SOCK" >/tmp/mcode-podman-svc.log 2>&1 &
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    curl -s --unix-socket "$SOCK" http://localhost/version >/dev/null 2>&1 && break
+    sleep 1
+  done
 fi
 export DOCKER_HOST="unix://$SOCK"
 export OPENAI_BASE_URL={shlex.quote(endpoint)}
