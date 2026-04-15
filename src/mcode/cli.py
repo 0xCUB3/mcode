@@ -1718,6 +1718,14 @@ def bench_smoke(
     mem_limit: Annotated[
         str, typer.Option("--mem-limit", help="Eval container memory limit")
     ] = "8g",
+    on: Annotated[
+        str,
+        typer.Option("--on", help="Where to run the bench: local or bluevela"),
+    ] = "local",
+    fetch_db: Annotated[
+        bool,
+        typer.Option("--fetch-db/--no-fetch-db", help="Rsync DB back when --on bluevela"),
+    ] = True,
 ) -> None:
     """16-task SWE-bench Verified diagnostic slice (astropy smoke + 6 projects).
 
@@ -1727,6 +1735,29 @@ def bench_smoke(
     import importlib.resources as ir
 
     task_ids_file = ir.files("mcode.bench.fixtures").joinpath("smoke-16.txt")
+
+    if on == "bluevela":
+        from mcode.bench.remote import RemoteBenchError, run_bench_on_bluevela
+
+        argv = [
+            "smoke",
+            "--model",
+            model,
+            "--backend",
+            backend,
+            "--mem-limit",
+            mem_limit,
+        ]
+        try:
+            rc = run_bench_on_bluevela(bench_argv=argv, model=model, local_db=db, fetch_db=fetch_db)
+        except RemoteBenchError as e:
+            typer.echo(f"✗ {e}", err=True)
+            raise typer.Exit(1) from e
+        raise typer.Exit(rc)
+    if on != "local":
+        typer.echo(f"✗ unknown --on target {on!r}; expected local or bluevela", err=True)
+        raise typer.Exit(2)
+
     bench_swebench_lite(
         model=model,
         backend=backend,
