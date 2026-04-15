@@ -95,12 +95,24 @@ def run_bench_on_bluevela(
     # vllm launch script's pattern: isolated XDG_RUNTIME_DIR, explicit root +
     # runroot, --storage-opt ignore_chown_errors=true. One socket per bench
     # invocation ($$ ensures no cross-run stomp).
+    exit_sentinel = f"{remote_dir}/exit_code"
+    svc_log = f"{remote_dir}/podman-svc.log"
+    # Rootless podman on Blue Vela login nodes hits chown errors and uses
+    # /var/tmp for image unpack by default (small filesystem). Isolate per-run:
+    # XDG_RUNTIME_DIR for socket, TMPDIR for c/storage unpacks, explicit
+    # root+runroot, ignore_chown_errors for subuid/subgid gaps. One socket
+    # per bench invocation ($$ ensures no cross-run stomp). Fail closed if the
+    # socket never becomes reachable. Record bench exit status to a sentinel
+    # file so the local side can assert success rather than guessing from DB
+    # size.
     remote_script = f"""
 set -euo pipefail
 cd {shlex.quote(bv.workspace_root)}
 [ -f {shlex.quote(hf_env)} ] && source {shlex.quote(hf_env)}
 export XDG_RUNTIME_DIR="/tmp/mcode-bench-$(id -u)-$$"
 mkdir -p "$XDG_RUNTIME_DIR"
+export TMPDIR="$XDG_RUNTIME_DIR/tmp"
+mkdir -p "$TMPDIR"
 SOCK="$XDG_RUNTIME_DIR/podman.sock"
 GRAPHROOT="$XDG_RUNTIME_DIR/graphroot"
 RUNROOT="$XDG_RUNTIME_DIR/runroot"
@@ -109,15 +121,30 @@ nohup podman \\
   --root "$GRAPHROOT" --runroot "$RUNROOT" \\
   --storage-opt ignore_chown_errors=true \\
   system service --time=0 "unix://$SOCK" \\
-  >"$XDG_RUNTIME_DIR/podman-svc.log" 2>&1 &
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-  curl -s --unix-socket "$SOCK" http://localhost/version >/dev/null 2>&1 && break
+  >{shlex.quote(svc_log)} 2>&1 &
+svc_ready=0
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  if curl -s --unix-socket "$SOCK" http://localhost/version >/dev/null 2>&1; then
+    svc_ready=1
+    break
+  fi
   sleep 1
 done
+if [ "$svc_ready" != "1" ]; then
+  echo "✗ podman socket did not come up at $SOCK" >&2
+  tail -n 40 {shlex.quote(svc_log)} >&2 || true
+  echo 97 > {shlex.quote(exit_sentinel)}
+  exit 97
+fi
 export DOCKER_HOST="unix://$SOCK"
 export OPENAI_BASE_URL={shlex.quote(endpoint)}
 export OPENAI_API_KEY=dummy
+set +e
 {bench_cmd}
+rc=$?
+set -e
+echo "$rc" > {shlex.quote(exit_sentinel)}
+exit $rc
 """.strip()
 
     # Use a detached run + streaming tail so we can show progress without
@@ -131,8 +158,7 @@ export OPENAI_API_KEY=dummy
     pid = r.stdout.strip().splitlines()[-1]
     print(f"▶ remote bench started: pid={pid} host={bv.login} log={remote_log}")
 
-    # Stream remote log until the pid exits. `tail -F --pid` would be ideal
-    # but is not portable; poll instead.
+    # Stream remote log until the pid exits.
     try:
         _stream_remote_log(ssh, remote_log, pid=pid)
     except KeyboardInterrupt:
@@ -140,55 +166,58 @@ export OPENAI_API_KEY=dummy
         print(f"  ssh {bv.login} 'tail -f {remote_log}'")
         return 130
 
-    # Remote done. Probe exit — the bench process itself doesn't write a
-    # sentinel, so we use the log tail to decide success/failure. Prefer the
-    # DB row count: 0 rows means the bench died before writing anything.
-    try_db = ssh.run(
-        f"test -f {shlex.quote(remote_db)} && stat -c %s {shlex.quote(remote_db)} || echo 0",
+    # Trust the sentinel, not the DB size.
+    sentinel_r = ssh.run(
+        f"cat {shlex.quote(exit_sentinel)} 2>/dev/null || echo 99",
         timeout=30,
     )
-    size = int((try_db.stdout.strip() or "0").splitlines()[-1])
-    exit_code = 0 if size > 0 else 1
+    try:
+        exit_code = int((sentinel_r.stdout.strip() or "99").splitlines()[-1])
+    except ValueError:
+        exit_code = 99
+    if exit_code == 99:
+        print("✗ remote bench did not write an exit sentinel (likely killed)")
 
-    if fetch_db and size > 0:
-        local_db.parent.mkdir(parents=True, exist_ok=True)
-        ssh.download(remote_db, local_db, timeout=120)
-        print(f"✓ fetched DB: {local_db}")
-    elif size == 0:
-        print("✗ remote DB is empty; see log on the cluster")
+    # Fetch DB whenever it exists — non-zero exit can still have useful rows
+    # for debugging. Caller can inspect terminal_reason counts.
+    if fetch_db:
+        size_r = ssh.run(
+            f"test -f {shlex.quote(remote_db)} && stat -c %s {shlex.quote(remote_db)} || echo 0",
+            timeout=30,
+        )
+        size = int((size_r.stdout.strip() or "0").splitlines()[-1])
+        if size > 0:
+            local_db.parent.mkdir(parents=True, exist_ok=True)
+            ssh.download(remote_db, local_db, timeout=120)
+            print(f"✓ fetched DB: {local_db} ({size} bytes)")
+        else:
+            print("⚠ remote DB is empty; nothing to fetch")
 
     return exit_code
 
 
 def _stream_remote_log(ssh: SshClient, remote_log: str, *, pid: str) -> None:
-    """Tail `remote_log` until the remote pid is gone."""
-    # Open a long-running ssh pipe that runs `tail -f` and also polls the pid.
-    # Keep it simple: spawn ssh tail with a trailing guard that exits once pid
-    # is dead.
+    """Tail `remote_log` until the remote pid is gone.
+
+    Uses a single nested ssh session: `tail -F` in the background plus a
+    `kill -0` poll loop so the session self-terminates when the remote bench
+    exits. A non-zero SSH exit is treated as transport failure — callers need
+    to verify the exit sentinel afterward, but we surface the drop visibly.
+    """
+    from mcode.launch.ssh import DEFAULT_SSH_OPTIONS
+
     argv = [
         "ssh",
-        *_ssh_opts_for(ssh),
+        *DEFAULT_SSH_OPTIONS,
         ssh.login,
         f"tail -F -n +1 {shlex.quote(remote_log)} & TPID=$!; "
         f"while kill -0 {shlex.quote(pid)} 2>/dev/null; do sleep 5; done; "
         "sleep 2; kill $TPID 2>/dev/null || true",
     ]
     proc = subprocess.Popen(argv, stdout=sys.stdout, stderr=sys.stderr)
-    proc.wait()
-
-
-def _ssh_opts_for(ssh: SshClient) -> list[str]:
-    # mirror SshClient's default options; avoids us reaching into private state.
-    return [
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "ConnectTimeout=10",
-        "-o",
-        "ServerAliveInterval=15",
-        "-o",
-        "ServerAliveCountMax=3",
-    ]
+    rc = proc.wait()
+    if rc != 0:
+        print(f"⚠ log-stream ssh exited {rc}; remote job may still be running")
 
 
 __all__ = ["RemoteBenchError", "run_bench_on_bluevela"]
