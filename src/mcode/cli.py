@@ -1706,3 +1706,46 @@ def bench_swebench_lite(
         loop_budget=loop_budget,
         timeout_s=timeout_s,
     )
+
+
+@bench_app.command("smoke")
+def bench_smoke(
+    model: Annotated[str, typer.Option("--model", help="Mellea model id")],
+    backend: Annotated[str, typer.Option("--backend", help="Mellea backend name")] = "openai",
+    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = Path(
+        "experiments/results/smoke-16.db"
+    ),
+    mem_limit: Annotated[
+        str, typer.Option("--mem-limit", help="Eval container memory limit")
+    ] = "8g",
+) -> None:
+    """16-task SWE-bench Verified diagnostic slice (astropy smoke + 6 projects).
+
+    Fixed slice used for cross-model comparison. Calls `swebench-lite` under
+    the hood with a bundled task-id list and sensible defaults.
+    """
+    import importlib.resources as ir
+
+    task_ids_file = ir.files("mcode.bench.fixtures").joinpath("smoke-16.txt")
+    bench_swebench_lite(
+        model=model,
+        backend=backend,
+        loop_budget=15,
+        temperature=None,
+        seed=None,
+        timeout_s=300,
+        split="verified",
+        arch="auto",
+        namespace="swebench",
+        max_workers=4,
+        force_rebuild=False,
+        mem_limit=mem_limit,
+        pids_limit=512,
+        shard_count=None,
+        shard_index=None,
+        db=db,
+        limit=None,
+        n_samples=1,
+        task_ids=str(task_ids_file),
+        dataset="princeton-nlp/SWE-bench_Verified",
+    )
