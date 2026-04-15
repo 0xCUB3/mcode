@@ -1765,7 +1765,7 @@ def bench_smoke(
         temperature=None,
         seed=None,
         timeout_s=300,
-        split="verified",
+        split="test",
         arch="auto",
         namespace="swebench",
         max_workers=4,
