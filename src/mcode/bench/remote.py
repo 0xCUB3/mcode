@@ -33,7 +33,32 @@ class RemoteBenchError(RuntimeError):
     """User-facing remote execution error."""
 
 
-def _resolve_endpoint(model: str) -> str:
+def _resolve_endpoint(model: str, *, cfg: launch_config.LaunchConfig) -> str:
+    # Refresh Blue Vela server records first so stale "healthy" entries from
+    # EXITed jobs are dropped — otherwise we pick up a dead endpoint that
+    # silently fails every API call in the bench run.
+    from mcode.launch import bluevela as launch_bluevela
+    from mcode.launch.models import ServerRecord
+
+    def _refresh(s: launch_state.State) -> int:
+        count = 0
+        for srv in list(s.servers):
+            if srv.target != Target.BLUEVELA:
+                continue
+            try:
+                updated = launch_bluevela.refresh(srv, cfg=cfg)
+            except Exception:
+                continue
+            if isinstance(updated, ServerRecord):
+                s.upsert_server(updated)
+                count += 1
+        return count
+
+    try:
+        launch_state.update(None, _refresh)
+    except Exception:
+        pass  # best-effort
+
     snap = launch_state.load()
     for s in snap.servers:
         if (
@@ -68,7 +93,7 @@ def run_bench_on_bluevela(
         raise RemoteBenchError("launch config incomplete: " + "; ".join(errs))
     bv = cfg.bluevela
 
-    endpoint = _resolve_endpoint(model)
+    endpoint = _resolve_endpoint(model, cfg=cfg)
 
     ssh = SshClient(bv.login)
     run_id = f"bench-{int(time.time())}-{model.replace('/', '-')[:24]}"
