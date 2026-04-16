@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -40,6 +41,26 @@ class PatchGenerationMetrics:
             "blocked_submissions": self.blocked_submissions,
             "terminal_reason": self.terminal_reason,
         }
+
+
+def _repair_text_tool_calls(
+    tool_calls: list[dict[str, object]],
+) -> tuple[list[dict[str, object]], bool]:
+    repaired = False
+    normalized: list[dict[str, object]] = []
+    for call in tool_calls:
+        name = call.get("name")
+        args = call.get("arguments", {})
+        if isinstance(args, str):
+            try:
+                parsed_args = json.loads(args)
+            except json.JSONDecodeError:
+                parsed_args = args
+            if isinstance(parsed_args, dict):
+                args = parsed_args
+                repaired = True
+        normalized.append({"name": name, "arguments": args})
+    return normalized, repaired
 
 
 def _resolve_launch_endpoint(model_id: str) -> str | None:
@@ -532,8 +553,10 @@ class LLMSession:
 
             timed_out = False
             parse_with_repair = getattr(text_react_module, "_parse_tool_calls_with_repair", None)
-            restore_parse = callable(parse_with_repair)
-            if restore_parse:
+            parse_tool_calls = getattr(text_react_module, "parse_tool_calls", None)
+            restore_repair_parse = callable(parse_with_repair)
+            restore_plain_parse = callable(parse_tool_calls)
+            if restore_repair_parse:
 
                 def _counting_parse(text: str):
                     tool_calls, used_repair = parse_with_repair(text)
@@ -549,6 +572,23 @@ class LLMSession:
                     return tool_calls, used_repair
 
                 text_react_module._parse_tool_calls_with_repair = _counting_parse
+            elif restore_plain_parse:
+
+                def _repairing_parse(text: str):
+                    tool_calls = parse_tool_calls(text)
+                    repaired_calls, used_repair = _repair_text_tool_calls(tool_calls)
+                    if used_repair:
+                        attempt_state.malformed_tool_call_recoveries += 1
+                        _emit_summary(
+                            "malformed_tool_call",
+                            {
+                                "repaired": True,
+                                "re_prompted": False,
+                            },
+                        )
+                    return repaired_calls
+
+                text_react_module.parse_tool_calls = _repairing_parse
 
             try:
                 try:
@@ -568,8 +608,10 @@ class LLMSession:
                     done = False
                     print(f"  [react] timed out after {timeout_s}s", flush=True)
             finally:
-                if restore_parse:
+                if restore_repair_parse:
                     text_react_module._parse_tool_calls_with_repair = parse_with_repair
+                if restore_plain_parse and not restore_repair_parse:
+                    text_react_module.parse_tool_calls = parse_tool_calls
 
             verification_state = _verification_state()
             attempt_state.blocked_verification_commands = (

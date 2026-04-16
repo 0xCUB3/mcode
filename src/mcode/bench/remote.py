@@ -116,39 +116,38 @@ def run_bench_on_bluevela(
     hf_env = bv.hf_env
     bench_cmd = "uv run mcode bench " + " ".join(shlex.quote(a) for a in argv)
     # Rootless podman on Blue Vela login nodes hits chown errors on default
-    # storage (subuid/subgid maps are too small for some images). Mirror the
-    # vllm launch script's pattern: isolated XDG_RUNTIME_DIR, explicit root +
-    # runroot, --storage-opt ignore_chown_errors=true. One socket per bench
-    # invocation ($$ ensures no cross-run stomp).
+    # storage (subuid/subgid maps are too small for some images). Keep the
+    # socket isolated in /tmp, but keep podman storage inside the per-run
+    # workspace directory so layer unpack does not exhaust the login node's
+    # small /tmp filesystem.
     exit_sentinel = f"{remote_dir}/exit_code"
     svc_log = f"{remote_dir}/podman-svc.log"
     # Rootless podman on Blue Vela login nodes hits chown errors and uses
     # /var/tmp for image unpack by default (small filesystem). Isolate per-run:
-    # XDG_RUNTIME_DIR for socket, TMPDIR for c/storage unpacks, explicit
-    # root+runroot, ignore_chown_errors for subuid/subgid gaps. One socket
-    # per bench invocation ($$ ensures no cross-run stomp). Fail closed if the
-    # socket never becomes reachable. Record bench exit status to a sentinel
-    # file so the local side can assert success rather than guessing from DB
-    # size.
+    # keep XDG_RUNTIME_DIR/socket in /tmp, but keep TMPDIR + graphroot/runroot
+    # inside the workspace run directory. Fail closed if the socket never
+    # becomes reachable. Record bench exit status to a sentinel file so the
+    # local side can assert success rather than guessing from DB size.
     remote_script = f"""
 set -euo pipefail
 cd {shlex.quote(bv.workspace_root)}
 [ -f {shlex.quote(hf_env)} ] && source {shlex.quote(hf_env)}
-# Keep podman socket/runroot/graphroot on /tmp (overlay needs a local fs;
-# GPFS rejects overlay). Put TMPDIR (where pulled image layers are unpacked
-# before moving into graphroot) on the workspace — that dir can be big.
+# Keep only the podman socket in /tmp. Put podman storage and TMPDIR in the
+# workspace run directory so bench pulls do not exhaust the login node /tmp.
 # Clean up any old bench dirs to protect /tmp's quota.
 export XDG_RUNTIME_DIR="/tmp/mcode-bench-$(id -u)-$$"
 mkdir -p "$XDG_RUNTIME_DIR"
 WORKSPACE_TMP={shlex.quote(remote_dir + "/tmp")}
+PODMAN_ROOT={shlex.quote(remote_dir + "/podman")}
 mkdir -p "$WORKSPACE_TMP"
+mkdir -p "$PODMAN_ROOT"
 export TMPDIR="$WORKSPACE_TMP"
 find /tmp -maxdepth 1 -user "$(id -u)" -name 'mcode-bench-*' \\
   ! -path "$XDG_RUNTIME_DIR" -mtime +0 \\
   -exec rm -rf {{}} + 2>/dev/null || true
 SOCK="$XDG_RUNTIME_DIR/podman.sock"
-GRAPHROOT="$XDG_RUNTIME_DIR/graphroot"
-RUNROOT="$XDG_RUNTIME_DIR/runroot"
+GRAPHROOT="$PODMAN_ROOT/graphroot"
+RUNROOT="$PODMAN_ROOT/runroot"
 nohup podman \\
   --cgroup-manager=cgroupfs --storage-driver=overlay \\
   --root "$GRAPHROOT" --runroot "$RUNROOT" \\

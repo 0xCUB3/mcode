@@ -322,6 +322,58 @@ def test_generate_patch_passes_model_options_to_text_react(tmp_path, monkeypatch
     }
 
 
+def test_generate_patch_repairs_stringified_text_tool_arguments(tmp_path):
+    _init_repo(tmp_path)
+
+    session = LLMSession(model_id="test", backend_name="openai")
+    session._m = MagicMock()
+    session._m.backend = MagicMock()
+
+    captured: dict = {}
+
+    def original_parse_tool_calls(_text: str):
+        return [
+            {
+                "name": "search_code",
+                "arguments": '{\n  "query": "separability_matrix"\n}',
+            }
+        ]
+
+    async def mock_text_react(*args, **kwargs):
+        del args, kwargs
+        captured["parsed"] = fake_module.parse_tool_calls("ignored")
+        return ("done", True)
+
+    fake_module = types.ModuleType("mellea.agent.text_react")
+    fake_module.text_react = mock_text_react
+    fake_module.parse_tool_calls = original_parse_tool_calls
+
+    with patch.dict(
+        sys.modules,
+        {
+            **_install_fake_runtime_modules(),
+            "mellea.agent.text_react": fake_module,
+        },
+    ):
+        result = session.generate_patch(
+            repo="test/repo",
+            problem_statement="Fix the bug",
+            repo_root=str(tmp_path),
+        )
+
+    metrics = session.last_patch_metrics
+    assert result == ""
+    assert captured["parsed"] == [
+        {
+            "name": "search_code",
+            "arguments": {"query": "separability_matrix"},
+        }
+    ]
+    assert fake_module.parse_tool_calls is original_parse_tool_calls
+    assert metrics is not None
+    assert metrics["malformed_tool_call_recoveries"] == 1
+
+
 def test_generate_patch_turn_guidance_pushes_to_first_edit(tmp_path, monkeypatch):
     _init_repo(tmp_path)
 
