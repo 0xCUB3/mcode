@@ -86,9 +86,6 @@ class ResultsDB:
               zero_edit INTEGER NOT NULL DEFAULT 1,
               zero_verification INTEGER NOT NULL DEFAULT 1,
               verification_succeeded INTEGER NOT NULL DEFAULT 0,
-              malformed_tool_call_recoveries INTEGER NOT NULL DEFAULT 0,
-              blocked_verification_commands INTEGER NOT NULL DEFAULT 0,
-              blocked_submissions INTEGER NOT NULL DEFAULT 0,
               FOREIGN KEY (run_id) REFERENCES runs(id)
             )
             """
@@ -106,21 +103,6 @@ class ResultsDB:
         self._ensure_column("task_results", "zero_edit", "INTEGER NOT NULL DEFAULT 1")
         self._ensure_column("task_results", "zero_verification", "INTEGER NOT NULL DEFAULT 1")
         self._ensure_column("task_results", "verification_succeeded", "INTEGER NOT NULL DEFAULT 0")
-        self._ensure_column(
-            "task_results",
-            "malformed_tool_call_recoveries",
-            "INTEGER NOT NULL DEFAULT 0",
-        )
-        self._ensure_column(
-            "task_results",
-            "blocked_verification_commands",
-            "INTEGER NOT NULL DEFAULT 0",
-        )
-        self._ensure_column(
-            "task_results",
-            "blocked_submissions",
-            "INTEGER NOT NULL DEFAULT 0",
-        )
         self.conn.commit()
 
     def _ensure_column(self, table: str, column: str, ddl: str) -> None:
@@ -216,10 +198,8 @@ class ResultsDB:
             (run_id, task_id, passed, attempts_used, time_ms, exit_code,
              timed_out, stdout, stderr, error, code_sha256, terminal_reason,
              turns_to_first_edit, turns_to_first_verification, zero_edit,
-             zero_verification, verification_succeeded,
-             malformed_tool_call_recoveries, blocked_verification_commands,
-             blocked_submissions)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             zero_verification, verification_succeeded)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
@@ -239,9 +219,6 @@ class ResultsDB:
                 1 if result.get("zero_edit", True) else 0,
                 1 if result.get("zero_verification", True) else 0,
                 1 if result.get("verification_succeeded", False) else 0,
-                result.get("malformed_tool_call_recoveries", 0),
-                result.get("blocked_verification_commands", 0),
-                result.get("blocked_submissions", 0),
             ),
         )
         self.conn.commit()
@@ -420,9 +397,6 @@ class ResultsDB:
             zero_edit = int(row["zero_edit"] or 0)
             zero_verification = int(row["zero_verification"] or 0)
             verification_succeeded = int(row["verification_succeeded"] or 0)
-            malformed_tool_call_recoveries = int(row["malformed_tool_call_recoveries"] or 0)
-            blocked_verification_commands = int(row["blocked_verification_commands"] or 0)
-            blocked_submissions = int(row["blocked_submissions"] or 0)
             return {
                 "zero_edit": zero_edit,
                 "zero_edit_rate": zero_edit / total if total else 0.0,
@@ -430,16 +404,6 @@ class ResultsDB:
                 "zero_verification_rate": zero_verification / total if total else 0.0,
                 "verification_succeeded": verification_succeeded,
                 "verification_success_rate": verification_succeeded / total if total else 0.0,
-                "malformed_tool_call_recoveries": malformed_tool_call_recoveries,
-                "malformed_tool_call_recoveries_per_task": (
-                    malformed_tool_call_recoveries / total if total else 0.0
-                ),
-                "blocked_verification_commands": blocked_verification_commands,
-                "blocked_verification_commands_per_task": (
-                    blocked_verification_commands / total if total else 0.0
-                ),
-                "blocked_submissions": blocked_submissions,
-                "blocked_submissions_per_task": blocked_submissions / total if total else 0.0,
                 "turns_to_first_edit_avg": row["turns_to_first_edit_avg"],
                 "turns_to_first_verification_avg": row["turns_to_first_verification_avg"],
                 **{reason: int(row[reason] or 0) for reason in _TERMINAL_REASON_BUCKETS},
@@ -462,9 +426,6 @@ class ResultsDB:
                 SUM(tr.zero_edit) AS zero_edit,
                 SUM(tr.zero_verification) AS zero_verification,
                 SUM(tr.verification_succeeded) AS verification_succeeded,
-                SUM(tr.malformed_tool_call_recoveries) AS malformed_tool_call_recoveries,
-                SUM(tr.blocked_verification_commands) AS blocked_verification_commands,
-                SUM(tr.blocked_submissions) AS blocked_submissions,
                 AVG(tr.turns_to_first_edit) AS turns_to_first_edit_avg,
                 AVG(tr.turns_to_first_verification) AS turns_to_first_verification_avg,
 {reason_selects}
@@ -559,9 +520,6 @@ class ResultsDB:
             SUM(tr.zero_edit) AS zero_edit,
             SUM(tr.zero_verification) AS zero_verification,
             SUM(tr.verification_succeeded) AS verification_succeeded,
-            SUM(tr.malformed_tool_call_recoveries) AS malformed_tool_call_recoveries,
-            SUM(tr.blocked_verification_commands) AS blocked_verification_commands,
-            SUM(tr.blocked_submissions) AS blocked_submissions,
             AVG(tr.turns_to_first_edit) AS turns_to_first_edit_avg,
             AVG(tr.turns_to_first_verification) AS turns_to_first_verification_avg,
 {reason_selects}
@@ -720,9 +678,8 @@ class ResultsDB:
                      exit_code, timed_out, stdout, stderr, error, code_sha256,
                      terminal_reason, turns_to_first_edit,
                      turns_to_first_verification, zero_edit, zero_verification,
-                     verification_succeeded, malformed_tool_call_recoveries,
-                     blocked_verification_commands, blocked_submissions)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     verification_succeeded)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     [
                         (
@@ -743,9 +700,6 @@ class ResultsDB:
                             int(_row_value(tr, "zero_edit", 1) or 0),
                             int(_row_value(tr, "zero_verification", 1) or 0),
                             int(_row_value(tr, "verification_succeeded", 0) or 0),
-                            int(_row_value(tr, "malformed_tool_call_recoveries", 0) or 0),
-                            int(_row_value(tr, "blocked_verification_commands", 0) or 0),
-                            int(_row_value(tr, "blocked_submissions", 0) or 0),
                         )
                         for tr in task_rows
                     ],
@@ -893,13 +847,6 @@ def merge_shard_dbs(*, out_path: Path, shard_paths: list[Path], force: bool = Fa
                         "zero_edit": bool(_row_value(r, "zero_edit", 1)),
                         "zero_verification": bool(_row_value(r, "zero_verification", 1)),
                         "verification_succeeded": bool(_row_value(r, "verification_succeeded", 0)),
-                        "malformed_tool_call_recoveries": int(
-                            _row_value(r, "malformed_tool_call_recoveries", 0) or 0
-                        ),
-                        "blocked_verification_commands": int(
-                            _row_value(r, "blocked_verification_commands", 0) or 0
-                        ),
-                        "blocked_submissions": int(_row_value(r, "blocked_submissions", 0) or 0),
                     },
                 )
                 written += 1
@@ -984,9 +931,6 @@ def export_csv(
         "zero_edit",
         "zero_verification",
         "verification_succeeded",
-        "malformed_tool_call_recoveries",
-        "blocked_verification_commands",
-        "blocked_submissions",
         "config_json",
     ]
     if include_logs:
@@ -1080,15 +1024,6 @@ def export_csv(
                             "zero_verification": int(_row_value(tr, "zero_verification", 1) or 0),
                             "verification_succeeded": int(
                                 _row_value(tr, "verification_succeeded", 0) or 0
-                            ),
-                            "malformed_tool_call_recoveries": int(
-                                _row_value(tr, "malformed_tool_call_recoveries", 0) or 0
-                            ),
-                            "blocked_verification_commands": int(
-                                _row_value(tr, "blocked_verification_commands", 0) or 0
-                            ),
-                            "blocked_submissions": int(
-                                _row_value(tr, "blocked_submissions", 0) or 0
                             ),
                             "config_json": config_json,
                         }

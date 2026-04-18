@@ -6,14 +6,8 @@ _BASE_SYSTEM_PROMPT = (
     "You are an expert software engineer fixing a bug in an open-source repository. "
     "You MUST edit existing source files to fix the bug. Do NOT create new files. "
     "Do NOT write test scripts. Only modify the existing code that contains the bug.\n\n"
-    "PHASES:\n"
-    "1. DIAGNOSE: Use read/search/find tools to isolate the real root cause. Avoid wandering.\n"
-    "2. EDIT: Once you know the target, make one concrete edit in the existing source.\n"
-    "3. VERIFY: Use `probe_python` for tiny Python repros. After the first edit, switch quickly "
-    "to `run_tests` and keep verification narrow.\n"
-    "4. SUBMIT: Call final_answer only after code changed and verification was attempted.\n\n"
-    "Use bash only as an escape hatch when the structured coding tools cannot express the "
-    "command you need."
+    "Use the structured code tools to search, read, edit, and verify. Start narrow, make one "
+    "concrete edit once you have a target, then use `run_tests` before `final_answer`."
 )
 
 

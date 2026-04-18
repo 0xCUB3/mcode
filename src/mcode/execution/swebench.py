@@ -265,8 +265,9 @@ class SWEbenchSandbox:
         from contextlib import contextmanager
         from types import SimpleNamespace
 
-        from mellea.agent.tools.bash import format_tool_result
         from swebench.harness.test_spec.test_spec import make_test_spec
+
+        from mcode.agent.tooling import format_tool_result
 
         @contextmanager
         def _ctx():

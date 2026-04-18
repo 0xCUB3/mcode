@@ -1,20 +1,12 @@
 from __future__ import annotations
 
-import json
+import asyncio
 import os
+import subprocess
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from mcode.agent.coding_agent import build_coding_agent
-from mcode.agent.verification import (
-    build_phase_guidance,
-    build_submit_block_message,
-    build_tool_gate_message,
-    classify_verification_command,
-    tighten_available_tools,
-    tool_phase_state_from_event_log,
-    verification_state_from_event_log,
-)
 
 
 @dataclass(frozen=True)
@@ -24,9 +16,6 @@ class PatchGenerationMetrics:
     zero_edit: bool = True
     zero_verification: bool = True
     verification_succeeded: bool = False
-    malformed_tool_call_recoveries: int = 0
-    blocked_verification_commands: int = 0
-    blocked_submissions: int = 0
     terminal_reason: str | None = None
 
     def as_dict(self) -> dict[str, object]:
@@ -36,39 +25,11 @@ class PatchGenerationMetrics:
             "zero_edit": self.zero_edit,
             "zero_verification": self.zero_verification,
             "verification_succeeded": self.verification_succeeded,
-            "malformed_tool_call_recoveries": self.malformed_tool_call_recoveries,
-            "blocked_verification_commands": self.blocked_verification_commands,
-            "blocked_submissions": self.blocked_submissions,
             "terminal_reason": self.terminal_reason,
         }
 
 
-def _repair_text_tool_calls(
-    tool_calls: list[dict[str, object]],
-) -> tuple[list[dict[str, object]], bool]:
-    repaired = False
-    normalized: list[dict[str, object]] = []
-    for call in tool_calls:
-        name = call.get("name")
-        args = call.get("arguments", {})
-        if isinstance(args, str):
-            try:
-                parsed_args = json.loads(args)
-            except json.JSONDecodeError:
-                parsed_args = args
-            if isinstance(parsed_args, dict):
-                args = parsed_args
-                repaired = True
-        normalized.append({"name": name, "arguments": args})
-    return normalized, repaired
-
-
 def _resolve_launch_endpoint(model_id: str) -> str | None:
-    """Look up a healthy launcher server endpoint for this model.
-
-    Lets `mcode bench --backend openai --model X` work without the caller
-    plumbing OPENAI_BASE_URL when `mcode launch` already has a server up.
-    """
     try:
         from mcode.launch import state as launch_state
     except Exception:
@@ -106,8 +67,6 @@ class LLMSession:
                 base_url = _resolve_launch_endpoint(self.model_id)
                 if base_url and not api_key:
                     api_key = "dummy"
-                # mellea.agent.text_react reads these from env directly, so
-                # we must export them — session kwargs alone are not enough.
                 if base_url:
                     os.environ.setdefault("OPENAI_BASE_URL", base_url)
                     os.environ.setdefault("OPENAI_API_KEY", api_key or "dummy")
@@ -139,10 +98,9 @@ class LLMSession:
     def check_available(self) -> None:
         try:
             import mellea
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             raise RuntimeError(
-                "mellea is required for LLM interaction; "
-                "install dependencies with `uv pip install -e .`"
+                "mellea is required for LLM interaction; install dependencies with `uv sync`"
             ) from e
 
         try:
@@ -152,11 +110,11 @@ class LLMSession:
                 **self._backend_kwargs(),
             ):
                 return
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             raise RuntimeError(
                 f"Could not start a Mellea session (backend={self.backend_name!r}, "
                 f"model_id={self.model_id!r}). "
-                "Ensure the backend is running and accessible (e.g. Ollama server) and retry."
+                "Ensure the backend is running and accessible and retry."
             ) from e
 
     @contextmanager
@@ -167,10 +125,9 @@ class LLMSession:
 
         try:
             import mellea
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             raise RuntimeError(
-                "mellea is required for LLM interaction; "
-                "install dependencies with `uv pip install -e .`"
+                "mellea is required for LLM interaction; install dependencies with `uv sync`"
             ) from e
 
         with mellea.start_session(
@@ -203,12 +160,7 @@ class LLMSession:
         command_fn: object | None = None,
         visible_repo_root: str | None = None,
     ) -> str:
-        import asyncio
-        import subprocess
-        from collections import Counter
-
         self._last_patch_metrics = None
-
         agent = build_coding_agent(
             session=self,
             repo=repo,
@@ -221,486 +173,164 @@ class LLMSession:
             command_fn=command_fn,
         )
 
-        budget = agent.loop_budget
-        timeout_s = agent.timeout_s
-        tools = agent.tools
-        tool_names = [getattr(tool, "name", "") for tool in tools]
-        system_prompt = agent.system_prompt
-        goal = agent.goal
-        model_opts = agent.model_options
-        event_log = getattr(agent, "event_log", None)
-        condensed_state = getattr(agent, "condensed_state", None)
-        condensation = getattr(agent, "condensation", None)
-        max_retries_per_turn = int(getattr(agent, "max_retries_per_turn", 0))
-        verification_policy = getattr(agent, "verification_policy", None)
-        verification_cmds = list(
-            getattr(verification_policy, "test_cmds", getattr(agent, "verification_cmds", []))
-        )
-        capability_contract = getattr(agent, "capability_contract", None)
-        has_run_tests_tool = any(name == "run_tests" for name in tool_names)
-        require_default_verification = bool(verification_cmds)
-
-        def _repo_has_changes() -> bool:
-            result = subprocess.run(
-                ["git", "diff", "--quiet", "--exit-code"],
-                cwd=repo_root,
-                capture_output=True,
-            )
-            return result.returncode == 1
-
-        def _verification_state():
-            return verification_state_from_event_log(
-                event_log,
-                default_test_cmds=verification_cmds,
-            )
-
-        def _phase_state(turn: int):
-            return tool_phase_state_from_event_log(
-                event_log,
-                turn=turn,
-                budget=budget,
-            )
-
-        def _submit_block_message() -> str | None:
-            return build_submit_block_message(
-                has_changes=_repo_has_changes(),
-                has_run_tests_tool=has_run_tests_tool,
-                verification_state=_verification_state(),
-                require_default_verification=require_default_verification,
-            )
-
-        def _metrics_from_attempt(
-            *,
-            turns_to_first_edit: int | None,
-            turns_to_first_verification: int | None,
-            malformed_tool_call_recoveries: int,
-            blocked_verification_commands: int,
-            blocked_submissions: int,
-            verification_succeeded: bool,
-            terminal_reason: str,
-        ) -> PatchGenerationMetrics:
-            return PatchGenerationMetrics(
-                turns_to_first_edit=turns_to_first_edit,
-                turns_to_first_verification=turns_to_first_verification,
-                zero_edit=turns_to_first_edit is None,
-                zero_verification=turns_to_first_verification is None,
-                verification_succeeded=verification_succeeded,
-                malformed_tool_call_recoveries=malformed_tool_call_recoveries,
-                blocked_verification_commands=blocked_verification_commands,
-                blocked_submissions=blocked_submissions,
-                terminal_reason=terminal_reason,
-            )
-
-        async def _one_attempt() -> tuple[str, PatchGenerationMetrics]:
-            from mellea.agent import text_react as text_react_module
-
-            @dataclass
-            class _AttemptState:
-                current_turn: int = 0
-                turns_to_first_edit: int | None = None
-                turns_to_first_verification: int | None = None
-                malformed_tool_call_recoveries: int = 0
-                blocked_verification_commands: int = 0
-                blocked_submissions: int = 0
-
-            attempt_state = _AttemptState()
-
-            def _emit_summary(kind: str, metadata: dict[str, object] | None = None) -> None:
-                if event_log is None:
-                    return
-                try:
-                    from mellea.agent.runtime.events import SummaryEvent
-                except Exception:
-                    return
-                event_log.emit(
-                    SummaryEvent(
-                        message=kind.replace("_", " "),
-                        metadata={"kind": kind, **(metadata or {})},
-                    )
-                )
-
-            debug_tool_gate = os.environ.get("MCODE_TOOL_GATE_DEBUG") == "1"
-
-            def _debug_tool_gate(
-                kind: str,
-                *,
-                name: str,
-                phase_state,
-                repo_has_changes: bool,
-                effective_has_changes: bool,
-                invocation_count: int,
-            ) -> None:
-                if not debug_tool_gate:
-                    return
-                metadata = {
-                    "tool_name": name,
-                    "repo_has_changes": repo_has_changes,
-                    "phase_has_edit": bool(getattr(phase_state, "has_edit", False)),
-                    "phase_has_verification": bool(getattr(phase_state, "has_verification", False)),
-                    "effective_has_changes": effective_has_changes,
-                    "phase_turn": int(getattr(phase_state, "turn", 0) or 0),
-                    "invocation_count": invocation_count,
-                    "last_tool_name": getattr(phase_state, "last_tool_name", None),
-                    "repeated_tool_streak": int(
-                        getattr(phase_state, "repeated_tool_streak", 0) or 0
-                    ),
-                }
-                _emit_summary(kind, metadata)
-                print(f"MCODE_TOOL_GATE_DEBUG {kind} {metadata}", flush=True)
-
-            def _text_on_turn(turn: int, total: int, messages: list[dict]) -> list[dict]:
-                attempt_state.current_turn = turn
-                phase_state = _phase_state(turn)
-                guidance = build_phase_guidance(
-                    has_changes=_repo_has_changes() or phase_state.has_edit,
-                    has_run_tests_tool=has_run_tests_tool,
-                    verification_state=_verification_state(),
-                    phase_state=phase_state,
-                    require_default_verification=require_default_verification,
-                )
-                if guidance and (not messages or messages[-1].get("content") != guidance):
-                    messages.append({"role": "user", "content": guidance})
-                return messages
-
-            def _tool_gate(name: str, args: dict, *, messages, event_log):
-                del messages
-                turn_index = max(1, attempt_state.current_turn or 1)
-                if name == "edit" and attempt_state.turns_to_first_edit is None:
-                    attempt_state.turns_to_first_edit = turn_index
-                if name == "edit":
-                    _emit_summary("edit_started", {"turn": turn_index})
-                if name == "run_tests" and attempt_state.turns_to_first_verification is None:
-                    attempt_state.turns_to_first_verification = turn_index
-
-                capability_route = None
-                if capability_contract is not None:
-                    route_for_tool = getattr(capability_contract, "route_for_tool", None)
-                    if callable(route_for_tool):
-                        capability_route = route_for_tool(name)
-                try:
-                    from mellea.agent.strategy import get_available_tools
-                except ImportError:
-                    block_message = build_tool_gate_message(
-                        name,
-                        available_tools=tool_names,
-                        has_changes=_repo_has_changes(),
-                        has_run_tests_tool=has_run_tests_tool,
-                        verification_state=_verification_state(),
-                        require_default_verification=require_default_verification,
-                        requested_family=(
-                            None
-                            if capability_route is None
-                            else getattr(capability_route, "requested_family", None)
-                        ),
-                        route_mode=(
-                            None
-                            if capability_route is None
-                            else getattr(capability_route, "mode", None)
-                        ),
-                    )
-                    if block_message and name == "final_answer":
-                        attempt_state.blocked_submissions += 1
-                        _emit_summary("submission_blocked", {"turn": turn_index})
-                    return block_message
-
-                invocation_count = 0
-                if event_log is not None:
-                    to_dicts = getattr(event_log, "to_dicts", None)
-                    if callable(to_dicts):
-                        invocation_count = sum(
-                            1
-                            for event in to_dicts()
-                            if isinstance(event, dict) and event.get("kind") == "tool_result"
-                        )
-                phase_state = tool_phase_state_from_event_log(
-                    event_log,
-                    turn=max(1, invocation_count + 1),
-                    budget=budget,
-                )
-                repo_has_changes = _repo_has_changes()
-                effective_has_changes = repo_has_changes or phase_state.has_edit
-                requested_test_cmd = None
-                if name == "run_tests":
-                    raw_test_cmd = args.get("test_cmd")
-                    if isinstance(raw_test_cmd, str):
-                        requested_test_cmd = raw_test_cmd.strip()
-                if name in {"edit", "probe_python", "run_tests", "final_answer"}:
-                    _debug_tool_gate(
-                        "tool_gate_state",
-                        name=name,
-                        phase_state=phase_state,
-                        repo_has_changes=repo_has_changes,
-                        effective_has_changes=effective_has_changes,
-                        invocation_count=invocation_count,
-                    )
-                if name == "probe_python" and effective_has_changes and has_run_tests_tool:
-                    _debug_tool_gate(
-                        "tool_gate_probe_blocked",
-                        name=name,
-                        phase_state=phase_state,
-                        repo_has_changes=repo_has_changes,
-                        effective_has_changes=effective_has_changes,
-                        invocation_count=invocation_count,
-                    )
-                    return build_tool_gate_message(
-                        name,
-                        available_tools=[],
-                        has_changes=True,
-                        has_run_tests_tool=has_run_tests_tool,
-                        verification_state=_verification_state(),
-                        require_default_verification=require_default_verification,
-                        requested_family=(
-                            None
-                            if capability_route is None
-                            else getattr(capability_route, "requested_family", None)
-                        ),
-                        route_mode=(
-                            None
-                            if capability_route is None
-                            else getattr(capability_route, "mode", None)
-                        ),
-                        requested_test_cmd=requested_test_cmd,
-                    )
-                if (
-                    name == "run_tests"
-                    and phase_state.has_edit
-                    and has_run_tests_tool
-                    and requested_test_cmd
-                    and requested_test_cmd.lower() != "default"
-                    and classify_verification_command(requested_test_cmd) in {"probe", "script"}
-                ):
-                    _debug_tool_gate(
-                        "tool_gate_run_tests_probe_blocked",
-                        name=name,
-                        phase_state=phase_state,
-                        repo_has_changes=repo_has_changes,
-                        effective_has_changes=effective_has_changes,
-                        invocation_count=invocation_count,
-                    )
-                    return build_tool_gate_message(
-                        name,
-                        available_tools=[],
-                        has_changes=True,
-                        has_run_tests_tool=has_run_tests_tool,
-                        verification_state=_verification_state(),
-                        require_default_verification=require_default_verification,
-                        requested_family=(
-                            None
-                            if capability_route is None
-                            else getattr(capability_route, "requested_family", None)
-                        ),
-                        route_mode=(
-                            None
-                            if capability_route is None
-                            else getattr(capability_route, "mode", None)
-                        ),
-                        requested_test_cmd=requested_test_cmd,
-                    )
-                available_tools = tighten_available_tools(
-                    get_available_tools(
-                        tool_names,
-                        turn=phase_state.turn,
-                        budget=budget,
-                        state=phase_state,
-                    ),
-                    phase_state=phase_state,
-                    has_changes=effective_has_changes,
-                    verification_state=_verification_state(),
-                    has_run_tests_tool=has_run_tests_tool,
-                )
-                block_message = build_tool_gate_message(
-                    name,
-                    available_tools=available_tools,
-                    has_changes=effective_has_changes,
-                    has_run_tests_tool=has_run_tests_tool,
-                    verification_state=_verification_state(),
-                    require_default_verification=require_default_verification,
-                    requested_family=(
-                        None
-                        if capability_route is None
-                        else getattr(capability_route, "requested_family", None)
-                    ),
-                    route_mode=(
-                        None
-                        if capability_route is None
-                        else getattr(capability_route, "mode", None)
-                    ),
-                    requested_test_cmd=requested_test_cmd,
-                )
-                if block_message and name == "final_answer":
-                    attempt_state.blocked_submissions += 1
-                    _emit_summary("submission_blocked", {"turn": turn_index})
-                return block_message
-
-            react_kwargs = {
-                "goal": goal,
-                "backend": self._m.backend if self._m else None,
-                "tools": tools,
-                "system_prompt": system_prompt,
-                "model_options": model_opts,
-                "loop_budget": budget,
-                "on_turn": _text_on_turn,
-                "tool_gate": _tool_gate,
-            }
-            if condensed_state is not None:
-                react_kwargs["condensed_state"] = condensed_state
-            if condensation is not None:
-                react_kwargs["condensation"] = condensation
-            if event_log is not None:
-                react_kwargs["event_log"] = event_log
-            if max_retries_per_turn > 0:
-                react_kwargs["max_retries_per_turn"] = max_retries_per_turn
-
-            timed_out = False
-            parse_with_repair = getattr(text_react_module, "_parse_tool_calls_with_repair", None)
-            parse_tool_calls = getattr(text_react_module, "parse_tool_calls", None)
-            restore_repair_parse = callable(parse_with_repair)
-            restore_plain_parse = callable(parse_tool_calls)
-            if restore_repair_parse:
-
-                def _counting_parse(text: str):
-                    tool_calls, used_repair = parse_with_repair(text)
-                    if used_repair or not tool_calls:
-                        attempt_state.malformed_tool_call_recoveries += 1
-                        _emit_summary(
-                            "malformed_tool_call",
-                            {
-                                "repaired": used_repair,
-                                "re_prompted": not tool_calls,
-                            },
-                        )
-                    return tool_calls, used_repair
-
-                text_react_module._parse_tool_calls_with_repair = _counting_parse
-            elif restore_plain_parse:
-
-                def _repairing_parse(text: str):
-                    tool_calls = parse_tool_calls(text)
-                    repaired_calls, used_repair = _repair_text_tool_calls(tool_calls)
-                    if used_repair:
-                        attempt_state.malformed_tool_call_recoveries += 1
-                        _emit_summary(
-                            "malformed_tool_call",
-                            {
-                                "repaired": True,
-                                "re_prompted": False,
-                            },
-                        )
-                    return repaired_calls
-
-                text_react_module.parse_tool_calls = _repairing_parse
-
-            try:
-                try:
-                    answer, done = await asyncio.wait_for(
-                        text_react_module.text_react(**react_kwargs),
-                        timeout=timeout_s,
-                    )
-                    if done:
-                        print(f"  [react] final_answer: {answer[:120]}", flush=True)
-                    else:
-                        print(
-                            "  [react] budget exhausted without final_answer",
-                            flush=True,
-                        )
-                except TimeoutError:
-                    timed_out = True
-                    done = False
-                    print(f"  [react] timed out after {timeout_s}s", flush=True)
-            finally:
-                if restore_repair_parse:
-                    text_react_module._parse_tool_calls_with_repair = parse_with_repair
-                if restore_plain_parse and not restore_repair_parse:
-                    text_react_module.parse_tool_calls = parse_tool_calls
-
-            verification_state = _verification_state()
-            attempt_state.blocked_verification_commands = (
-                verification_state.blocked_verification_commands
-            )
-            block_message = _submit_block_message()
-            diff = _get_diff(repo_root)
-            terminal_reason = "submitted"
-            if not done:
-                terminal_reason = "infra_failure" if timed_out else "budget_exhausted"
-            if diff and block_message is not None:
-                print(
-                    f"  [react] discarding unverified diff: {block_message}",
-                    flush=True,
-                )
-                terminal_reason = "unverified_diff_discarded"
-                return "", _metrics_from_attempt(
-                    turns_to_first_edit=attempt_state.turns_to_first_edit,
-                    turns_to_first_verification=attempt_state.turns_to_first_verification,
-                    malformed_tool_call_recoveries=attempt_state.malformed_tool_call_recoveries,
-                    blocked_verification_commands=attempt_state.blocked_verification_commands,
-                    blocked_submissions=attempt_state.blocked_submissions,
-                    verification_succeeded=verification_state.successful_run_tests,
-                    terminal_reason=terminal_reason,
-                )
-            return diff, _metrics_from_attempt(
-                turns_to_first_edit=attempt_state.turns_to_first_edit,
-                turns_to_first_verification=attempt_state.turns_to_first_verification,
-                malformed_tool_call_recoveries=attempt_state.malformed_tool_call_recoveries,
-                blocked_verification_commands=attempt_state.blocked_verification_commands,
-                blocked_submissions=attempt_state.blocked_submissions,
-                verification_succeeded=verification_state.successful_run_tests,
-                terminal_reason=terminal_reason,
-            )
-
-        def _reset_repo() -> None:
-            subprocess.run(["git", "checkout", "."], cwd=repo_root, capture_output=True)
-
-        if n_samples <= 1:
-            diff, metrics = asyncio.run(_one_attempt())
-            self._last_patch_metrics = metrics
-            return diff
-
         attempts: list[tuple[str, PatchGenerationMetrics]] = []
-        for index in range(n_samples):
-            print(f"\n  [sample {index + 1}/{n_samples}]", flush=True)
-            diff, metrics = asyncio.run(_one_attempt())
+        for index in range(max(1, n_samples)):
+            if index:
+                _reset_repo(repo_root)
+            diff, metrics = asyncio.run(
+                _run_attempt(
+                    session=self,
+                    repo_root=repo_root,
+                    goal=agent.goal,
+                    tools=agent.tools,
+                    model_options=agent.model_options,
+                    loop_budget=agent.loop_budget,
+                    timeout_s=agent.timeout_s,
+                )
+            )
             attempts.append((diff, metrics))
-            if index < n_samples - 1:
-                _reset_repo()
+            if diff and metrics.verification_succeeded:
+                self._last_patch_metrics = metrics
+                return diff
 
-        non_empty = [(diff, metrics) for diff, metrics in attempts if diff and diff.strip()]
-        if not non_empty:
-            if attempts:
-                self._last_patch_metrics = attempts[-1][1]
-            return ""
+        for diff, metrics in attempts:
+            if diff:
+                self._last_patch_metrics = metrics
+                return diff
 
-        counts = Counter(diff for diff, _ in non_empty)
-        best_diff, best_count = counts.most_common(1)[0]
-        best_metrics = next(metrics for diff, metrics in non_empty if diff == best_diff)
-        print(
-            f"  [voting] {len(non_empty)}/{n_samples} produced patches, "
-            f"best has {best_count} votes",
-            flush=True,
+        if attempts:
+            self._last_patch_metrics = attempts[-1][1]
+        return ""
+
+
+@dataclass
+class _AttemptTracker:
+    current_turn: int = 0
+    turns_to_first_edit: int | None = None
+    turns_to_first_verification: int | None = None
+    verification_succeeded: bool = False
+
+    def note_turn(self, turn: int) -> None:
+        self.current_turn = turn
+
+    def note_tool_call(self, tool_name: str) -> None:
+        turn = max(1, self.current_turn or 1)
+        if tool_name == "edit" and self.turns_to_first_edit is None:
+            self.turns_to_first_edit = turn
+        if tool_name == "run_tests" and self.turns_to_first_verification is None:
+            self.turns_to_first_verification = turn
+
+    def note_tool_result(self, tool_name: str, result: object) -> None:
+        if tool_name == "run_tests" and _run_tests_succeeded(str(result)):
+            self.verification_succeeded = True
+
+    def metrics(self, *, terminal_reason: str) -> PatchGenerationMetrics:
+        return PatchGenerationMetrics(
+            turns_to_first_edit=self.turns_to_first_edit,
+            turns_to_first_verification=self.turns_to_first_verification,
+            zero_edit=self.turns_to_first_edit is None,
+            zero_verification=self.turns_to_first_verification is None,
+            verification_succeeded=self.verification_succeeded,
+            terminal_reason=terminal_reason,
         )
 
-        _reset_repo()
-        proc = subprocess.run(
-            ["git", "apply", "--allow-empty"],
-            input=best_diff,
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
+
+async def _run_attempt(
+    *,
+    session: LLMSession,
+    repo_root: str,
+    goal: str,
+    tools: list,
+    model_options: dict,
+    loop_budget: int,
+    timeout_s: int,
+) -> tuple[str, PatchGenerationMetrics]:
+    import inspect
+
+    from mellea.backends.tools import MelleaTool
+    from mellea.stdlib.context import ChatContext
+    from mellea.stdlib.frameworks.react import react
+
+    tracker = _AttemptTracker()
+    instrumented_tools: list[MelleaTool] = []
+    for tool in tools:
+        tool_name = getattr(tool, "name", "")
+
+        def _make_call(current_tool):
+            def _call(*args, **kwargs):
+                tracker.note_tool_call(current_tool.name)
+                result = current_tool.run(*args, **kwargs)
+                tracker.note_tool_result(current_tool.name, result)
+                return result
+
+            return _call
+
+        instrumented_tools.append(
+            MelleaTool(
+                name=tool_name,
+                tool_call=_make_call(tool),
+                as_json_tool=tool.as_json_tool,
+            )
         )
-        if proc.returncode != 0:
-            print(f"  [voting] git apply failed: {proc.stderr[:200]}", flush=True)
-            non_empty.sort(key=lambda item: len(item[0]), reverse=True)
-            self._last_patch_metrics = non_empty[0][1]
-            return non_empty[0][0]
-        self._last_patch_metrics = best_metrics
-        return _get_diff(repo_root)
+
+    timed_out = False
+    completed = False
+    try:
+        react_kwargs = {
+            "goal": goal,
+            "context": ChatContext(),
+            "backend": session._m.backend,
+            "tools": instrumented_tools,
+            "loop_budget": loop_budget,
+            "model_options": model_options,
+        }
+        if "on_turn" in inspect.signature(react).parameters:
+            react_kwargs["on_turn"] = lambda turn, budget, ctx: _on_turn(tracker, turn, budget, ctx)
+        await asyncio.wait_for(
+            react(**react_kwargs),
+            timeout=timeout_s,
+        )
+        completed = True
+    except TimeoutError:
+        timed_out = True
+    except RuntimeError as e:
+        if "could not complete react loop" not in str(e):
+            raise
+
+    diff = _get_diff(repo_root)
+    if diff and any(getattr(tool, "name", "") == "run_tests" for tool in tools):
+        if not tracker.verification_succeeded:
+            return "", tracker.metrics(terminal_reason="unverified_diff_discarded")
+
+    terminal_reason = "submitted"
+    if not completed:
+        terminal_reason = "infra_failure" if timed_out else "budget_exhausted"
+    return diff, tracker.metrics(terminal_reason=terminal_reason)
+
+
+def _on_turn(tracker: _AttemptTracker, turn: int, budget: int, context):
+    del budget
+    tracker.note_turn(turn)
+    return context
+
+
+def _run_tests_succeeded(output: str) -> bool:
+    return (
+        "PASSED" in output
+        and "FAILED" not in output
+        and "TIMEOUT" not in output
+        and "ERROR" not in output
+        and "BLOCKED" not in output
+    )
+
+
+def _reset_repo(repo_root: str) -> None:
+    subprocess.run(["git", "checkout", "."], cwd=repo_root, capture_output=True)
 
 
 def _get_diff(repo_root: str) -> str:
-    import subprocess
-    from pathlib import Path
-
-    git_dir = Path(repo_root) / ".git"
-    if not git_dir.exists():
+    git_dir = os.path.join(repo_root, ".git")
+    if not os.path.exists(git_dir):
         print(f"  [diff] no .git in {repo_root}, cannot produce patch", flush=True)
         return ""
 

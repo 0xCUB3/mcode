@@ -150,7 +150,7 @@ class SWEbenchLiveSandbox:
         from pathlib import Path
         from types import SimpleNamespace
 
-        from mellea.agent.tools.bash import format_tool_result
+        from mcode.agent.tooling import format_tool_result
 
         @contextmanager
         def _ctx():

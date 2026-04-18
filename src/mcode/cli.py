@@ -183,9 +183,9 @@ def deps_sync(
 
     selection = sync_uv_environment(Path.cwd(), sync_args=sync_args)
     if selection.source == "local":
-        console.print(f"Using local mellea fork at {selection.local_path}")
+        console.print(f"Using local mellea override at {selection.local_path}")
     else:
-        console.print("Using GitHub mellea source")
+        console.print("Using upstream mellea package")
 
 
 @app.command("results")

@@ -415,9 +415,6 @@ def _scaffold_metrics(
         "zero_edit": True,
         "zero_verification": True,
         "verification_succeeded": False,
-        "malformed_tool_call_recoveries": 0,
-        "blocked_verification_commands": 0,
-        "blocked_submissions": 0,
     }
     if metrics:
         out.update(metrics)

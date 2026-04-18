@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
   "typer>=0.12.0",
   "rich>=13.0.0",
-  "mellea[agent]",
+  "mellea==0.4.2",
   "docker>=7.0.0",
 ]
 
@@ -22,6 +22,9 @@ swebench = [
 datasets = [
   "datasets>=2.14.0,<4.0",
 ]
+observability = [
+  "mellea[telemetry]==0.4.2",
+]
 
 [project.scripts]
 mcode = "mcode.cli:app"
@@ -29,12 +32,6 @@ mcode = "mcode.cli:app"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.hatch.metadata]
-allow-direct-references = true
-
-[tool.uv.sources]
-mellea = { git = "https://github.com/0xCUB3/mellea", rev = "dfff9f8a427595541bf84dd5fdd558ec02b84314" }
 
 [tool.ruff]
 line-length = 100

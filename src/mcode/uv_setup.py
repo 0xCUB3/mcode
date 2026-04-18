@@ -43,7 +43,7 @@ def sync_uv_environment(
 
     runner = run_command or _run_command
     local_mellea = find_local_mellea(project_root, env=env)
-    selection = UvDependencySelection(source="github")
+    selection = UvDependencySelection(source="upstream")
     if local_mellea is not None:
         selection = UvDependencySelection(source="local", local_path=local_mellea)
 
@@ -66,13 +66,13 @@ def _build_runtime_check(selection: UvDependencySelection) -> str:
     return (
         "import importlib, pathlib; "
         "mellea = importlib.import_module('mellea'); "
-        "runtime = importlib.import_module('mellea.agent.runtime'); "
-        "text_react = importlib.import_module('mellea.agent.text_react'); "
+        "session = importlib.import_module('mellea.stdlib.session'); "
+        "react = importlib.import_module('mellea.stdlib.frameworks.react'); "
         "location = str(pathlib.Path(mellea.__file__).resolve()); "
         f"expected = {expected!r}; "
         "assert expected in location, f'expected {expected} in {location}'; "
-        "assert runtime is not None; "
-        "assert text_react is not None"
+        "assert session is not None; "
+        "assert react is not None"
     )
 
 

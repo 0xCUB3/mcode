@@ -15,19 +15,19 @@ uv sync --extra dev
 uv run mcode --help
 ```
 
-To sync against the pinned fork revision in `pyproject.toml`:
+To sync the project with the pinned upstream Mellea release:
 
 ```bash
 uv run mcode deps sync --extra swebench --extra datasets
 ```
 
 If you want to override that temporarily with a local checkout, set
-`MCODE_MELLEA_PATH=/path/to/mellea-fork` before running the command.
+`MCODE_MELLEA_PATH=/path/to/mellea` before running the command.
 
 ## Run SWE-bench Lite
 
 ```bash
-mcode bench swebench-lite --model granite3.3:8b --limit 5
+uv run mcode bench swebench-lite --model granite3.3:8b --limit 5
 ```
 
 Useful flags:
@@ -42,13 +42,13 @@ Useful flags:
 If you need to force local image builds instead of pulling prebuilt images:
 
 ```bash
-mcode bench swebench-lite --namespace "" --model granite3.3:8b --limit 5
+uv run mcode bench swebench-lite --namespace "" --model granite3.3:8b --limit 5
 ```
 
 ## Run SWE-bench Live
 
 ```bash
-mcode bench swebench-live --model granite3.3:8b --limit 5
+uv run mcode bench swebench-live --model granite3.3:8b --limit 5
 ```
 
 `swebench-live` uses prebuilt evaluation images, so it does not need the lite image-build settings.
@@ -58,20 +58,20 @@ mcode bench swebench-live --model granite3.3:8b --limit 5
 Per-run summaries:
 
 ```bash
-mcode results --benchmark swebench-live
-mcode results --benchmark swebench-live --time
+uv run mcode results --benchmark swebench-live
+uv run mcode results --benchmark swebench-live --time
 ```
 
 HTML report:
 
 ```bash
-mcode report --db-dir ./results --benchmark swebench-live --out ./results/report.html
+uv run mcode report --db-dir ./results --benchmark swebench-live --out ./results/report.html
 ```
 
 Merge shard DBs:
 
 ```bash
-mcode merge-shards --out ./results/merged.db ./results/swebench-live-shard-0.db ./results/swebench-live-shard-1.db
+uv run mcode merge-shards --out ./results/merged.db ./results/swebench-live-shard-0.db ./results/swebench-live-shard-1.db
 ```
 
 CSV export:
@@ -82,37 +82,37 @@ uv run mcode export-csv -i experiments/results --out-dir experiments/results --p
 
 ## Launch vLLM (Blue Vela or local)
 
-`mcode launch` spins up a vLLM server and records its endpoint so you can run benchmarks against it.
+`uv run mcode launch` spins up a vLLM server and records its endpoint so you can run benchmarks against it.
 
 First time on a cluster:
 
 ```bash
-mcode launch doctor bluevela --init --login <user>@<login-host>
-mcode launch doctor bluevela
+uv run mcode launch doctor bluevela --init --login <user>@<login-host>
+uv run mcode launch doctor bluevela
 ```
 
 Push the local repo to the cluster (rsync, respects `.gitignore`):
 
 ```bash
-mcode launch sync bluevela              # subsequent syncs
-mcode launch sync bluevela --bootstrap  # first sync into a non-empty remote dir
-mcode launch sync bluevela --dry-run    # preview
+uv run mcode launch sync bluevela              # subsequent syncs
+uv run mcode launch sync bluevela --bootstrap  # first sync into a non-empty remote dir
+uv run mcode launch sync bluevela --dry-run    # preview
 ```
 
 Launch a server:
 
 ```bash
-mcode launch bluevela    --model Qwen/Qwen3.5-35B-A3B
-mcode launch local-vllm  --model Qwen/Qwen2.5-0.5B
-mcode launch local-ollama --model granite4
+uv run mcode launch bluevela    --model Qwen/Qwen3.5-35B-A3B
+uv run mcode launch local-vllm  --model Qwen/Qwen2.5-0.5B
+uv run mcode launch local-ollama --model granite4
 ```
 
 Manage running servers:
 
 ```bash
-mcode launch status
-mcode launch refresh
-mcode launch stop <server-id> | --all
+uv run mcode launch status
+uv run mcode launch refresh
+uv run mcode launch stop <server-id> | --all
 ```
 
 Blue Vela profiles ship with correct vLLM flags per model: Qwen3.5 (27B / 35B-A3B), Gemma-4-31B-it, Granite 4.0, MiniMax-M2.5. Add more in `src/mcode/launch/profiles.py`.
@@ -120,10 +120,10 @@ Blue Vela profiles ship with correct vLLM flags per model: Qwen3.5 (27B / 35B-A3
 Once a server is healthy, point the bench at it:
 
 ```bash
-mcode bench swebench-live --backend openai --model Qwen/Qwen3.5-35B-A3B --limit 10
+uv run mcode bench swebench-live --backend openai --model Qwen/Qwen3.5-35B-A3B --limit 10
 ```
 
-`--backend openai` auto-resolves the endpoint from `mcode launch status` when a healthy server matches `--model`. `OPENAI_BASE_URL` / `OPENAI_API_KEY` still override if set.
+`--backend openai` auto-resolves the endpoint from `uv run mcode launch status` when a healthy server matches `--model`. `OPENAI_BASE_URL` / `OPENAI_API_KEY` still override if set.
 
 The legacy shell scripts under `deploy/bluevela/` still work as a fallback. See `deploy/bluevela/README.md`.
 

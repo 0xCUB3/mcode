@@ -77,7 +77,7 @@ def test_sync_uv_environment_falls_back_to_github_without_local_fork(tmp_path):
 
     selection = uv_setup.sync_uv_environment(project_root, run_command=fake_run)
 
-    assert selection.source == "github"
+    assert selection.source == "upstream"
     assert selection.local_path is None
     assert not managed_override.exists()
     assert commands[0] == ["uv", "sync"]

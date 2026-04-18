@@ -173,15 +173,6 @@ def test_repo_context_disables_network_for_source_container(monkeypatch):
     )
     monkeypatch.setitem(sys.modules, "swebench.harness.test_spec.test_spec", fake_test_spec_module)
 
-    fake_bash_module = types.ModuleType("mellea.agent.tools.bash")
-    fake_bash_module.format_tool_result = lambda command, status, output: (
-        f"{command}|{status}|{output}"
-    )
-    monkeypatch.setitem(sys.modules, "mellea", types.ModuleType("mellea"))
-    monkeypatch.setitem(sys.modules, "mellea.agent", types.ModuleType("mellea.agent"))
-    monkeypatch.setitem(sys.modules, "mellea.agent.tools", types.ModuleType("mellea.agent.tools"))
-    monkeypatch.setitem(sys.modules, "mellea.agent.tools.bash", fake_bash_module)
-
     monkeypatch.setattr("mcode.execution.swebench._ensure_image", lambda client, name: None)
     monkeypatch.setattr(
         "mcode.execution.swebench._exec_agent_command_in_container",

@@ -434,9 +434,6 @@ def test_run_metrics_grouped_includes_scaffold_quality_metrics(tmp_path: Path) -
                 "zero_edit": False,
                 "zero_verification": False,
                 "verification_succeeded": True,
-                "malformed_tool_call_recoveries": 2,
-                "blocked_verification_commands": 1,
-                "blocked_submissions": 1,
             },
         )
         rdb.save_task_result(
@@ -458,9 +455,6 @@ def test_run_metrics_grouped_includes_scaffold_quality_metrics(tmp_path: Path) -
                 "zero_edit": True,
                 "zero_verification": True,
                 "verification_succeeded": False,
-                "malformed_tool_call_recoveries": 1,
-                "blocked_verification_commands": 2,
-                "blocked_submissions": 0,
             },
         )
 
@@ -480,11 +474,6 @@ def test_run_metrics_grouped_includes_scaffold_quality_metrics(tmp_path: Path) -
     assert r["zero_verification_rate"] == 0.5
     assert r["verification_succeeded"] == 1
     assert r["verification_success_rate"] == 0.5
-    assert r["malformed_tool_call_recoveries"] == 3
-    assert r["malformed_tool_call_recoveries_per_task"] == 1.5
-    assert r["blocked_verification_commands"] == 3
-    assert r["blocked_verification_commands_per_task"] == 1.5
-    assert r["blocked_submissions"] == 1
     assert r["turns_to_first_edit_avg"] == 2.0
     assert r["turns_to_first_verification_avg"] == 3.0
     assert r["budget_exhausted"] == 1
