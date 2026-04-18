@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from mellea.backends import ModelOption
+
 from mcode.launch.models import ServerRecord, Target
 from mcode.llm.session import LLMSession
 
@@ -61,3 +63,16 @@ def test_backend_kwargs_openai_no_autoresolve_when_model_mismatch(monkeypatch):
     monkeypatch.setattr("mcode.launch.state.load", lambda: FakeSnap())
     s = LLMSession(model_id="ibm-granite/granite-4.0-h-small", backend_name="openai")
     assert s._backend_kwargs() == {}  # noqa: SLF001
+
+
+def test_model_options_default_max_new_tokens():
+    s = LLMSession(model_id="test-model", backend_name="openai")
+    opts = s._model_options(system_prompt="system")  # noqa: SLF001
+    assert opts[ModelOption.MAX_NEW_TOKENS] == 1024
+
+
+def test_model_options_respects_env_max_new_tokens(monkeypatch):
+    monkeypatch.setenv("MCODE_MAX_NEW_TOKENS", "2048")
+    s = LLMSession(model_id="test-model", backend_name="openai")
+    opts = s._model_options(system_prompt="system")  # noqa: SLF001
+    assert opts[ModelOption.MAX_NEW_TOKENS] == 2048

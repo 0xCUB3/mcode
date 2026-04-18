@@ -54,6 +54,8 @@ class LLMSession:
     _m: object | None = field(default=None, repr=False)
     _last_patch_metrics: PatchGenerationMetrics | None = field(default=None, repr=False)
 
+    DEFAULT_MAX_NEW_TOKENS: int = 1024
+
     def _backend_kwargs(self) -> dict:
         kwargs: dict = {}
         if self.backend_name == "ollama":
@@ -87,6 +89,8 @@ class LLMSession:
         raw = os.environ.get("MCODE_MAX_NEW_TOKENS")
         if raw:
             opts[ModelOption.MAX_NEW_TOKENS] = int(raw)
+        else:
+            opts[ModelOption.MAX_NEW_TOKENS] = self.DEFAULT_MAX_NEW_TOKENS
         ctx_raw = os.environ.get("MCODE_CONTEXT_WINDOW")
         if ctx_raw:
             opts[ModelOption.CONTEXT_WINDOW] = int(ctx_raw)
@@ -273,7 +277,6 @@ async def _run_attempt(
             )
         )
 
-    timed_out = False
     completed = False
     try:
         react_kwargs = {
@@ -292,7 +295,7 @@ async def _run_attempt(
         )
         completed = True
     except TimeoutError:
-        timed_out = True
+        pass
     except RuntimeError as e:
         if "could not complete react loop" not in str(e):
             raise
@@ -304,7 +307,7 @@ async def _run_attempt(
 
     terminal_reason = "submitted"
     if not completed:
-        terminal_reason = "infra_failure" if timed_out else "budget_exhausted"
+        terminal_reason = "budget_exhausted"
     return diff, tracker.metrics(terminal_reason=terminal_reason)
 
 

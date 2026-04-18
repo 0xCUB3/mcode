@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 import sys
@@ -98,6 +99,37 @@ def test_generate_patch_discards_unverified_diff(tmp_path, monkeypatch):
     assert metrics is not None
     assert metrics["verification_succeeded"] is False
     assert metrics["terminal_reason"] == "unverified_diff_discarded"
+
+
+def test_generate_patch_timeout_counts_as_budget_exhausted(tmp_path, monkeypatch):
+    _init_repo(tmp_path)
+    session = LLMSession(model_id="test", backend_name="openai", loop_budget=4)
+    session._m = SimpleNamespace(backend=object())
+    monkeypatch.setenv("MCODE_REACT_TIMEOUT", "1")
+
+    async def fake_react(goal, context, backend, *, tools, loop_budget, model_options, on_turn):
+        del goal, backend, tools, loop_budget, model_options, on_turn
+        await asyncio.sleep(2)
+        return ("done", context)
+
+    monkeypatch.setattr("mellea.stdlib.frameworks.react.react", fake_react)
+    monkeypatch.setattr("mcode.agent.coding_agent.build_repo_map", lambda *args, **kwargs: "")
+    monkeypatch.setattr(
+        "mcode.agent.coding_agent.build_candidate_files",
+        lambda *args, **kwargs: "",
+    )
+
+    patch_text = session.generate_patch(
+        repo="test/repo",
+        problem_statement="Fix the bug",
+        repo_root=str(tmp_path),
+        test_cmds={"test_cmds": [f"{sys.executable} -c \"print('ok')\""]},
+    )
+
+    metrics = session.last_patch_metrics
+    assert patch_text == ""
+    assert metrics is not None
+    assert metrics["terminal_reason"] == "budget_exhausted"
 
 
 def test_generate_patch_retries_samples_until_verified(tmp_path, monkeypatch):
