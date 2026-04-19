@@ -68,11 +68,20 @@ def _build_runtime_check(selection: UvDependencySelection) -> str:
         "mellea = importlib.import_module('mellea'); "
         "session = importlib.import_module('mellea.stdlib.session'); "
         "react = importlib.import_module('mellea.stdlib.frameworks.react'); "
+        "telemetry = importlib.import_module('mellea.telemetry'); "
+        "plugins = importlib.import_module('mellea.plugins.pluginset'); "
+        "compare = importlib.import_module('mellea.eval.compare'); "
+        "compat = importlib.import_module('mcode.mellea_compat'); "
         "location = str(pathlib.Path(mellea.__file__).resolve()); "
         f"expected = {expected!r}; "
         "assert expected in location, f'expected {expected} in {location}'; "
         "assert session is not None; "
-        "assert react is not None"
+        "assert react is not None; "
+        "assert telemetry is not None; "
+        "assert plugins is not None; "
+        "assert compare is not None; "
+        "assert compat.import_requirements() is not None; "
+        "assert compat.import_sampling() is not None"
     )
 
 

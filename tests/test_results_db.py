@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from csv import DictReader
 from pathlib import Path
 
-from mcode.bench.results import ResultsDB
+from mcode.bench.results import ResultsDB, export_csv
 
 
 def test_start_run_supports_legacy_runs_table(tmp_path: Path) -> None:
@@ -479,3 +480,134 @@ def test_run_metrics_grouped_includes_scaffold_quality_metrics(tmp_path: Path) -
     assert r["budget_exhausted"] == 1
     assert r["wrong_patch_after_verification"] == 1
     assert r["submitted"] == 0
+
+
+def test_run_metrics_grouped_includes_usage_stats(tmp_path: Path) -> None:
+    db_path = tmp_path / "results.db"
+    with ResultsDB(db_path) as rdb:
+        run_id = rdb.start_run(
+            "swebench-live",
+            {
+                "backend_name": "openai",
+                "model_id": "test-model",
+                "loop_budget": 2,
+                "timeout_s": 60,
+                "cache_dir": str(tmp_path / "cache"),
+            },
+        )
+        rdb.save_task_result(
+            run_id,
+            {
+                "task_id": "HumanEval/0",
+                "passed": True,
+                "attempts_used": 1,
+                "time_ms": 1000,
+                "exit_code": 0,
+                "timed_out": False,
+                "stdout": "",
+                "stderr": "",
+                "error": None,
+                "code_sha256": "abc",
+                "prompt_snapshot": "prompt one",
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+                "provider": "openai",
+                "response_model": "test-model",
+                "submission_json": '{"summary":"done"}',
+            },
+        )
+        rdb.save_task_result(
+            run_id,
+            {
+                "task_id": "HumanEval/1",
+                "passed": False,
+                "attempts_used": 1,
+                "time_ms": 1200,
+                "exit_code": 1,
+                "timed_out": False,
+                "stdout": "",
+                "stderr": "",
+                "error": "Execution failed",
+                "code_sha256": "def",
+                "prompt_snapshot": "prompt two",
+                "prompt_tokens": 20,
+                "completion_tokens": 8,
+                "total_tokens": 28,
+                "provider": "openai",
+                "response_model": "test-model",
+                "submission_json": '{"summary":"failed"}',
+            },
+        )
+
+        rows = rdb.run_metrics_grouped(
+            benchmark="swebench-live",
+            model_id="test-model",
+            backend_name="openai",
+            timeout_s=60,
+            group_by=(),
+        )
+
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["prompts_recorded"] == 2
+    assert r["prompt_record_rate"] == 1.0
+    assert r["usage_recorded"] == 2
+    assert r["usage_record_rate"] == 1.0
+    assert r["prompt_tokens_total"] == 30
+    assert r["completion_tokens_total"] == 13
+    assert r["total_tokens_total"] == 43
+    assert r["prompt_tokens_avg"] == 15.0
+    assert r["completion_tokens_avg"] == 6.5
+    assert r["total_tokens_avg"] == 21.5
+
+
+def test_export_csv_includes_generation_fields(tmp_path: Path) -> None:
+    db_path = tmp_path / "results.db"
+    with ResultsDB(db_path) as rdb:
+        run_id = rdb.start_run(
+            "swebench-live",
+            {
+                "backend_name": "openai",
+                "model_id": "test-model",
+                "loop_budget": 1,
+                "timeout_s": 60,
+                "cache_dir": str(tmp_path / "cache"),
+            },
+        )
+        rdb.save_task_result(
+            run_id,
+            {
+                "task_id": "HumanEval/0",
+                "passed": True,
+                "attempts_used": 1,
+                "time_ms": 500,
+                "exit_code": 0,
+                "timed_out": False,
+                "stdout": "ok",
+                "stderr": "",
+                "error": None,
+                "code_sha256": "abc",
+                "prompt_snapshot": "prompt body",
+                "prompt_tokens": 11,
+                "completion_tokens": 7,
+                "total_tokens": 18,
+                "provider": "openai",
+                "response_model": "test-model",
+                "submission_json": '{"summary":"ok"}',
+            },
+        )
+
+    out = export_csv(inputs=[db_path], out_dir=tmp_path / "csv", include_logs=True)
+    with Path(out["task_results_csv"]).open(newline="", encoding="utf-8") as f:
+        rows = list(DictReader(f))
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["provider"] == "openai"
+    assert row["response_model"] == "test-model"
+    assert row["prompt_tokens"] == "11"
+    assert row["completion_tokens"] == "7"
+    assert row["total_tokens"] == "18"
+    assert row["submission_json"] == '{"summary":"ok"}'
+    assert row["prompt_snapshot"] == "prompt body"

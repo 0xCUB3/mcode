@@ -51,7 +51,7 @@ def _bluevela_cfg() -> launch_config.LaunchConfig:
     )
 
 
-def test_run_bench_on_bluevela_keeps_podman_storage_in_workspace(tmp_path, monkeypatch) -> None:
+def test_run_bench_on_bluevela_uses_shared_root_for_podman_storage(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(remote.launch_config, "load", lambda: _bluevela_cfg())
     monkeypatch.setattr(remote.launch_config, "validate_for_bluevela", lambda cfg: [])
     monkeypatch.setattr(remote, "_resolve_endpoint", lambda model, cfg: "http://host:8321/v1")
@@ -70,11 +70,14 @@ def test_run_bench_on_bluevela_keeps_podman_storage_in_workspace(tmp_path, monke
     assert ssh is not None
     launch_cmd = next(cmd for cmd in ssh.commands if cmd.startswith("nohup bash -lc "))
     remote_dir = "/u/skula/mcode-launch/bench-runs/bench-1777000000-Qwen-Qwen3.5-35B-A3B"
+    shared_root = "/u/skula/mcode-shared"
+    run_id = "bench-1777000000-Qwen-Qwen3.5-35B-A3B"
 
-    assert 'export XDG_RUNTIME_DIR="/tmp/mcode-bench-$(id -u)-$$"' in launch_cmd
-    assert f"WORKSPACE_TMP={remote_dir}/tmp" in launch_cmd
-    assert f"PODMAN_ROOT={remote_dir}/podman" in launch_cmd
-    assert 'GRAPHROOT="$PODMAN_ROOT/graphroot"' in launch_cmd
-    assert 'RUNROOT="$PODMAN_ROOT/runroot"' in launch_cmd
+    assert f"export XDG_RUNTIME_DIR={shared_root}/bench-runtime/{run_id}" in launch_cmd
+    assert f"WORKSPACE_TMP={shared_root}/bench-tmp/{run_id}" in launch_cmd
+    assert f"GRAPHROOT={shared_root}/bench-podman/graphroot/{run_id}" in launch_cmd
+    assert f"RUNROOT={shared_root}/bench-podman/runroot/{run_id}" in launch_cmd
+    assert f"WORKSPACE_TMP={remote_dir}/tmp" not in launch_cmd
+    assert "/tmp/mcode-bench-" not in launch_cmd
     assert 'GRAPHROOT="$XDG_RUNTIME_DIR/graphroot"' not in launch_cmd
     assert 'RUNROOT="$XDG_RUNTIME_DIR/runroot"' not in launch_cmd

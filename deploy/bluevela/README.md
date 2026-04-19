@@ -17,6 +17,7 @@ uv run mcode launch doctor bluevela --init --login <user>@<login-host>
 # Launch a server + run bench against it
 uv run mcode launch bluevela --model Qwen/Qwen3.5-35B-A3B
 uv run mcode bench swebench-live --backend openai --model Qwen/Qwen3.5-35B-A3B --limit 10
+uv run mcode bench swebench-live --backend openai --model Qwen/Qwen3.5-35B-A3B --sampling rejection --n-samples 3 --limit 10
 
 # Stop when done
 uv run mcode launch stop --all

@@ -37,7 +37,8 @@ def test_cli_bench_swebench_help() -> None:
     _invoke_help("bench", "swebench-lite", "--help")
     option_names = _command_option_names("bench", "swebench-lite")
     assert "n_samples" in option_names
-    assert "strategy" not in option_names
+    assert "sampling" in option_names
+    assert "sampling_budget" in option_names
 
 
 def test_cli_report_help() -> None:
@@ -45,7 +46,32 @@ def test_cli_report_help() -> None:
 
 
 def test_cli_bench_swebench_live_help() -> None:
-    assert "n_samples" in _command_option_names("bench", "swebench-live")
+    option_names = _command_option_names("bench", "swebench-live")
+    assert "n_samples" in option_names
+    assert "sampling" in option_names
+    assert "sampling_budget" in option_names
+
+
+def test_cli_compare_help() -> None:
+    _invoke_help("compare", "--help")
+
+
+def test_cli_rejects_sampling_budget_without_sampling() -> None:
+    runner = CliRunner()
+    res = runner.invoke(
+        app,
+        [
+            "bench",
+            "swebench-lite",
+            "--model",
+            "test-model",
+            "--sampling-budget",
+            "2",
+        ],
+    )
+
+    assert res.exit_code != 0
+    assert "--sampling-budget requires --sampling != none" in res.output
 
 
 def test_cli_deps_sync_help() -> None:

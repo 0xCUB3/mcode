@@ -21,6 +21,12 @@ To sync the project with the pinned upstream Mellea release:
 uv run mcode deps sync --extra swebench --extra datasets
 ```
 
+To enable Mellea telemetry exporters and plugin hooks as well:
+
+```bash
+uv run mcode deps sync --extra swebench --extra datasets --extra observability
+```
+
 If you want to override that temporarily with a local checkout, set
 `MCODE_MELLEA_PATH=/path/to/mellea` before running the command.
 
@@ -36,8 +42,9 @@ Useful flags:
 - `--timeout`: eval timeout per task
 - `--limit`: run the first N tasks
 - `--shard-count/--shard-index`: shard a run across multiple workers
-- `--strategy`: `repair`, `sofai`, or `raw`
-- `--n-samples`: number of patch samples to generate per task
+- `--sampling`: `none`, `rejection`, `repair`, or `sofai`
+- `--sampling-budget`: override the Mellea sampling loop budget
+- `--n-samples`: outer attempts when `--sampling none`, otherwise the sampling budget fallback
 
 If you need to force local image builds instead of pulling prebuilt images:
 
@@ -62,6 +69,30 @@ uv run mcode results --benchmark swebench-live
 uv run mcode results --benchmark swebench-live --time
 ```
 
+Run-to-run diffs:
+
+```bash
+uv run mcode compare --baseline-dir ./results/baseline --candidate-dir ./results/candidate
+```
+
+With the observability extra installed, Mellea token metrics and hook-backed plugin tracing can be turned on with:
+
+```bash
+export MELLEA_METRICS_ENABLED=true
+export MELLEA_METRICS_CONSOLE=true
+```
+
+Tracing and log export stay opt-in:
+
+```bash
+export MELLEA_TRACE_APPLICATION=true
+export MELLEA_TRACE_BACKEND=true
+export MELLEA_LOGS_OTLP=true
+```
+
+Task rows in the SQLite results DB now also store the final prompt snapshot, structured
+submission, and aggregated prompt/completion/total token usage for the full solve loop.
+
 HTML report:
 
 ```bash
@@ -79,6 +110,8 @@ CSV export:
 ```bash
 uv run mcode export-csv -i experiments/results --out-dir experiments/results --prefix mcode
 ```
+
+Add `--include-logs` to export prompt snapshots along with stdout/stderr/error.
 
 ## Launch vLLM (Blue Vela or local)
 

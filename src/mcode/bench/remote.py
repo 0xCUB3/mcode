@@ -100,6 +100,14 @@ def run_bench_on_bluevela(
     remote_dir = f"{bv.workspace_root}/bench-runs/{run_id}"
     remote_db = f"{remote_dir}/results.db"
     remote_log = f"{remote_dir}/bench.log"
+    runtime_base = f"{bv.shared_root}/bench-runtime"
+    shared_tmp_base = f"{bv.shared_root}/bench-tmp"
+    graphroot_base = bv.podman.graphroot_base or f"{bv.shared_root}/bench-podman/graphroot"
+    runroot_base = bv.podman.runroot_base or f"{bv.shared_root}/bench-podman/runroot"
+    runtime_dir = f"{runtime_base}/{run_id}"
+    remote_tmp = f"{shared_tmp_base}/{run_id}"
+    graphroot_dir = f"{graphroot_base}/{run_id}"
+    runroot_dir = f"{runroot_base}/{run_id}"
 
     # Replace/append --db so the bench writes to the remote path.
     argv = [*bench_argv]
@@ -109,7 +117,20 @@ def run_bench_on_bluevela(
     else:
         argv += ["--db", remote_db]
 
-    ssh.run(f"mkdir -p {shlex.quote(remote_dir)}", timeout=30)
+    ssh.run(
+        "mkdir -p "
+        + " ".join(
+            shlex.quote(path)
+            for path in (
+                remote_dir,
+                runtime_base,
+                shared_tmp_base,
+                graphroot_base,
+                runroot_base,
+            )
+        ),
+        timeout=30,
+    )
 
     # Assemble the remote shell: source hf-env (optional), start podman socket
     # if absent, export DOCKER_HOST + OPENAI_BASE_URL, cd, exec bench.
@@ -132,22 +153,18 @@ def run_bench_on_bluevela(
 set -euo pipefail
 cd {shlex.quote(bv.workspace_root)}
 [ -f {shlex.quote(hf_env)} ] && source {shlex.quote(hf_env)}
-# Keep only the podman socket in /tmp. Put podman storage and TMPDIR in the
-# workspace run directory so bench pulls do not exhaust the login node /tmp.
-# Clean up any old bench dirs to protect /tmp's quota.
-export XDG_RUNTIME_DIR="/tmp/mcode-bench-$(id -u)-$$"
+# Keep all bench state off /tmp. Podman runtime dir, socket, storage, and
+# TMPDIR live under the shared GPFS root.
+export XDG_RUNTIME_DIR={shlex.quote(runtime_dir)}
 mkdir -p "$XDG_RUNTIME_DIR"
-WORKSPACE_TMP={shlex.quote(remote_dir + "/tmp")}
-PODMAN_ROOT={shlex.quote(remote_dir + "/podman")}
+WORKSPACE_TMP={shlex.quote(remote_tmp)}
+GRAPHROOT={shlex.quote(graphroot_dir)}
+RUNROOT={shlex.quote(runroot_dir)}
 mkdir -p "$WORKSPACE_TMP"
-mkdir -p "$PODMAN_ROOT"
+mkdir -p "$GRAPHROOT"
+mkdir -p "$RUNROOT"
 export TMPDIR="$WORKSPACE_TMP"
-find /tmp -maxdepth 1 -user "$(id -u)" -name 'mcode-bench-*' \\
-  ! -path "$XDG_RUNTIME_DIR" -mtime +0 \\
-  -exec rm -rf {{}} + 2>/dev/null || true
 SOCK="$XDG_RUNTIME_DIR/podman.sock"
-GRAPHROOT="$PODMAN_ROOT/graphroot"
-RUNROOT="$PODMAN_ROOT/runroot"
 nohup podman \\
   --cgroup-manager=cgroupfs --storage-driver=overlay \\
   --root "$GRAPHROOT" --runroot "$RUNROOT" \\

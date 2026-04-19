@@ -23,7 +23,7 @@ datasets = [
   "datasets>=2.14.0,<4.0",
 ]
 observability = [
-  "mellea[telemetry]==0.4.2",
+  "mellea[telemetry,hooks]==0.4.2",
 ]
 
 [project.scripts]

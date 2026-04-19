@@ -1280,7 +1280,7 @@ dev = [
     { name = "ruff" },
 ]
 observability = [
-    { name = "mellea", extra = ["telemetry"] },
+    { name = "mellea", extra = ["hooks", "telemetry"] },
 ]
 swebench = [
     { name = "swebench" },
@@ -1291,7 +1291,7 @@ requires-dist = [
     { name = "datasets", marker = "extra == 'datasets'", specifier = ">=2.14.0,<4.0" },
     { name = "docker", specifier = ">=7.0.0" },
     { name = "mellea", specifier = "==0.4.2" },
-    { name = "mellea", extras = ["telemetry"], marker = "extra == 'observability'", specifier = "==0.4.2" },
+    { name = "mellea", extras = ["telemetry", "hooks"], marker = "extra == 'observability'", specifier = "==0.4.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4.0" },
@@ -1359,6 +1359,10 @@ wheels = [
 ]
 
 [package.optional-dependencies]
+hooks = [
+    { name = "cpex" },
+    { name = "grpcio" },
+]
 telemetry = [
     { name = "cpex" },
     { name = "grpcio" },

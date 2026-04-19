@@ -7,7 +7,8 @@ _BASE_SYSTEM_PROMPT = (
     "You MUST edit existing source files to fix the bug. Do NOT create new files. "
     "Do NOT write test scripts. Only modify the existing code that contains the bug.\n\n"
     "Use the structured code tools to search, read, edit, and verify. Start narrow, make one "
-    "concrete edit once you have a target, then use `run_tests` before `final_answer`."
+    "concrete edit once you have a target, then use `run_tests` before `final_answer`. "
+    "When you call `final_answer`, keep the answer short."
 )
 
 

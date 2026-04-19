@@ -86,6 +86,13 @@ class ResultsDB:
               zero_edit INTEGER NOT NULL DEFAULT 1,
               zero_verification INTEGER NOT NULL DEFAULT 1,
               verification_succeeded INTEGER NOT NULL DEFAULT 0,
+              prompt_snapshot TEXT,
+              prompt_tokens INTEGER,
+              completion_tokens INTEGER,
+              total_tokens INTEGER,
+              provider TEXT,
+              response_model TEXT,
+              submission_json TEXT,
               FOREIGN KEY (run_id) REFERENCES runs(id)
             )
             """
@@ -103,6 +110,13 @@ class ResultsDB:
         self._ensure_column("task_results", "zero_edit", "INTEGER NOT NULL DEFAULT 1")
         self._ensure_column("task_results", "zero_verification", "INTEGER NOT NULL DEFAULT 1")
         self._ensure_column("task_results", "verification_succeeded", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("task_results", "prompt_snapshot", "TEXT")
+        self._ensure_column("task_results", "prompt_tokens", "INTEGER")
+        self._ensure_column("task_results", "completion_tokens", "INTEGER")
+        self._ensure_column("task_results", "total_tokens", "INTEGER")
+        self._ensure_column("task_results", "provider", "TEXT")
+        self._ensure_column("task_results", "response_model", "TEXT")
+        self._ensure_column("task_results", "submission_json", "TEXT")
         self.conn.commit()
 
     def _ensure_column(self, table: str, column: str, ddl: str) -> None:
@@ -198,8 +212,10 @@ class ResultsDB:
             (run_id, task_id, passed, attempts_used, time_ms, exit_code,
              timed_out, stdout, stderr, error, code_sha256, terminal_reason,
              turns_to_first_edit, turns_to_first_verification, zero_edit,
-             zero_verification, verification_succeeded)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             zero_verification, verification_succeeded, prompt_snapshot,
+             prompt_tokens, completion_tokens, total_tokens, provider,
+             response_model, submission_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
@@ -219,6 +235,13 @@ class ResultsDB:
                 1 if result.get("zero_edit", True) else 0,
                 1 if result.get("zero_verification", True) else 0,
                 1 if result.get("verification_succeeded", False) else 0,
+                result.get("prompt_snapshot"),
+                result.get("prompt_tokens"),
+                result.get("completion_tokens"),
+                result.get("total_tokens"),
+                result.get("provider"),
+                result.get("response_model"),
+                result.get("submission_json"),
             ),
         )
         self.conn.commit()
@@ -397,6 +420,8 @@ class ResultsDB:
             zero_edit = int(row["zero_edit"] or 0)
             zero_verification = int(row["zero_verification"] or 0)
             verification_succeeded = int(row["verification_succeeded"] or 0)
+            usage_recorded = int(row["usage_recorded"] or 0)
+            prompts_recorded = int(row["prompts_recorded"] or 0)
             return {
                 "zero_edit": zero_edit,
                 "zero_edit_rate": zero_edit / total if total else 0.0,
@@ -404,6 +429,16 @@ class ResultsDB:
                 "zero_verification_rate": zero_verification / total if total else 0.0,
                 "verification_succeeded": verification_succeeded,
                 "verification_success_rate": verification_succeeded / total if total else 0.0,
+                "prompts_recorded": prompts_recorded,
+                "prompt_record_rate": prompts_recorded / total if total else 0.0,
+                "usage_recorded": usage_recorded,
+                "usage_record_rate": usage_recorded / total if total else 0.0,
+                "prompt_tokens_total": int(row["prompt_tokens_total"] or 0),
+                "completion_tokens_total": int(row["completion_tokens_total"] or 0),
+                "total_tokens_total": int(row["total_tokens_total"] or 0),
+                "prompt_tokens_avg": row["prompt_tokens_avg"],
+                "completion_tokens_avg": row["completion_tokens_avg"],
+                "total_tokens_avg": row["total_tokens_avg"],
                 "turns_to_first_edit_avg": row["turns_to_first_edit_avg"],
                 "turns_to_first_verification_avg": row["turns_to_first_verification_avg"],
                 **{reason: int(row[reason] or 0) for reason in _TERMINAL_REASON_BUCKETS},
@@ -426,6 +461,14 @@ class ResultsDB:
                 SUM(tr.zero_edit) AS zero_edit,
                 SUM(tr.zero_verification) AS zero_verification,
                 SUM(tr.verification_succeeded) AS verification_succeeded,
+                COUNT(tr.prompt_snapshot) AS prompts_recorded,
+                COUNT(tr.total_tokens) AS usage_recorded,
+                COALESCE(SUM(tr.prompt_tokens), 0) AS prompt_tokens_total,
+                COALESCE(SUM(tr.completion_tokens), 0) AS completion_tokens_total,
+                COALESCE(SUM(tr.total_tokens), 0) AS total_tokens_total,
+                AVG(tr.prompt_tokens) AS prompt_tokens_avg,
+                AVG(tr.completion_tokens) AS completion_tokens_avg,
+                AVG(tr.total_tokens) AS total_tokens_avg,
                 AVG(tr.turns_to_first_edit) AS turns_to_first_edit_avg,
                 AVG(tr.turns_to_first_verification) AS turns_to_first_verification_avg,
 {reason_selects}
@@ -520,6 +563,14 @@ class ResultsDB:
             SUM(tr.zero_edit) AS zero_edit,
             SUM(tr.zero_verification) AS zero_verification,
             SUM(tr.verification_succeeded) AS verification_succeeded,
+            COUNT(tr.prompt_snapshot) AS prompts_recorded,
+            COUNT(tr.total_tokens) AS usage_recorded,
+            COALESCE(SUM(tr.prompt_tokens), 0) AS prompt_tokens_total,
+            COALESCE(SUM(tr.completion_tokens), 0) AS completion_tokens_total,
+            COALESCE(SUM(tr.total_tokens), 0) AS total_tokens_total,
+            AVG(tr.prompt_tokens) AS prompt_tokens_avg,
+            AVG(tr.completion_tokens) AS completion_tokens_avg,
+            AVG(tr.total_tokens) AS total_tokens_avg,
             AVG(tr.turns_to_first_edit) AS turns_to_first_edit_avg,
             AVG(tr.turns_to_first_verification) AS turns_to_first_verification_avg,
 {reason_selects}
@@ -678,8 +729,10 @@ class ResultsDB:
                      exit_code, timed_out, stdout, stderr, error, code_sha256,
                      terminal_reason, turns_to_first_edit,
                      turns_to_first_verification, zero_edit, zero_verification,
-                     verification_succeeded)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     verification_succeeded, prompt_snapshot, prompt_tokens,
+                     completion_tokens, total_tokens, provider, response_model,
+                     submission_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     [
                         (
@@ -700,6 +753,13 @@ class ResultsDB:
                             int(_row_value(tr, "zero_edit", 1) or 0),
                             int(_row_value(tr, "zero_verification", 1) or 0),
                             int(_row_value(tr, "verification_succeeded", 0) or 0),
+                            _row_value(tr, "prompt_snapshot"),
+                            _row_value(tr, "prompt_tokens"),
+                            _row_value(tr, "completion_tokens"),
+                            _row_value(tr, "total_tokens"),
+                            _row_value(tr, "provider"),
+                            _row_value(tr, "response_model"),
+                            _row_value(tr, "submission_json"),
                         )
                         for tr in task_rows
                     ],
@@ -847,6 +907,13 @@ def merge_shard_dbs(*, out_path: Path, shard_paths: list[Path], force: bool = Fa
                         "zero_edit": bool(_row_value(r, "zero_edit", 1)),
                         "zero_verification": bool(_row_value(r, "zero_verification", 1)),
                         "verification_succeeded": bool(_row_value(r, "verification_succeeded", 0)),
+                        "prompt_snapshot": _row_value(r, "prompt_snapshot"),
+                        "prompt_tokens": _row_value(r, "prompt_tokens"),
+                        "completion_tokens": _row_value(r, "completion_tokens"),
+                        "total_tokens": _row_value(r, "total_tokens"),
+                        "provider": _row_value(r, "provider"),
+                        "response_model": _row_value(r, "response_model"),
+                        "submission_json": _row_value(r, "submission_json"),
                     },
                 )
                 written += 1
@@ -925,16 +992,22 @@ def export_csv(
         "exit_code",
         "timed_out",
         "code_sha256",
+        "provider",
+        "response_model",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
         "terminal_reason",
         "turns_to_first_edit",
         "turns_to_first_verification",
         "zero_edit",
         "zero_verification",
         "verification_succeeded",
+        "submission_json",
         "config_json",
     ]
     if include_logs:
-        task_fields.extend(["stdout", "stderr", "error"])
+        task_fields.extend(["stdout", "stderr", "error", "prompt_snapshot"])
 
     run_rows = 0
     task_rows = 0
@@ -1015,6 +1088,11 @@ def export_csv(
                             "exit_code": _row_value(tr, "exit_code"),
                             "timed_out": int(_row_value(tr, "timed_out", 0) or 0),
                             "code_sha256": _row_value(tr, "code_sha256"),
+                            "provider": _row_value(tr, "provider"),
+                            "response_model": _row_value(tr, "response_model"),
+                            "prompt_tokens": _row_value(tr, "prompt_tokens"),
+                            "completion_tokens": _row_value(tr, "completion_tokens"),
+                            "total_tokens": _row_value(tr, "total_tokens"),
                             "terminal_reason": _row_value(tr, "terminal_reason"),
                             "turns_to_first_edit": _row_value(tr, "turns_to_first_edit"),
                             "turns_to_first_verification": _row_value(
@@ -1025,6 +1103,7 @@ def export_csv(
                             "verification_succeeded": int(
                                 _row_value(tr, "verification_succeeded", 0) or 0
                             ),
+                            "submission_json": _row_value(tr, "submission_json"),
                             "config_json": config_json,
                         }
                         if include_logs:
@@ -1033,6 +1112,7 @@ def export_csv(
                                     "stdout": _row_value(tr, "stdout"),
                                     "stderr": _row_value(tr, "stderr"),
                                     "error": _row_value(tr, "error"),
+                                    "prompt_snapshot": _row_value(tr, "prompt_snapshot"),
                                 }
                             )
                         tasks_writer.writerow(row)

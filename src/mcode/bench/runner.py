@@ -14,6 +14,7 @@ from rich.progress import Progress
 from mcode.bench.results import ResultsDB, RunSummary
 from mcode.execution.sandbox import DockerUnavailableError
 from mcode.llm.session import LLMSession
+from mcode.mellea_compat import requirements_available, sampling_available
 
 
 def _default_cache_dir() -> Path:
@@ -46,6 +47,8 @@ class BenchConfig:
     swebench_pids_limit: int = 512
     swebench_dataset: str = "SWE-bench/SWE-bench_Lite"
     n_samples: int = 1
+    sampling_strategy: str = "none"
+    sampling_budget: int | None = None
 
 
 @dataclass(frozen=True)
@@ -76,6 +79,8 @@ class BenchmarkRunner:
             loop_budget=config.loop_budget,
             temperature=config.temperature,
             seed=config.seed,
+            sampling_strategy=config.sampling_strategy,
+            sampling_budget=config.sampling_budget,
         )
 
     def run_benchmark(
@@ -213,194 +218,186 @@ class BenchmarkRunner:
         if verification_metadata is None:
             verification_metadata = getattr(task, "test_cmds", None)
 
-        with self.llm.open():
-            patch = self.llm.generate_patch(
-                repo=task.repo,
-                problem_statement=task.problem_statement,
-                hints_text=task.hints_text or "",
-                repo_root=str(repo_root),
-                n_samples=self.config.n_samples,
-                test_cmds=verification_metadata,
-                command_fn=command_fn,
-                visible_repo_root=visible_repo_root,
-            )
-            return patch, self.llm.last_patch_metrics
+        result = self.llm.solve(
+            repo=task.repo,
+            problem_statement=task.problem_statement,
+            hints_text=task.hints_text or "",
+            repo_root=str(repo_root),
+            n_samples=self.config.n_samples,
+            test_cmds=verification_metadata,
+            command_fn=command_fn,
+            visible_repo_root=visible_repo_root,
+        )
+        return result.patch, _generation_result(self.llm)
 
     def _run_swebench_live_task(self, task, *, live_sandbox, run_id: int) -> dict:
-        start = time.time()
-        try:
-            with live_sandbox.repo_context(task) as repo_context:
-                patch_context = _coerce_patch_repo_context(repo_context)
-                try:
-                    patch, scaffold_metrics = self._generate_task_patch(
-                        task,
-                        repo_root=patch_context.repo_root,
-                        command_fn=patch_context.command_fn,
-                        visible_repo_root=patch_context.visible_repo_root,
-                    )
-                except DockerUnavailableError:
-                    raise
-                except Exception as e:
-                    elapsed_ms = int((time.time() - start) * 1000)
-                    tb = traceback.format_exc()
-                    return {
-                        "task_id": task.instance_id,
-                        "passed": False,
-                        "attempts_used": 0,
-                        "time_ms": elapsed_ms,
-                        "exit_code": None,
-                        "timed_out": False,
-                        "stdout": None,
-                        "stderr": (_truncate(tb, max_chars=8000) if tb else None),
-                        "error": f"{type(e).__name__}: {e}",
-                        "code_sha256": None,
-                        **_scaffold_metrics(
-                            scaffold_metrics if "scaffold_metrics" in locals() else None,
-                            terminal_reason="infra_failure",
-                        ),
-                    }
-                elapsed_ms = int((time.time() - start) * 1000)
-
-                has_patch = bool(patch and patch.strip())
-                scaffold_result = _scaffold_metrics(scaffold_metrics)
-                last_detail: dict = {}
-                if has_patch:
-                    run = live_sandbox.evaluate_patch(
-                        task=task,
-                        patch=patch,
-                        run_id=f"mcode-{run_id}",
-                        timeout_s=self.config.timeout_s,
-                    )
-                    if run.resolved:
-                        scaffold_result["terminal_reason"] = "submitted"
-                    elif scaffold_result.get("verification_succeeded"):
-                        scaffold_result["terminal_reason"] = "wrong_patch_after_verification"
-                    last_detail = {
-                        "exit_code": None,
-                        "timed_out": run.timed_out,
-                        "stdout": _truncate(run.test_output),
-                        "stderr": json.dumps(run.report, sort_keys=True),
-                        "error": None if run.resolved else "Not resolved",
-                    }
-        except DockerUnavailableError:
-            raise
-        except Exception as e:
-            elapsed_ms = int((time.time() - start) * 1000)
-            tb = traceback.format_exc()
-            return {
-                "task_id": task.instance_id,
-                "passed": False,
-                "attempts_used": 0,
-                "time_ms": elapsed_ms,
-                "exit_code": None,
-                "timed_out": False,
-                "stdout": None,
-                "stderr": (_truncate(tb, max_chars=8000) if tb else None),
-                "error": f"{type(e).__name__}: {e}",
-                "code_sha256": None,
-                **_scaffold_metrics(None, terminal_reason="infra_failure"),
-            }
-
-        sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest() if patch else None
-
-        return {
-            "task_id": task.instance_id,
-            "passed": last_detail.get("error") is None if last_detail else False,
-            "attempts_used": 1,
-            "time_ms": elapsed_ms,
-            "code_sha256": sha,
-            **last_detail,
-            **scaffold_result,
-        }
+        return self._run_task(
+            task_id=task.instance_id,
+            generation_task=task,
+            repo_context_factory=lambda: live_sandbox.repo_context(task),
+            evaluate_patch=lambda patch: _evaluate_live_patch(
+                live_sandbox=live_sandbox,
+                task=task,
+                patch=patch,
+                run_id=run_id,
+                timeout_s=self.config.timeout_s,
+            ),
+        )
 
     def _run_swebench_task(self, task, *, swe_sandbox, run_id: int) -> dict:
-        start = time.time()
-        try:
-            with swe_sandbox.repo_context(task.raw_instance) as repo_context:
-                patch_context = _coerce_patch_repo_context(repo_context)
-                try:
-                    patch, scaffold_metrics = self._generate_task_patch(
-                        task,
-                        repo_root=patch_context.repo_root,
-                        command_fn=patch_context.command_fn,
-                        visible_repo_root=patch_context.visible_repo_root,
-                    )
-                except DockerUnavailableError:
-                    raise
-                except Exception as e:
-                    elapsed_ms = int((time.time() - start) * 1000)
-                    tb = traceback.format_exc()
-                    return {
-                        "task_id": task.instance_id,
-                        "passed": False,
-                        "attempts_used": 0,
-                        "time_ms": elapsed_ms,
-                        "exit_code": None,
-                        "timed_out": False,
-                        "stdout": None,
-                        "stderr": _truncate(tb, max_chars=8000) if tb else None,
-                        "error": f"{type(e).__name__}: {e}",
-                        "code_sha256": None,
-                        **_scaffold_metrics(
-                            scaffold_metrics if "scaffold_metrics" in locals() else None,
-                            terminal_reason="infra_failure",
-                        ),
-                    }
-                elapsed_ms = int((time.time() - start) * 1000)
+        return self._run_task(
+            task_id=task.instance_id,
+            generation_task=task,
+            repo_context_factory=lambda: swe_sandbox.repo_context(task.raw_instance),
+            evaluate_patch=lambda patch: _evaluate_lite_patch(
+                swe_sandbox=swe_sandbox,
+                task=task,
+                patch=patch,
+                run_id=run_id,
+                timeout_s=self.config.timeout_s,
+                model_id=self.config.model_id,
+            ),
+        )
 
-                has_patch = bool(patch and patch.strip())
+    def _run_task(
+        self,
+        *,
+        task_id: str,
+        generation_task,
+        repo_context_factory: Callable[[], object],
+        evaluate_patch: Callable[[str], _TaskEvaluation],
+    ) -> dict:
+        start = time.time()
+        patch = ""
+        scaffold_metrics: dict[str, object] | None = None
+        try:
+            with repo_context_factory() as repo_context:
+                patch_context = _coerce_patch_repo_context(repo_context)
+                patch, scaffold_metrics = self._generate_task_patch(
+                    generation_task,
+                    repo_root=patch_context.repo_root,
+                    command_fn=patch_context.command_fn,
+                    visible_repo_root=patch_context.visible_repo_root,
+                )
+                elapsed_ms = int((time.time() - start) * 1000)
                 scaffold_result = _scaffold_metrics(scaffold_metrics)
-                last_detail: dict = {}
-                if has_patch:
-                    run = swe_sandbox.evaluate_patch(
-                        instance=task.raw_instance,
-                        model_id=self.config.model_id,
-                        patch=patch,
-                        run_id=f"mcode-{run_id}",
-                        timeout_s=self.config.timeout_s,
-                    )
-                    inst_report = run.report.get(task.instance_id, {})
-                    if run.resolved:
+                eval_detail: _TaskEvaluation | None = None
+                if patch.strip():
+                    eval_detail = evaluate_patch(patch)
+                    if eval_detail.passed:
                         scaffold_result["terminal_reason"] = "submitted"
                     elif scaffold_result.get("verification_succeeded"):
                         scaffold_result["terminal_reason"] = "wrong_patch_after_verification"
-                    last_detail = {
-                        "exit_code": None,
-                        "timed_out": run.timed_out,
-                        "stdout": _truncate(run.test_output),
-                        "stderr": json.dumps(inst_report, sort_keys=True),
-                        "error": None if run.resolved else "Not resolved",
-                    }
         except DockerUnavailableError:
             raise
         except Exception as e:
-            elapsed_ms = int((time.time() - start) * 1000)
-            tb = traceback.format_exc()
-            return {
-                "task_id": task.instance_id,
-                "passed": False,
-                "attempts_used": 0,
-                "time_ms": elapsed_ms,
-                "exit_code": None,
-                "timed_out": False,
-                "stdout": None,
-                "stderr": _truncate(tb, max_chars=8000) if tb else None,
-                "error": f"{type(e).__name__}: {e}",
-                "code_sha256": None,
-                **_scaffold_metrics(None, terminal_reason="infra_failure"),
-            }
+            return _task_error_result(
+                task_id=task_id,
+                start_time=start,
+                error=e,
+                scaffold_metrics=scaffold_metrics,
+            )
 
         sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest() if patch else None
-
         return {
-            "task_id": task.instance_id,
-            "passed": last_detail.get("error") is None if last_detail else False,
+            "task_id": task_id,
+            "passed": eval_detail.passed if eval_detail is not None else False,
             "attempts_used": 1,
             "time_ms": elapsed_ms,
             "code_sha256": sha,
-            **last_detail,
+            **(eval_detail.as_result_dict() if eval_detail is not None else {}),
             **scaffold_result,
         }
+
+
+@dataclass(frozen=True)
+class _TaskEvaluation:
+    passed: bool
+    timed_out: bool
+    stdout: str | None
+    stderr: str | None
+    error: str | None
+
+    def as_result_dict(self) -> dict[str, object]:
+        return {
+            "exit_code": None,
+            "timed_out": self.timed_out,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+            "error": self.error,
+        }
+
+
+def _evaluate_live_patch(
+    *,
+    live_sandbox,
+    task,
+    patch: str,
+    run_id: int,
+    timeout_s: int,
+) -> _TaskEvaluation:
+    run = live_sandbox.evaluate_patch(
+        task=task,
+        patch=patch,
+        run_id=f"mcode-{run_id}",
+        timeout_s=timeout_s,
+    )
+    return _TaskEvaluation(
+        passed=run.resolved,
+        timed_out=run.timed_out,
+        stdout=_truncate(run.test_output),
+        stderr=json.dumps(run.report, sort_keys=True),
+        error=None if run.resolved else "Not resolved",
+    )
+
+
+def _evaluate_lite_patch(
+    *,
+    swe_sandbox,
+    task,
+    patch: str,
+    run_id: int,
+    timeout_s: int,
+    model_id: str,
+) -> _TaskEvaluation:
+    run = swe_sandbox.evaluate_patch(
+        instance=task.raw_instance,
+        model_id=model_id,
+        patch=patch,
+        run_id=f"mcode-{run_id}",
+        timeout_s=timeout_s,
+    )
+    inst_report = run.report.get(task.instance_id, {})
+    return _TaskEvaluation(
+        passed=run.resolved,
+        timed_out=run.timed_out,
+        stdout=_truncate(run.test_output),
+        stderr=json.dumps(inst_report, sort_keys=True),
+        error=None if run.resolved else "Not resolved",
+    )
+
+
+def _task_error_result(
+    *,
+    task_id: str,
+    start_time: float,
+    error: Exception,
+    scaffold_metrics: dict[str, object] | None,
+) -> dict[str, object]:
+    tb = traceback.format_exc()
+    return {
+        "task_id": task_id,
+        "passed": False,
+        "attempts_used": 0,
+        "time_ms": int((time.time() - start_time) * 1000),
+        "exit_code": None,
+        "timed_out": False,
+        "stdout": None,
+        "stderr": _truncate(tb, max_chars=8000) if tb else None,
+        "error": f"{type(error).__name__}: {error}",
+        "code_sha256": None,
+        **_scaffold_metrics(scaffold_metrics, terminal_reason="infra_failure"),
+    }
 
 
 def _scaffold_metrics(
@@ -415,6 +412,13 @@ def _scaffold_metrics(
         "zero_edit": True,
         "zero_verification": True,
         "verification_succeeded": False,
+        "prompt_snapshot": None,
+        "prompt_tokens": None,
+        "completion_tokens": None,
+        "total_tokens": None,
+        "provider": None,
+        "response_model": None,
+        "submission_json": None,
     }
     if metrics:
         out.update(metrics)
@@ -460,6 +464,10 @@ def _runtime_metadata() -> dict[str, str]:
         meta["mcode_version"] = version("mcode")
     except PackageNotFoundError:
         pass
+    try:
+        meta["mellea_version"] = version("mellea")
+    except PackageNotFoundError:
+        pass
 
     sha = os.environ.get("MCODE_GIT_SHA") or os.environ.get("GITHUB_SHA")
     if not sha:
@@ -483,4 +491,21 @@ def _runtime_metadata() -> dict[str, str]:
 
     meta["python_version"] = sys.version.split()[0]
     meta["platform"] = platform.platform()
+    try:
+        from mellea.telemetry import is_metrics_enabled
+
+        meta["mellea_metrics_enabled"] = "1" if is_metrics_enabled() else "0"
+    except Exception:
+        meta["mellea_metrics_enabled"] = "0"
+    meta["mellea_requirements_available"] = "1" if requirements_available() else "0"
+    meta["mellea_sampling_available"] = "1" if sampling_available() else "0"
     return meta
+
+
+def _generation_result(session: LLMSession) -> dict[str, object] | None:
+    result = session.last_solve_result
+    if result is None:
+        return None
+    if session.last_submission:
+        result["submission_json"] = json.dumps(session.last_submission, sort_keys=True)
+    return result

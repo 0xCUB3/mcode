@@ -5,7 +5,7 @@ import tempfile
 from contextlib import contextmanager
 from glob import glob
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import typer
 from rich.console import Console
@@ -84,6 +84,16 @@ def _parse_task_ids(raw: str | None) -> list[str] | None:
             return ids
         raise typer.BadParameter(f"Cannot parse task IDs from {raw}")
     return [t.strip() for t in raw.split(",") if t.strip()]
+
+
+def _validate_sampling(
+    *,
+    sampling: str,
+    sampling_budget: int | None,
+) -> tuple[str, int | None]:
+    if sampling == "none" and sampling_budget is not None:
+        raise typer.BadParameter("--sampling-budget requires --sampling != none")
+    return sampling, sampling_budget
 
 
 @contextmanager
@@ -250,6 +260,7 @@ def results(
                 table.add_column("pass_rate", justify="right")
                 table.add_column("avg_s", justify="right")
                 table.add_column("p95_s", justify="right")
+                table.add_column("tok/task", justify="right")
                 table.add_column("sec/solve", justify="right")
                 table.add_column("solves/hr", justify="right")
                 for row in rows:
@@ -267,6 +278,9 @@ def results(
                         f"{row['pass_rate']:.1%}",
                         f"{row['time_s_avg']:.2f}",
                         f"{row['time_s_p95']:.2f}" if row.get("time_s_p95") is not None else "-",
+                        f"{row['total_tokens_avg']:.1f}"
+                        if row.get("total_tokens_avg") is not None
+                        else "-",
                         f"{row['sec_per_solve']:.2f}"
                         if row.get("sec_per_solve") is not None
                         else "-",
@@ -331,6 +345,7 @@ def results(
             table.add_column("pass_rate", justify="right")
             table.add_column("avg_s", justify="right")
             table.add_column("p95_s", justify="right")
+            table.add_column("tok/task", justify="right")
             table.add_column("sec/solve", justify="right")
             table.add_column("solves/hr", justify="right")
             for row in rows:
@@ -349,6 +364,9 @@ def results(
                     f"{row['pass_rate']:.1%}",
                     f"{row['time_s_avg']:.2f}",
                     f"{row['time_s_p95']:.2f}" if row.get("time_s_p95") is not None else "-",
+                    f"{row['total_tokens_avg']:.1f}"
+                    if row.get("total_tokens_avg") is not None
+                    else "-",
                     f"{row['sec_per_solve']:.2f}" if row.get("sec_per_solve") is not None else "-",
                     f"{row['solves_per_hour']:.2f}",
                 )
@@ -387,7 +405,30 @@ def results(
                 str(row["passed"]),
                 f"{row['pass_rate']:.1%}",
             )
-        console.print(table)
+            console.print(table)
+
+
+@app.command("compare")
+def compare(
+    baseline_dir: Annotated[Path, typer.Option("--baseline-dir", help="Baseline DB directory")],
+    candidate_dir: Annotated[Path, typer.Option("--candidate-dir", help="Candidate DB directory")],
+    task_ids: Annotated[
+        str | None,
+        typer.Option(
+            "--task-ids",
+            help="Comma-separated task IDs to compare (or path to JSON/text file)",
+        ),
+    ] = None,
+) -> None:
+    from mcode.bench.compare import compare_run_dirs
+
+    console.print(
+        compare_run_dirs(
+            baseline_dir=str(baseline_dir),
+            candidate_dir=str(candidate_dir),
+            task_ids=_parse_task_ids(task_ids),
+        )
+    )
 
 
 def _config_label(r: dict) -> str:
@@ -1544,8 +1585,16 @@ def bench_swebench_live(
     limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
     n_samples: Annotated[
         int,
-        typer.Option("--n-samples", min=1, help="Samples per task for majority voting"),
+        typer.Option("--n-samples", min=1, help="Outer attempts or sampling budget"),
     ] = 1,
+    sampling: Annotated[
+        Literal["none", "rejection", "repair", "sofai"],
+        typer.Option("--sampling", help="Mellea sampling strategy"),
+    ] = "none",
+    sampling_budget: Annotated[
+        int | None,
+        typer.Option("--sampling-budget", min=1, help="Sampling loop budget override"),
+    ] = None,
     task_ids: Annotated[
         str | None,
         typer.Option(
@@ -1557,6 +1606,10 @@ def bench_swebench_live(
     """Run Microsoft SWE-bench-Live benchmark."""
 
     shard_count, shard_index = _validate_shards(shard_count=shard_count, shard_index=shard_index)
+    sampling, sampling_budget = _validate_sampling(
+        sampling=sampling,
+        sampling_budget=sampling_budget,
+    )
     if shard_count and shard_count > 1 and db == DEFAULT_DB_PATH:
         typer.echo(
             "Note: when running shards in parallel, use a unique --db per shard to avoid SQLite "
@@ -1577,6 +1630,8 @@ def bench_swebench_live(
         task_shard_count=shard_count,
         task_shard_index=shard_index,
         n_samples=n_samples,
+        sampling_strategy=sampling,
+        sampling_budget=sampling_budget,
     )
     parsed_task_ids = _parse_task_ids(task_ids)
     runner = BenchmarkRunner(config=config, results_db=ResultsDB(db))
@@ -1654,8 +1709,16 @@ def bench_swebench_lite(
     limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
     n_samples: Annotated[
         int,
-        typer.Option("--n-samples", min=1, help="Samples per task for majority voting"),
+        typer.Option("--n-samples", min=1, help="Outer attempts or sampling budget"),
     ] = 1,
+    sampling: Annotated[
+        Literal["none", "rejection", "repair", "sofai"],
+        typer.Option("--sampling", help="Mellea sampling strategy"),
+    ] = "none",
+    sampling_budget: Annotated[
+        int | None,
+        typer.Option("--sampling-budget", min=1, help="Sampling loop budget override"),
+    ] = None,
     task_ids: Annotated[
         str | None,
         typer.Option(
@@ -1669,6 +1732,10 @@ def bench_swebench_lite(
     ] = "SWE-bench/SWE-bench_Lite",
 ) -> None:
     shard_count, shard_index = _validate_shards(shard_count=shard_count, shard_index=shard_index)
+    sampling, sampling_budget = _validate_sampling(
+        sampling=sampling,
+        sampling_budget=sampling_budget,
+    )
     if shard_count and shard_count > 1 and db == DEFAULT_DB_PATH:
         typer.echo(
             "Note: when running shards in parallel, use a unique --db per shard to avoid SQLite "
@@ -1693,6 +1760,8 @@ def bench_swebench_lite(
         task_shard_count=shard_count,
         task_shard_index=shard_index,
         n_samples=n_samples,
+        sampling_strategy=sampling,
+        sampling_budget=sampling_budget,
         swebench_dataset=dataset,
     )
     parsed_task_ids = _parse_task_ids(task_ids)
