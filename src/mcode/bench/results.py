@@ -920,6 +920,17 @@ def merge_shard_dbs(*, out_path: Path, shard_paths: list[Path], force: bool = Fa
         finally:
             conn.close()
 
+    merged_config = dict(config)
+    merged_config["task_shard_count"] = None
+    merged_config["task_shard_index"] = None
+    merged_config["planned_task_count"] = written
+    merged_config["merged_shards"] = len(chosen)
+    out_db.conn.execute(
+        "UPDATE runs SET config_json = ? WHERE id = ?",
+        (json.dumps(merged_config, sort_keys=True, default=str), run_id),
+    )
+    out_db.conn.commit()
+
     return {
         "out_path": out_path,
         "benchmark": benchmark,

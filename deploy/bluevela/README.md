@@ -15,9 +15,11 @@ For new work, **use `uv run mcode launch` from the repo root** instead of these 
 uv run mcode launch doctor bluevela --init --login <user>@<login-host>
 
 # Launch a server + run bench against it
-uv run mcode launch bluevela --model Qwen/Qwen3.5-35B-A3B
-uv run mcode bench swebench-live --backend openai --model Qwen/Qwen3.5-35B-A3B --limit 10
-uv run mcode bench swebench-live --backend openai --model Qwen/Qwen3.5-35B-A3B --sampling rejection --n-samples 3 --limit 10
+uv run mcode launch bluevela --model Qwen/Qwen3.6-35B-A3B
+uv run mcode bench swebench-live --backend openai --model Qwen/Qwen3.6-35B-A3B --limit 10
+MCODE_CONTEXT_WINDOW=262144 uv run mcode bench swebench-lite --backend openai --model Qwen/Qwen3.6-35B-A3B --on bluevela --limit 10
+uv run mcode bench swebench-live --backend openai --model Qwen/Qwen3.6-35B-A3B --sampling rejection --n-samples 3 --limit 10
+MCODE_CONTEXT_WINDOW=262144 uv run mcode bench smoke --backend openai --model Qwen/Qwen3.6-35B-A3B --on bluevela --shards 4
 
 # Stop when done
 uv run mcode launch stop --all

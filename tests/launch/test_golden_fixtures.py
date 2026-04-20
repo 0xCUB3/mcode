@@ -24,8 +24,9 @@ from mcode.launch.models import LaunchSpec, Target
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "env_json"
 
-# (profile_name, model_id). All 5 Blue Vela target models + the local smoke.
+# (profile_name, model_id). Blue Vela target models + the local smoke.
 MODELS: list[tuple[str, str]] = [
+    ("qwen3.6-a3b", "Qwen/Qwen3.6-35B-A3B"),
     ("qwen3.5-27b", "Qwen/Qwen3.5-27B"),
     ("qwen3.5-a3b", "Qwen/Qwen3.5-35B-A3B"),
     ("gemma4-31b", "google/gemma-4-31B-it"),
@@ -119,6 +120,13 @@ def test_granite_uses_hermes_not_granite_parser() -> None:
 def test_qwen3_a3b_fixture_has_expected_tp() -> None:
     rendered = _render("Qwen/Qwen3.5-35B-A3B")
     assert rendered["GPU_COUNT"] == "2"
+
+
+def test_qwen36_fixture_has_large_context_and_newer_vllm() -> None:
+    rendered = _render("Qwen/Qwen3.6-35B-A3B")
+    assert rendered["GPU_COUNT"] == "2"
+    assert rendered["VLLM_MAX_MODEL_LEN"] == "262144"
+    assert rendered["VLLM_IMAGE"] == "docker.io/vllm/vllm-openai:v0.19.0"
 
 
 def test_no_fixture_carries_developer_user_info() -> None:

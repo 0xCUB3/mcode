@@ -8,7 +8,11 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from mcode.execution.sandbox import ensure_docker_client, reraise_docker_unavailable
+from mcode.execution.sandbox import (
+    ensure_docker_client,
+    is_docker_unavailable_error,
+    reraise_docker_unavailable,
+)
 
 
 def _fq_image(name: str) -> str:
@@ -63,6 +67,16 @@ def _ensure_image(client: object, name: str) -> None:
     for line in client.api.pull(fq, stream=True, decode=True):
         if "error" in line:
             raise RuntimeError(line["error"])
+
+
+def _remote_image_runtime_error_message(image_key: str) -> str:
+    return (
+        "Could not access the container runtime while checking or pulling the "
+        f"SWE-bench prebuilt image {image_key!r}. "
+        "The podman/Docker socket timed out or was unavailable.\n"
+        "Retry the run. If this persists on Blue Vela, inspect the podman "
+        "system service logs."
+    )
 
 
 def _truncate_command_output(output: str, *, max_chars: int = 10_000) -> str:
@@ -427,6 +441,10 @@ class SWEbenchSandbox:
             try:
                 _ensure_image(client, test_spec.instance_image_key)
             except Exception as e:  # pragma: no cover
+                if is_docker_unavailable_error(e):
+                    raise RuntimeError(
+                        _remote_image_runtime_error_message(test_spec.instance_image_key)
+                    ) from e
                 if test_spec.arch == "arm64":
                     alt_spec = make_test_spec(
                         instance,

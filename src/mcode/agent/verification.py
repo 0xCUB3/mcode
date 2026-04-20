@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from mellea.backends.tools import MelleaTool
 
 from mcode.agent.tooling import execute_command, format_tool_result, is_tool_result
-from mcode.mellea_compat import import_requirements
+from mcode.mellea_compat import build_tool_from_callable, import_requirements
 
 
 @dataclass(frozen=True)
@@ -179,7 +179,7 @@ def build_run_tests_tool(
             return "\n---\n".join(outputs)
         return format_tool_result(test_cmd, "SKIPPED", "No test commands available.")
 
-    tool = MelleaTool.from_callable(_run_tests, name="run_tests")
+    tool = build_tool_from_callable(_run_tests, name="run_tests")
     return MelleaTool(
         name=tool.name,
         tool_call=_run_tests,

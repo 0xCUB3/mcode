@@ -9,9 +9,10 @@ from mellea.core.base import ModelToolCall
 from mellea.stdlib.components.chat import ToolMessage
 from mellea.stdlib.context import ChatContext
 
+from mcode.agent.verification import build_run_tests_tool, build_verification_policy
 from mcode.llm.react_driver import SolveTraceCollector, SolveTracePlugin, run_react_loop
 from mcode.llm.session import PatchSubmission
-from mcode.mellea_compat import acall_tools, apply_runtime_patches
+from mcode.mellea_compat import acall_tools, apply_runtime_patches, build_tool_from_callable
 
 
 def test_solve_trace_plugin_collects_generation_tool_and_validation_data():
@@ -216,6 +217,31 @@ def test_acall_tools_normalizes_string_tool_args(monkeypatch):
     assert captured["args"] == {"test_cmd": "default"}
 
 
+def test_acall_tools_normalizes_string_args_for_multi_param_tools(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def fake_acall_tools(result, backend):
+        del backend
+        captured["args"] = result.tool_calls["run_tests"].args
+        return []
+
+    monkeypatch.setattr("mellea.stdlib.functional._acall_tools", fake_acall_tools)
+
+    run_tests_tool = build_run_tests_tool(
+        repo_root=".",
+        verification_policy=build_verification_policy(test_cmds=["pytest -q"]),
+    )
+    assert run_tests_tool is not None
+    tool = ModelToolCall(
+        name="run_tests",
+        func=run_tests_tool,
+        args="default",
+    )
+    asyncio.run(acall_tools(SimpleNamespace(tool_calls={"run_tests": tool}), backend=object()))
+
+    assert captured["args"] == {"test_cmd": "default"}
+
+
 def test_run_react_loop_inserts_assistant_bridge_for_strict_models(monkeypatch):
     tool = ModelToolCall(
         name="run_tests",
@@ -279,6 +305,28 @@ def test_runtime_patch_normalizes_openai_helper_tool_args():
     tool = MelleaTool.from_callable(lambda test_cmd="default": "ok", name="run_tests")
 
     assert helpers.validate_tool_arguments(tool, "default", strict=False) == {"test_cmd": "default"}
+
+
+def test_runtime_patch_preserves_optional_defaults_in_validated_tool_args():
+    import mellea.helpers.openai_compatible_helpers as helpers
+
+    apply_runtime_patches()
+    read_tool = build_tool_from_callable(
+        lambda path, start_line=1, end_line=None: "ok",
+        name="read_file",
+    )
+    run_tests_tool = build_run_tests_tool(
+        repo_root=".",
+        verification_policy=build_verification_policy(test_cmds=["pytest -q"]),
+    )
+    assert run_tests_tool is not None
+
+    assert helpers.validate_tool_arguments(read_tool, {"path": "README.md"}, strict=False) == {
+        "path": "README.md"
+    }
+    assert helpers.validate_tool_arguments(run_tests_tool, "default", strict=False) == {
+        "test_cmd": "default"
+    }
 
 
 def test_runtime_patch_inserts_synthetic_assistant_before_tool_messages():

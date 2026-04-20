@@ -141,10 +141,7 @@ class BenchmarkRunner:
             t = progress.add_task("[bold]Running swebench-lite[/bold]", total=len(tasks))
             for task in tasks:
                 total += 1
-                try:
-                    result = self._run_swebench_task(task, swe_sandbox=swe_sandbox, run_id=run_id)
-                except DockerUnavailableError:
-                    raise
+                result = self._run_swebench_task(task, swe_sandbox=swe_sandbox, run_id=run_id)
                 if result["passed"]:
                     passed += 1
                 self.results_db.save_task_result(run_id, result)
@@ -189,14 +186,11 @@ class BenchmarkRunner:
             t = progress.add_task("[bold]Running swebench-live[/bold]", total=len(tasks))
             for task in tasks:
                 total += 1
-                try:
-                    result = self._run_swebench_live_task(
-                        task,
-                        live_sandbox=live_sandbox,
-                        run_id=run_id,
-                    )
-                except DockerUnavailableError:
-                    raise
+                result = self._run_swebench_live_task(
+                    task,
+                    live_sandbox=live_sandbox,
+                    run_id=run_id,
+                )
                 if result["passed"]:
                     passed += 1
                 self.results_db.save_task_result(run_id, result)
@@ -270,39 +264,52 @@ class BenchmarkRunner:
         start = time.time()
         patch = ""
         scaffold_metrics: dict[str, object] | None = None
-        try:
-            with repo_context_factory() as repo_context:
-                patch_context = _coerce_patch_repo_context(repo_context)
-                patch, scaffold_metrics = self._generate_task_patch(
-                    generation_task,
-                    repo_root=patch_context.repo_root,
-                    command_fn=patch_context.command_fn,
-                    visible_repo_root=patch_context.visible_repo_root,
+        scaffold_result: dict[str, object] | None = None
+        eval_detail: _TaskEvaluation | None = None
+        attempts_used = 0
+        for attempts_used in range(1, 3):
+            try:
+                with repo_context_factory() as repo_context:
+                    patch_context = _coerce_patch_repo_context(repo_context)
+                    if scaffold_result is None:
+                        patch, scaffold_metrics = self._generate_task_patch(
+                            generation_task,
+                            repo_root=patch_context.repo_root,
+                            command_fn=patch_context.command_fn,
+                            visible_repo_root=patch_context.visible_repo_root,
+                        )
+                        elapsed_ms = int((time.time() - start) * 1000)
+                        scaffold_result = _scaffold_metrics(scaffold_metrics)
+                    if patch.strip():
+                        eval_detail = evaluate_patch(patch)
+                        if eval_detail.passed:
+                            scaffold_result["terminal_reason"] = "submitted"
+                        elif scaffold_result.get("verification_succeeded"):
+                            scaffold_result["terminal_reason"] = "wrong_patch_after_verification"
+                break
+            except DockerUnavailableError as e:
+                if attempts_used == 2:
+                    return _task_error_result(
+                        task_id=task_id,
+                        start_time=start,
+                        error=e,
+                        scaffold_metrics=scaffold_metrics,
+                        attempts_used=attempts_used,
+                    )
+            except Exception as e:
+                return _task_error_result(
+                    task_id=task_id,
+                    start_time=start,
+                    error=e,
+                    scaffold_metrics=scaffold_metrics,
+                    attempts_used=attempts_used,
                 )
-                elapsed_ms = int((time.time() - start) * 1000)
-                scaffold_result = _scaffold_metrics(scaffold_metrics)
-                eval_detail: _TaskEvaluation | None = None
-                if patch.strip():
-                    eval_detail = evaluate_patch(patch)
-                    if eval_detail.passed:
-                        scaffold_result["terminal_reason"] = "submitted"
-                    elif scaffold_result.get("verification_succeeded"):
-                        scaffold_result["terminal_reason"] = "wrong_patch_after_verification"
-        except DockerUnavailableError:
-            raise
-        except Exception as e:
-            return _task_error_result(
-                task_id=task_id,
-                start_time=start,
-                error=e,
-                scaffold_metrics=scaffold_metrics,
-            )
 
         sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest() if patch else None
         return {
             "task_id": task_id,
             "passed": eval_detail.passed if eval_detail is not None else False,
-            "attempts_used": 1,
+            "attempts_used": attempts_used,
             "time_ms": elapsed_ms,
             "code_sha256": sha,
             **(eval_detail.as_result_dict() if eval_detail is not None else {}),
@@ -383,12 +390,13 @@ def _task_error_result(
     start_time: float,
     error: Exception,
     scaffold_metrics: dict[str, object] | None,
+    attempts_used: int = 0,
 ) -> dict[str, object]:
     tb = traceback.format_exc()
     return {
         "task_id": task_id,
         "passed": False,
-        "attempts_used": 0,
+        "attempts_used": attempts_used,
         "time_ms": int((time.time() - start_time) * 1000),
         "exit_code": None,
         "timed_out": False,

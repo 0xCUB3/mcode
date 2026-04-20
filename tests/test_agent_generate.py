@@ -8,8 +8,10 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from mcode.agent.verification import build_run_tests_tool, build_verification_policy
+from mcode.bench import runner as runner_module
 from mcode.bench.results import ResultsDB
 from mcode.bench.runner import BenchConfig, BenchmarkRunner
+from mcode.execution.sandbox import DockerUnavailableError
 from mcode.llm.session import LLMSession, PatchSubmission, SolveResult, _coerce_submission
 
 
@@ -372,3 +374,86 @@ def test_swebench_runner_passes_task_metadata_to_solver(tmp_path):
     assert captured["test_cmds"] == {"test_cmds": ["pytest -q tests/test_bug.py"]}
     assert captured["command_fn"] is not None
     assert captured["visible_repo_root"] == "/testbed"
+
+
+def test_run_task_retries_docker_unavailable_once(tmp_path):
+    results_db = ResultsDB(tmp_path / "results.db")
+    runner = BenchmarkRunner(
+        config=BenchConfig(model_id="test-model", backend_name="ollama"),
+        results_db=results_db,
+    )
+    task = SimpleNamespace(repo="test/repo", problem_statement="Fix the bug", hints_text="")
+    eval_attempts = {"count": 0}
+
+    @contextmanager
+    def repo_context():
+        yield SimpleNamespace(
+            repo_root=str(tmp_path), command_fn=None, visible_repo_root="/testbed"
+        )
+
+    runner._generate_task_patch = lambda *args, **kwargs: (  # type: ignore[method-assign]
+        "diff --git a/foo.py b/foo.py\n+x = 2\n",
+        None,
+    )
+
+    def evaluate_patch(_patch: str) -> runner_module._TaskEvaluation:
+        eval_attempts["count"] += 1
+        if eval_attempts["count"] == 1:
+            raise DockerUnavailableError("socket timed out")
+        return runner_module._TaskEvaluation(
+            passed=True,
+            timed_out=False,
+            stdout="ok",
+            stderr="",
+            error=None,
+        )
+
+    result = runner._run_task(
+        task_id="task-1",
+        generation_task=task,
+        repo_context_factory=repo_context,
+        evaluate_patch=evaluate_patch,
+    )
+
+    assert eval_attempts["count"] == 2
+    assert result["passed"] is True
+    assert result["attempts_used"] == 2
+    assert result["terminal_reason"] == "submitted"
+
+
+def test_run_task_records_infra_failure_after_docker_retry(tmp_path):
+    results_db = ResultsDB(tmp_path / "results.db")
+    runner = BenchmarkRunner(
+        config=BenchConfig(model_id="test-model", backend_name="ollama"),
+        results_db=results_db,
+    )
+    task = SimpleNamespace(repo="test/repo", problem_statement="Fix the bug", hints_text="")
+    eval_attempts = {"count": 0}
+
+    @contextmanager
+    def repo_context():
+        yield SimpleNamespace(
+            repo_root=str(tmp_path), command_fn=None, visible_repo_root="/testbed"
+        )
+
+    runner._generate_task_patch = lambda *args, **kwargs: (  # type: ignore[method-assign]
+        "diff --git a/foo.py b/foo.py\n+x = 2\n",
+        None,
+    )
+
+    def evaluate_patch(_patch: str) -> runner_module._TaskEvaluation:
+        eval_attempts["count"] += 1
+        raise DockerUnavailableError("socket timed out")
+
+    result = runner._run_task(
+        task_id="task-1",
+        generation_task=task,
+        repo_context_factory=repo_context,
+        evaluate_patch=evaluate_patch,
+    )
+
+    assert eval_attempts["count"] == 2
+    assert result["passed"] is False
+    assert result["attempts_used"] == 2
+    assert result["terminal_reason"] == "infra_failure"
+    assert result["error"] == "DockerUnavailableError: socket timed out"

@@ -51,7 +51,7 @@ def _bluevela_cfg() -> launch_config.LaunchConfig:
     )
 
 
-def test_run_bench_on_bluevela_uses_shared_root_for_podman_storage(tmp_path, monkeypatch) -> None:
+def test_run_bench_on_bluevela_uses_tmp_for_podman_storage(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(remote.launch_config, "load", lambda: _bluevela_cfg())
     monkeypatch.setattr(remote.launch_config, "validate_for_bluevela", lambda cfg: [])
     monkeypatch.setattr(remote, "_resolve_endpoint", lambda model, cfg: "http://host:8321/v1")
@@ -69,15 +69,56 @@ def test_run_bench_on_bluevela_uses_shared_root_for_podman_storage(tmp_path, mon
     ssh = _FakeSshClient.last
     assert ssh is not None
     launch_cmd = next(cmd for cmd in ssh.commands if cmd.startswith("nohup bash -lc "))
-    remote_dir = "/u/skula/mcode-launch/bench-runs/bench-1777000000-Qwen-Qwen3.5-35B-A3B"
-    shared_root = "/u/skula/mcode-shared"
     run_id = "bench-1777000000-Qwen-Qwen3.5-35B-A3B"
 
-    assert f"export XDG_RUNTIME_DIR={shared_root}/bench-runtime/{run_id}" in launch_cmd
-    assert f"WORKSPACE_TMP={shared_root}/bench-tmp/{run_id}" in launch_cmd
-    assert f"GRAPHROOT={shared_root}/bench-podman/graphroot/{run_id}" in launch_cmd
-    assert f"RUNROOT={shared_root}/bench-podman/runroot/{run_id}" in launch_cmd
-    assert f"WORKSPACE_TMP={remote_dir}/tmp" not in launch_cmd
-    assert "/tmp/mcode-bench-" not in launch_cmd
-    assert 'GRAPHROOT="$XDG_RUNTIME_DIR/graphroot"' not in launch_cmd
-    assert 'RUNROOT="$XDG_RUNTIME_DIR/runroot"' not in launch_cmd
+    assert f"export XDG_RUNTIME_DIR=/tmp/mcode-bench-{run_id}" in launch_cmd
+    assert 'WORKSPACE_TMP="$XDG_RUNTIME_DIR/tmp"' in launch_cmd
+    assert 'GRAPHROOT="$XDG_RUNTIME_DIR/graphroot"' in launch_cmd
+    assert 'RUNROOT="$XDG_RUNTIME_DIR/runroot"' in launch_cmd
+    assert "trap cleanup EXIT" in launch_cmd
+    assert "/u/skula/mcode-shared" not in launch_cmd
+
+
+def test_run_bench_on_bluevela_forwards_context_env(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(remote.launch_config, "load", lambda: _bluevela_cfg())
+    monkeypatch.setattr(remote.launch_config, "validate_for_bluevela", lambda cfg: [])
+    monkeypatch.setattr(remote, "_resolve_endpoint", lambda model, cfg: "http://host:8321/v1")
+    monkeypatch.setattr(remote, "SshClient", _FakeSshClient)
+    monkeypatch.setattr(remote, "_stream_remote_log", lambda ssh, remote_log, pid: None)
+    monkeypatch.setattr(remote.time, "time", lambda: 1777000001)
+    monkeypatch.setenv("MCODE_CONTEXT_WINDOW", "262144")
+    monkeypatch.setenv("MCODE_MAX_NEW_TOKENS", "4096")
+
+    remote.run_bench_on_bluevela(
+        bench_argv=["smoke", "--model", "Qwen/Qwen3.6-35B-A3B"],
+        model="Qwen/Qwen3.6-35B-A3B",
+        local_db=tmp_path / "results.db",
+    )
+
+    ssh = _FakeSshClient.last
+    assert ssh is not None
+    launch_cmd = next(cmd for cmd in ssh.commands if cmd.startswith("nohup bash -lc "))
+    assert "export MCODE_CONTEXT_WINDOW=262144" in launch_cmd
+    assert "export MCODE_MAX_NEW_TOKENS=4096" in launch_cmd
+
+
+def test_run_bench_on_bluevela_prefers_openai_env_override(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(remote.launch_config, "load", lambda: _bluevela_cfg())
+    monkeypatch.setattr(remote.launch_config, "validate_for_bluevela", lambda cfg: [])
+    monkeypatch.setattr(remote, "SshClient", _FakeSshClient)
+    monkeypatch.setattr(remote, "_stream_remote_log", lambda ssh, remote_log, pid: None)
+    monkeypatch.setattr(remote.time, "time", lambda: 1777000002)
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-key")
+
+    remote.run_bench_on_bluevela(
+        bench_argv=["smoke", "--model", "Qwen/Qwen3.6-35B-A3B"],
+        model="Qwen/Qwen3.6-35B-A3B",
+        local_db=tmp_path / "results.db",
+    )
+
+    ssh = _FakeSshClient.last
+    assert ssh is not None
+    launch_cmd = next(cmd for cmd in ssh.commands if cmd.startswith("nohup bash -lc "))
+    assert "export OPENAI_BASE_URL=https://example.test/v1" in launch_cmd
+    assert "export OPENAI_API_KEY=secret-key" in launch_cmd

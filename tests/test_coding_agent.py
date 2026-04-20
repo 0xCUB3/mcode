@@ -95,3 +95,14 @@ def test_make_agent_tools_appends_run_tests(tmp_path):
         "list_dir",
         "run_tests",
     ]
+
+
+def test_make_agent_tools_preserve_optional_tool_defaults(tmp_path):
+    policy = build_verification_policy(test_cmds=["pytest -q"])
+
+    tools = {
+        tool.name: tool for tool in make_agent_tools(str(tmp_path), verification_policy=policy)
+    }
+
+    assert tools["read_file"].as_json_tool["function"]["parameters"]["required"] == ["path"]
+    assert tools["list_dir"].as_json_tool["function"]["parameters"]["required"] == []

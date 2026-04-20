@@ -5,7 +5,7 @@ import sqlite3
 from csv import DictReader
 from pathlib import Path
 
-from mcode.bench.results import ResultsDB, export_csv
+from mcode.bench.results import ResultsDB, export_csv, merge_shard_dbs
 
 
 def test_start_run_supports_legacy_runs_table(tmp_path: Path) -> None:
@@ -401,6 +401,57 @@ def test_merge_from_combines_dbs(tmp_path: Path) -> None:
         assert len(rows) == 1
         assert rows[0]["runs"] == 2
         assert rows[0]["total"] == 2
+
+
+def test_merge_shard_dbs_normalizes_shard_config(tmp_path: Path) -> None:
+    shard_a = tmp_path / "results-shard-0.db"
+    shard_b = tmp_path / "results-shard-1.db"
+    merged = tmp_path / "merged.db"
+
+    for shard_index, shard_db in enumerate((shard_a, shard_b)):
+        with ResultsDB(shard_db) as rdb:
+            run_id = rdb.start_run(
+                "swebench-lite",
+                {
+                    "backend_name": "ollama",
+                    "model_id": "test-model",
+                    "loop_budget": 15,
+                    "timeout_s": 300,
+                    "task_shard_count": 2,
+                    "task_shard_index": shard_index,
+                    "planned_task_count": 1,
+                    "cache_dir": str(tmp_path / "cache"),
+                },
+            )
+            rdb.save_task_result(
+                run_id,
+                {
+                    "task_id": f"task-{shard_index}",
+                    "passed": shard_index == 0,
+                    "attempts_used": 1,
+                    "time_ms": 1000,
+                    "exit_code": 0,
+                    "timed_out": False,
+                    "stdout": "",
+                    "stderr": "",
+                    "error": None,
+                    "code_sha256": f"sha-{shard_index}",
+                },
+            )
+
+    report = merge_shard_dbs(out_path=merged, shard_paths=[shard_a, shard_b], force=True)
+
+    with ResultsDB(merged) as rdb:
+        config_json = rdb.conn.execute(
+            "SELECT config_json FROM runs WHERE id = ?",
+            (report["run_id"],),
+        ).fetchone()[0]
+    config = json.loads(config_json)
+
+    assert config["task_shard_count"] is None
+    assert config["task_shard_index"] is None
+    assert config["planned_task_count"] == 2
+    assert config["merged_shards"] == 2
 
 
 def test_run_metrics_grouped_includes_scaffold_quality_metrics(tmp_path: Path) -> None:

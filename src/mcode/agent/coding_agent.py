@@ -4,8 +4,6 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from mellea.backends.tools import MelleaTool
-
 from mcode.agent.coding_policy import CodingPolicy, build_coding_policy
 from mcode.agent.repo_customization import load_repo_customization
 from mcode.agent.tooling import (
@@ -22,6 +20,7 @@ from mcode.agent.verification import (
     build_run_tests_tool,
     build_verification_policy,
 )
+from mcode.mellea_compat import build_tool_from_callable
 
 
 @dataclass(frozen=True)
@@ -131,11 +130,11 @@ def make_agent_tools(
         return list_dir(path, repo_root=repo_root)
 
     tools = [
-        MelleaTool.from_callable(_search, name="search_code"),
-        MelleaTool.from_callable(_edit, name="edit"),
-        MelleaTool.from_callable(_read, name="read_file"),
-        MelleaTool.from_callable(_find, name="find_file"),
-        MelleaTool.from_callable(_list, name="list_dir"),
+        build_tool_from_callable(_search, name="search_code"),
+        build_tool_from_callable(_edit, name="edit"),
+        build_tool_from_callable(_read, name="read_file"),
+        build_tool_from_callable(_find, name="find_file"),
+        build_tool_from_callable(_list, name="list_dir"),
     ]
     run_tests_tool = build_run_tests_tool(
         repo_root=repo_root,

@@ -18,6 +18,23 @@ DEFAULT_VLLM_IMAGE = "docker.io/vllm/vllm-openai:v0.17.0"
 
 # Order matters: more specific patterns first.
 _PROFILES: list[tuple[str, ServingProfile]] = [
+    (
+        "qwen/qwen3.6-35b-a3b*",
+        ServingProfile(
+            name="qwen3.6-a3b",
+            flags=[
+                "--enable-auto-tool-choice",
+                "--tool-call-parser",
+                "qwen3_coder",
+                "--reasoning-parser",
+                "qwen3",
+            ],
+            tensor_parallel=2,
+            max_model_len=262144,
+            image="docker.io/vllm/vllm-openai:v0.19.0",
+            min_vllm="0.19.0",
+        ),
+    ),
     # Qwen3.5-35B-A3B (MoE) — needs expert parallelism on TP >= 4.
     # At TP=2 (the H100-80GB sweet spot) plain tool-call flags are enough.
     (

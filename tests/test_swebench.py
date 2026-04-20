@@ -8,11 +8,12 @@ import types
 import pytest
 
 import mcode.execution.sandbox as sandbox_module
-from mcode.execution.sandbox import DockerUnavailableError
+from mcode.execution.sandbox import DockerUnavailableError, is_docker_unavailable_error
 from mcode.execution.swebench import (
     SWEbenchSandbox,
     _build_agent_setup_script,
     _build_agent_shell_command,
+    _remote_image_runtime_error_message,
 )
 
 
@@ -121,6 +122,23 @@ def test_swebench_get_client_raises_docker_unavailable_after_retries(monkeypatch
 
     with pytest.raises(DockerUnavailableError, match="SWE-bench Lite"):
         sandbox._get_client()
+
+
+def test_is_docker_unavailable_error_matches_podman_socket_timeouts():
+    exc = RuntimeError(
+        "ReadTimeout: UnixHTTPConnectionPool(host='localhost', port=None): "
+        "Read timed out. (read timeout=60)"
+    )
+
+    assert is_docker_unavailable_error(exc) is True
+
+
+def test_remote_image_runtime_error_message_mentions_container_runtime():
+    message = _remote_image_runtime_error_message("swebench/example:latest")
+
+    assert "container runtime" in message
+    assert "swebench/example:latest" in message
+    assert "podman/Docker socket timed out or was unavailable" in message
 
 
 def test_repo_context_disables_network_for_source_container(monkeypatch):

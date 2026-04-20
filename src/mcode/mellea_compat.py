@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import inspect
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from typing import Any
 
@@ -72,12 +73,18 @@ def _normalize_tool_calls(result) -> None:
 
 def _coerce_tool_args(tool_call) -> dict[str, Any]:
     args = getattr(tool_call, "args", None)
-    param_names = _tool_param_names(getattr(tool_call, "func", None))
+    func = getattr(tool_call, "func", None)
+    param_names = _tool_param_names(func)
+    required_param_names = _tool_required_param_names(func)
 
-    return _coerce_raw_tool_args(args, param_names)
+    return _coerce_raw_tool_args(args, param_names, required_param_names)
 
 
-def _coerce_raw_tool_args(args: object, param_names: list[str]) -> dict[str, Any]:
+def _coerce_raw_tool_args(
+    args: object,
+    param_names: list[str],
+    required_param_names: list[str] | None = None,
+) -> dict[str, Any]:
     if isinstance(args, Mapping):
         return dict(args)
 
@@ -95,26 +102,95 @@ def _coerce_raw_tool_args(args: object, param_names: list[str]) -> dict[str, Any
     if isinstance(parsed, Mapping):
         return dict(parsed)
 
-    if len(param_names) == 1 and parsed is not None:
-        return {param_names[0]: parsed}
+    target_param_names = required_param_names or param_names
+    if len(target_param_names) == 1 and parsed is not None:
+        return {target_param_names[0]: parsed}
 
     return {}
 
 
-def _tool_param_names(func) -> list[str]:
+def build_tool_from_callable(func: Callable[..., Any], *, name: str | None = None):
+    from mellea.backends.tools import MelleaTool
+
+    tool = MelleaTool.from_callable(func, name=name)
+    return MelleaTool(
+        tool.name,
+        func,
+        _patch_tool_schema_defaults(tool.as_json_tool, func),
+    )
+
+
+def _tool_schema(func) -> Mapping[str, Any] | None:
     schema = getattr(func, "as_json_tool", None)
     if not isinstance(schema, Mapping):
-        return []
+        return None
     function_schema = schema.get("function", {})
     if not isinstance(function_schema, Mapping):
-        return []
+        return None
     parameters = function_schema.get("parameters", {})
     if not isinstance(parameters, Mapping):
+        return None
+    return parameters
+
+
+def _tool_param_names(func) -> list[str]:
+    parameters = _tool_schema(func)
+    if parameters is None:
         return []
     properties = parameters.get("properties", {})
     if not isinstance(properties, Mapping):
         return []
     return [str(name) for name in properties]
+
+
+def _tool_required_param_names(func) -> list[str]:
+    parameters = _tool_schema(func)
+    if parameters is None:
+        return []
+    required = parameters.get("required", [])
+    if not isinstance(required, list):
+        return []
+    return [str(name) for name in required if isinstance(name, str)]
+
+
+def _patch_tool_schema_defaults(
+    schema: object,
+    func: Callable[..., Any],
+) -> dict[str, Any] | object:
+    if not isinstance(schema, Mapping):
+        return schema
+    patched = deepcopy(schema)
+    function_schema = patched.get("function")
+    if not isinstance(function_schema, dict):
+        return patched
+    parameters = function_schema.get("parameters")
+    if not isinstance(parameters, dict):
+        return patched
+
+    required: list[str] = []
+    for name, param in inspect.signature(func).parameters.items():
+        if param.kind in (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        ):
+            continue
+        if param.default is inspect._empty:
+            required.append(name)
+    parameters["required"] = required
+    return patched
+
+
+def _drop_unspecified_optional_nones(
+    validated_args: object,
+    provided_args: Mapping[str, Any],
+) -> object:
+    if not isinstance(validated_args, Mapping):
+        return validated_args
+    return {
+        key: value
+        for key, value in validated_args.items()
+        if key in provided_args or value is not None
+    }
 
 
 def _patch_openai_tool_validation() -> None:
@@ -127,8 +203,10 @@ def _patch_openai_tool_validation() -> None:
 
     def wrapped_validate(tool, args, *args2, **kwargs):
         param_names = _tool_param_names(tool)
-        normalized_args = _coerce_raw_tool_args(args, param_names)
-        return original_validate(tool, normalized_args, *args2, **kwargs)
+        required_param_names = _tool_required_param_names(tool)
+        normalized_args = _coerce_raw_tool_args(args, param_names, required_param_names)
+        validated_args = original_validate(tool, normalized_args, *args2, **kwargs)
+        return _drop_unspecified_optional_nones(validated_args, normalized_args)
 
     helpers.validate_tool_arguments = wrapped_validate
     helpers._mcode_tool_validation_patch = True

@@ -1,22 +1,8 @@
-"""Run a bench command on Blue Vela without user-facing shell scripts.
-
-Cluster-side prerequisites are handled by `launch/scripts/bluevela_shard.sh`:
-source HF env, start podman socket, export DOCKER_HOST, invoke `mcode bench ...`.
-
-Workflow when a user runs `mcode bench smoke --on bluevela --model X`:
-
-1. Load the bluevela launch config.
-2. Resolve a healthy vLLM endpoint for the model from launch state (or error
-   with a hint to run `mcode launch bluevela --model X` first).
-3. SSH to the login node, launch `bluevela_shard.sh` on the login host,
-   forwarding the bench argv. Log/DB are written into the cluster workspace.
-4. Stream the remote log back while running.
-5. Rsync the resulting DB file back to the local `--db` path on success
-   unless `--no-fetch-db` was passed.
-"""
+"""Run a bench command on Blue Vela via SSH."""
 
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
 import sys
@@ -33,7 +19,13 @@ class RemoteBenchError(RuntimeError):
     """User-facing remote execution error."""
 
 
+_FORWARDED_ENV_VARS = ("MCODE_CONTEXT_WINDOW", "MCODE_MAX_NEW_TOKENS")
+
+
 def _resolve_endpoint(model: str, *, cfg: launch_config.LaunchConfig) -> str:
+    if endpoint := os.environ.get("OPENAI_BASE_URL"):
+        return endpoint
+
     # Refresh Blue Vela server records first so stale "healthy" entries from
     # EXITed jobs are dropped — otherwise we pick up a dead endpoint that
     # silently fails every API call in the bench run.
@@ -94,20 +86,18 @@ def run_bench_on_bluevela(
     bv = cfg.bluevela
 
     endpoint = _resolve_endpoint(model, cfg=cfg)
+    api_key = os.environ.get("OPENAI_API_KEY", "dummy")
 
     ssh = SshClient(bv.login)
     run_id = f"bench-{int(time.time())}-{model.replace('/', '-')[:24]}"
     remote_dir = f"{bv.workspace_root}/bench-runs/{run_id}"
     remote_db = f"{remote_dir}/results.db"
     remote_log = f"{remote_dir}/bench.log"
-    runtime_base = f"{bv.shared_root}/bench-runtime"
-    shared_tmp_base = f"{bv.shared_root}/bench-tmp"
-    graphroot_base = bv.podman.graphroot_base or f"{bv.shared_root}/bench-podman/graphroot"
-    runroot_base = bv.podman.runroot_base or f"{bv.shared_root}/bench-podman/runroot"
-    runtime_dir = f"{runtime_base}/{run_id}"
-    remote_tmp = f"{shared_tmp_base}/{run_id}"
-    graphroot_dir = f"{graphroot_base}/{run_id}"
-    runroot_dir = f"{runroot_base}/{run_id}"
+    runtime_dir = f"/tmp/mcode-bench-{run_id}"
+    forwarded_env = {name: value for name in _FORWARDED_ENV_VARS if (value := os.environ.get(name))}
+    forwarded_exports = "".join(
+        f"export {name}={shlex.quote(value)}\n" for name, value in forwarded_env.items()
+    )
 
     # Replace/append --db so the bench writes to the remote path.
     argv = [*bench_argv]
@@ -117,62 +107,40 @@ def run_bench_on_bluevela(
     else:
         argv += ["--db", remote_db]
 
-    ssh.run(
-        "mkdir -p "
-        + " ".join(
-            shlex.quote(path)
-            for path in (
-                remote_dir,
-                runtime_base,
-                shared_tmp_base,
-                graphroot_base,
-                runroot_base,
-            )
-        ),
-        timeout=30,
-    )
+    ssh.run(f"mkdir -p {shlex.quote(remote_dir)}", timeout=30)
 
-    # Assemble the remote shell: source hf-env (optional), start podman socket
-    # if absent, export DOCKER_HOST + OPENAI_BASE_URL, cd, exec bench.
     hf_env = bv.hf_env
     bench_cmd = "uv run mcode bench " + " ".join(shlex.quote(a) for a in argv)
-    # Rootless podman on Blue Vela login nodes hits chown errors on default
-    # storage (subuid/subgid maps are too small for some images). Keep the
-    # socket isolated in /tmp, but keep podman storage inside the per-run
-    # workspace directory so layer unpack does not exhaust the login node's
-    # small /tmp filesystem.
     exit_sentinel = f"{remote_dir}/exit_code"
     svc_log = f"{remote_dir}/podman-svc.log"
-    # Rootless podman on Blue Vela login nodes hits chown errors and uses
-    # /var/tmp for image unpack by default (small filesystem). Isolate per-run:
-    # keep XDG_RUNTIME_DIR/socket in /tmp, but keep TMPDIR + graphroot/runroot
-    # inside the workspace run directory. Fail closed if the socket never
-    # becomes reachable. Record bench exit status to a sentinel file so the
-    # local side can assert success rather than guessing from DB size.
     remote_script = f"""
 set -euo pipefail
 cd {shlex.quote(bv.workspace_root)}
 [ -f {shlex.quote(hf_env)} ] && source {shlex.quote(hf_env)}
-# Keep all bench state off /tmp. Podman runtime dir, socket, storage, and
-# TMPDIR live under the shared GPFS root.
 export XDG_RUNTIME_DIR={shlex.quote(runtime_dir)}
-mkdir -p "$XDG_RUNTIME_DIR"
-WORKSPACE_TMP={shlex.quote(remote_tmp)}
-GRAPHROOT={shlex.quote(graphroot_dir)}
-RUNROOT={shlex.quote(runroot_dir)}
-mkdir -p "$WORKSPACE_TMP"
-mkdir -p "$GRAPHROOT"
-mkdir -p "$RUNROOT"
+WORKSPACE_TMP="$XDG_RUNTIME_DIR/tmp"
+GRAPHROOT="$XDG_RUNTIME_DIR/graphroot"
+RUNROOT="$XDG_RUNTIME_DIR/runroot"
+mkdir -p "$WORKSPACE_TMP" "$GRAPHROOT" "$RUNROOT"
 export TMPDIR="$WORKSPACE_TMP"
 SOCK="$XDG_RUNTIME_DIR/podman.sock"
-nohup podman \\
+rm -f "$SOCK"
+cleanup() {{
+  if [ -n "${{PODMAN_PID:-}}" ]; then
+    kill "$PODMAN_PID" 2>/dev/null || true
+    wait "$PODMAN_PID" 2>/dev/null || true
+  fi
+}}
+trap cleanup EXIT
+podman \\
   --cgroup-manager=cgroupfs --storage-driver=overlay \\
   --root "$GRAPHROOT" --runroot "$RUNROOT" \\
   --storage-opt ignore_chown_errors=true \\
   system service --time=0 "unix://$SOCK" \\
   >{shlex.quote(svc_log)} 2>&1 &
+PODMAN_PID=$!
 svc_ready=0
-for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+for _ in $(seq 1 30); do
   if curl -s --unix-socket "$SOCK" http://localhost/version >/dev/null 2>&1; then
     svc_ready=1
     break
@@ -187,7 +155,8 @@ if [ "$svc_ready" != "1" ]; then
 fi
 export DOCKER_HOST="unix://$SOCK"
 export OPENAI_BASE_URL={shlex.quote(endpoint)}
-export OPENAI_API_KEY=dummy
+export OPENAI_API_KEY={shlex.quote(api_key)}
+{forwarded_exports}\
 set +e
 {bench_cmd}
 rc=$?

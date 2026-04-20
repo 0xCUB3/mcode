@@ -34,6 +34,7 @@ If you want to override that temporarily with a local checkout, set
 
 ```bash
 uv run mcode bench swebench-lite --model granite3.3:8b --limit 5
+uv run mcode bench swebench-lite --model granite3.3:8b --limit 16 --shards 4
 ```
 
 Useful flags:
@@ -41,7 +42,8 @@ Useful flags:
 - `--loop-budget`: retry budget for the agent
 - `--timeout`: eval timeout per task
 - `--limit`: run the first N tasks
-- `--shard-count/--shard-index`: shard a run across multiple workers
+- `--shards`: run N shard workers, keep per-shard logs, merge back into `--db`
+- `--shard-count/--shard-index`: manual single-shard mode when you want to fan out runs yourself
 - `--sampling`: `none`, `rejection`, `repair`, or `sofai`
 - `--sampling-budget`: override the Mellea sampling loop budget
 - `--n-samples`: outer attempts when `--sampling none`, otherwise the sampling budget fallback
@@ -56,6 +58,7 @@ uv run mcode bench swebench-lite --namespace "" --model granite3.3:8b --limit 5
 
 ```bash
 uv run mcode bench swebench-live --model granite3.3:8b --limit 5
+MCODE_CONTEXT_WINDOW=262144 uv run mcode bench smoke --model Qwen/Qwen3.6-35B-A3B --backend openai --shards 4
 ```
 
 `swebench-live` uses prebuilt evaluation images, so it does not need the lite image-build settings.
@@ -99,7 +102,7 @@ HTML report:
 uv run mcode report --db-dir ./results --benchmark swebench-live --out ./results/report.html
 ```
 
-Merge shard DBs:
+Merge shard DBs manually:
 
 ```bash
 uv run mcode merge-shards --out ./results/merged.db ./results/swebench-live-shard-0.db ./results/swebench-live-shard-1.db
@@ -135,7 +138,7 @@ uv run mcode launch sync bluevela --dry-run    # preview
 Launch a server:
 
 ```bash
-uv run mcode launch bluevela    --model Qwen/Qwen3.5-35B-A3B
+uv run mcode launch bluevela    --model Qwen/Qwen3.6-35B-A3B
 uv run mcode launch local-vllm  --model Qwen/Qwen2.5-0.5B
 uv run mcode launch local-ollama --model granite4
 ```
@@ -148,15 +151,16 @@ uv run mcode launch refresh
 uv run mcode launch stop <server-id> | --all
 ```
 
-Blue Vela profiles ship with correct vLLM flags per model: Qwen3.5 (27B / 35B-A3B), Gemma-4-31B-it, Granite 4.0, MiniMax-M2.5. Add more in `src/mcode/launch/profiles.py`.
+Blue Vela profiles ship with correct vLLM flags per model: Qwen3.5 (27B / 35B-A3B), Qwen3.6-35B-A3B, Gemma-4-31B-it, Granite 4.0, MiniMax-M2.5. Add more in `src/mcode/launch/profiles.py`.
 
 Once a server is healthy, point the bench at it:
 
 ```bash
-uv run mcode bench swebench-live --backend openai --model Qwen/Qwen3.5-35B-A3B --limit 10
+uv run mcode bench swebench-live --backend openai --model Qwen/Qwen3.6-35B-A3B --limit 10
+MCODE_CONTEXT_WINDOW=262144 uv run mcode bench swebench-lite --backend openai --model Qwen/Qwen3.6-35B-A3B --on bluevela --limit 10
 ```
 
-`--backend openai` auto-resolves the endpoint from `uv run mcode launch status` when a healthy server matches `--model`. `OPENAI_BASE_URL` / `OPENAI_API_KEY` still override if set.
+`--backend openai` auto-resolves the endpoint from `uv run mcode launch status` when a healthy server matches `--model`. `OPENAI_BASE_URL` / `OPENAI_API_KEY` still override if set, including `--on bluevela` runs.
 
 The legacy shell scripts under `deploy/bluevela/` still work as a fallback. See `deploy/bluevela/README.md`.
 

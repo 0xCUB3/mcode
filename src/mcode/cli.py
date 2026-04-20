@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import tempfile
+import threading
 from contextlib import contextmanager
+from datetime import datetime
 from glob import glob
 from pathlib import Path
 from typing import Annotated, Literal
@@ -57,6 +62,24 @@ def _validate_shards(
     if shard_count is not None and shard_index is not None and shard_index >= shard_count:
         raise typer.BadParameter("--shard-index must be < --shard-count")
     return shard_count, shard_index
+
+
+def _validate_shard_options(
+    *,
+    shards: int | None,
+    shard_count: int | None,
+    shard_index: int | None,
+) -> tuple[int | None, int | None, int | None]:
+    if shards is not None and (shard_count is not None or shard_index is not None):
+        raise typer.BadParameter("--shards cannot be combined with --shard-count/--shard-index")
+    shard_count, shard_index = _validate_shards(shard_count=shard_count, shard_index=shard_index)
+    return shards, shard_count, shard_index
+
+
+def _append_option(argv: list[str], flag: str, value: object | None) -> None:
+    if value is None:
+        return
+    argv.extend([flag, str(value)])
 
 
 def _parse_task_ids(raw: str | None) -> list[str] | None:
@@ -1541,6 +1564,322 @@ def _print_run_summary(
     console.print(table)
 
 
+def _latest_run_summary(db: Path) -> RunSummary:
+    with ResultsDB(db) as rdb:
+        row = rdb.conn.execute(
+            """
+            SELECT
+              r.id AS run_id,
+              COUNT(tr.id) AS total,
+              COALESCE(SUM(tr.passed), 0) AS passed
+            FROM runs r
+            LEFT JOIN task_results tr ON tr.run_id = r.id
+            WHERE r.id = (SELECT MAX(id) FROM runs)
+            GROUP BY r.id
+            """
+        ).fetchone()
+    if row is None:
+        raise RuntimeError(f"No runs found in {db}")
+    return RunSummary(
+        run_id=int(row["run_id"]),
+        total=int(row["total"] or 0),
+        passed=int(row["passed"] or 0),
+    )
+
+
+def _merge_into_results_db(*, db: Path, shard_paths: list[Path]) -> RunSummary:
+    with tempfile.TemporaryDirectory(prefix="mcode-merge-") as td:
+        merged = Path(td) / "merged.db"
+        merge_shard_dbs(out_path=merged, shard_paths=shard_paths, force=True)
+        with ResultsDB(db) as out_db:
+            out_db.merge_from([merged])
+    return _latest_run_summary(db)
+
+
+def _stream_shard_output(
+    *,
+    proc: subprocess.Popen[str],
+    prefix: str,
+    log_path: Path,
+    echo_lock: threading.Lock,
+) -> threading.Thread:
+    def _worker() -> None:
+        with log_path.open("w", encoding="utf-8") as handle:
+            if proc.stdout is None:
+                return
+            for line in proc.stdout:
+                handle.write(line)
+                handle.flush()
+                text = line.rstrip()
+                if not text:
+                    continue
+                with echo_lock:
+                    typer.echo(f"[{prefix}] {text}")
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+    return thread
+
+
+def _run_sharded_benchmark(
+    *,
+    command: str,
+    base_argv: list[str],
+    shards: int,
+    db: Path,
+    benchmark: str,
+    backend: str,
+    model: str,
+    loop_budget: int,
+    timeout_s: int,
+) -> None:
+    run_dir = db.parent / f"{db.stem}-shards" / datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_dir.mkdir(parents=True, exist_ok=True)
+    typer.echo(
+        f"▶ sharded run command={command} shards={shards} out={db} artifacts={run_dir}",
+        err=True,
+    )
+
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    echo_lock = threading.Lock()
+    procs: list[tuple[int, subprocess.Popen[str], Path, Path, threading.Thread]] = []
+    failed: list[tuple[int, int, Path]] = []
+    shard_paths: list[Path] = []
+
+    try:
+        for shard_index in range(shards):
+            shard_db = run_dir / f"{db.stem}-shard-{shard_index}.db"
+            shard_log = run_dir / f"{db.stem}-shard-{shard_index}.log"
+            argv = [
+                sys.executable,
+                "-u",
+                "-m",
+                "mcode",
+                "bench",
+                command,
+                *base_argv,
+                "--db",
+                str(shard_db),
+                "--shard-count",
+                str(shards),
+                "--shard-index",
+                str(shard_index),
+            ]
+            typer.echo(
+                f"▶ shard {shard_index + 1}/{shards} db={shard_db} log={shard_log}",
+                err=True,
+            )
+            proc = subprocess.Popen(
+                argv,
+                cwd=str(Path.cwd()),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+            )
+            thread = _stream_shard_output(
+                proc=proc,
+                prefix=f"shard {shard_index}",
+                log_path=shard_log,
+                echo_lock=echo_lock,
+            )
+            procs.append((shard_index, proc, shard_db, shard_log, thread))
+
+        for shard_index, proc, shard_db, shard_log, thread in procs:
+            rc = proc.wait()
+            thread.join()
+            if rc == 0:
+                shard_paths.append(shard_db)
+                typer.echo(f"✓ shard {shard_index + 1}/{shards} finished", err=True)
+                continue
+            failed.append((shard_index, rc, shard_log))
+            typer.echo(
+                f"✗ shard {shard_index + 1}/{shards} failed exit={rc} log={shard_log}",
+                err=True,
+            )
+    except KeyboardInterrupt:
+        for _, proc, _, _, _ in procs:
+            if proc.poll() is None:
+                proc.terminate()
+        raise
+
+    if failed:
+        for shard_index, rc, shard_log in failed:
+            typer.echo(
+                f"failed shard={shard_index} exit={rc} log={shard_log}",
+                err=True,
+            )
+        raise typer.Exit(1)
+
+    summary = _merge_into_results_db(db=db, shard_paths=shard_paths)
+    typer.echo(f"✓ merged shards into {db}", err=True)
+    _print_run_summary(
+        summary=summary,
+        benchmark=benchmark,
+        backend=backend,
+        model=model,
+        loop_budget=loop_budget,
+        timeout_s=timeout_s,
+    )
+
+
+def _run_single_benchmark(
+    *,
+    benchmark: str,
+    config: BenchConfig,
+    db: Path,
+    limit: int | None,
+    task_ids: str | None,
+    backend: str,
+    model: str,
+    loop_budget: int,
+    timeout_s: int,
+) -> None:
+    parsed_task_ids = _parse_task_ids(task_ids)
+    runner = BenchmarkRunner(config=config, results_db=ResultsDB(db))
+    summary = runner.run_benchmark(benchmark, limit=limit, task_ids=parsed_task_ids)
+    _print_run_summary(
+        summary=summary,
+        benchmark=benchmark,
+        backend=backend,
+        model=model,
+        loop_budget=loop_budget,
+        timeout_s=timeout_s,
+    )
+
+
+def _run_bluevela_benchmark(
+    *,
+    command: str,
+    argv: list[str],
+    model: str,
+    db: Path,
+    fetch_db: bool,
+) -> None:
+    from mcode.bench.remote import RemoteBenchError, run_bench_on_bluevela
+
+    try:
+        rc = run_bench_on_bluevela(
+            bench_argv=[command, *argv],
+            model=model,
+            local_db=db,
+            fetch_db=fetch_db,
+        )
+    except RemoteBenchError as e:
+        typer.echo(f"✗ {e}", err=True)
+        raise typer.Exit(1) from e
+    raise typer.Exit(rc)
+
+
+def _swebench_live_cli_args(
+    *,
+    model: str,
+    backend: str,
+    loop_budget: int,
+    temperature: float | None,
+    seed: int | None,
+    timeout_s: int,
+    split: str,
+    mem_limit: str,
+    pids_limit: int,
+    limit: int | None,
+    n_samples: int,
+    sampling: str,
+    sampling_budget: int | None,
+    task_ids: str | None,
+) -> list[str]:
+    argv = [
+        "--model",
+        model,
+        "--backend",
+        backend,
+        "--loop-budget",
+        str(loop_budget),
+        "--timeout",
+        str(timeout_s),
+        "--split",
+        split,
+        "--mem-limit",
+        mem_limit,
+        "--pids-limit",
+        str(pids_limit),
+        "--n-samples",
+        str(n_samples),
+        "--sampling",
+        sampling,
+    ]
+    _append_option(argv, "--temperature", temperature)
+    _append_option(argv, "--seed", seed)
+    _append_option(argv, "--limit", limit)
+    _append_option(argv, "--sampling-budget", sampling_budget)
+    _append_option(argv, "--task-ids", task_ids)
+    return argv
+
+
+def _swebench_lite_cli_args(
+    *,
+    model: str,
+    backend: str,
+    loop_budget: int,
+    temperature: float | None,
+    seed: int | None,
+    timeout_s: int,
+    split: str,
+    arch: str,
+    namespace: str,
+    max_workers: int,
+    force_rebuild: bool,
+    mem_limit: str,
+    pids_limit: int,
+    limit: int | None,
+    n_samples: int,
+    sampling: str,
+    sampling_budget: int | None,
+    task_ids: str | None,
+    dataset: str,
+) -> list[str]:
+    argv = [
+        "--model",
+        model,
+        "--backend",
+        backend,
+        "--loop-budget",
+        str(loop_budget),
+        "--timeout",
+        str(timeout_s),
+        "--split",
+        split,
+        "--arch",
+        arch,
+        "--namespace",
+        namespace,
+        "--max-workers",
+        str(max_workers),
+        "--mem-limit",
+        mem_limit,
+        "--pids-limit",
+        str(pids_limit),
+        "--n-samples",
+        str(n_samples),
+        "--sampling",
+        sampling,
+        "--dataset",
+        dataset,
+    ]
+    _append_option(argv, "--temperature", temperature)
+    _append_option(argv, "--seed", seed)
+    _append_option(argv, "--limit", limit)
+    _append_option(argv, "--sampling-budget", sampling_budget)
+    _append_option(argv, "--task-ids", task_ids)
+    if force_rebuild:
+        argv.append("--force-rebuild")
+    return argv
+
+
 @bench_app.command("swebench-live")
 def bench_swebench_live(
     model: Annotated[str, typer.Option("--model", help="Mellea model id")],
@@ -1573,13 +1912,17 @@ def bench_swebench_live(
         int,
         typer.Option("--pids-limit", min=64, help="Eval container process limit"),
     ] = 512,
+    shards: Annotated[
+        int | None,
+        typer.Option("--shards", min=1, help="Run N shard workers and merge the DB automatically"),
+    ] = None,
     shard_count: Annotated[
         int | None,
-        typer.Option("--shard-count", min=1, help="Total shards for parallel runs"),
+        typer.Option("--shard-count", min=1, help="Manual shard mode: total shard count"),
     ] = None,
     shard_index: Annotated[
         int | None,
-        typer.Option("--shard-index", min=0, help="Shard index (0..shard-count-1)"),
+        typer.Option("--shard-index", min=0, help="Manual shard mode: shard index"),
     ] = None,
     db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
     limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
@@ -1602,14 +1945,84 @@ def bench_swebench_live(
             help="Comma-separated task IDs to run (or path to JSON/text file)",
         ),
     ] = None,
+    on: Annotated[
+        str,
+        typer.Option("--on", help="Where to run the bench: local or bluevela"),
+    ] = "local",
+    fetch_db: Annotated[
+        bool,
+        typer.Option("--fetch-db/--no-fetch-db", help="Rsync DB back when --on bluevela"),
+    ] = True,
 ) -> None:
     """Run Microsoft SWE-bench-Live benchmark."""
 
-    shard_count, shard_index = _validate_shards(shard_count=shard_count, shard_index=shard_index)
+    shards, shard_count, shard_index = _validate_shard_options(
+        shards=shards,
+        shard_count=shard_count,
+        shard_index=shard_index,
+    )
     sampling, sampling_budget = _validate_sampling(
         sampling=sampling,
         sampling_budget=sampling_budget,
     )
+    if on == "bluevela":
+        argv = _swebench_live_cli_args(
+            model=model,
+            backend=backend,
+            loop_budget=loop_budget,
+            temperature=temperature,
+            seed=seed,
+            timeout_s=timeout_s,
+            split=split,
+            mem_limit=mem_limit,
+            pids_limit=pids_limit,
+            limit=limit,
+            n_samples=n_samples,
+            sampling=sampling,
+            sampling_budget=sampling_budget,
+            task_ids=task_ids,
+        )
+        _append_option(argv, "--shards", shards)
+        _append_option(argv, "--shard-count", shard_count)
+        _append_option(argv, "--shard-index", shard_index)
+        _run_bluevela_benchmark(
+            command="swebench-live",
+            argv=argv,
+            model=model,
+            db=db,
+            fetch_db=fetch_db,
+        )
+    if on != "local":
+        typer.echo(f"✗ unknown --on target {on!r}; expected local or bluevela", err=True)
+        raise typer.Exit(2)
+    if shards and shards > 1:
+        _run_sharded_benchmark(
+            command="swebench-live",
+            base_argv=_swebench_live_cli_args(
+                model=model,
+                backend=backend,
+                loop_budget=loop_budget,
+                temperature=temperature,
+                seed=seed,
+                timeout_s=timeout_s,
+                split=split,
+                mem_limit=mem_limit,
+                pids_limit=pids_limit,
+                limit=limit,
+                n_samples=n_samples,
+                sampling=sampling,
+                sampling_budget=sampling_budget,
+                task_ids=task_ids,
+            ),
+            shards=shards,
+            db=db,
+            benchmark="swebench-live",
+            backend=backend,
+            model=model,
+            loop_budget=loop_budget,
+            timeout_s=timeout_s,
+        )
+        return
     if shard_count and shard_count > 1 and db == DEFAULT_DB_PATH:
         typer.echo(
             "Note: when running shards in parallel, use a unique --db per shard to avoid SQLite "
@@ -1633,12 +2046,12 @@ def bench_swebench_live(
         sampling_strategy=sampling,
         sampling_budget=sampling_budget,
     )
-    parsed_task_ids = _parse_task_ids(task_ids)
-    runner = BenchmarkRunner(config=config, results_db=ResultsDB(db))
-    summary = runner.run_benchmark("swebench-live", limit=limit, task_ids=parsed_task_ids)
-    _print_run_summary(
-        summary=summary,
+    _run_single_benchmark(
         benchmark="swebench-live",
+        config=config,
+        db=db,
+        limit=limit,
+        task_ids=task_ids,
         backend=backend,
         model=model,
         loop_budget=loop_budget,
@@ -1697,13 +2110,17 @@ def bench_swebench_lite(
         int,
         typer.Option("--pids-limit", min=64, help="Eval container process limit"),
     ] = 512,
+    shards: Annotated[
+        int | None,
+        typer.Option("--shards", min=1, help="Run N shard workers and merge the DB automatically"),
+    ] = None,
     shard_count: Annotated[
         int | None,
-        typer.Option("--shard-count", min=1, help="Total shards for parallel runs"),
+        typer.Option("--shard-count", min=1, help="Manual shard mode: total shard count"),
     ] = None,
     shard_index: Annotated[
         int | None,
-        typer.Option("--shard-index", min=0, help="Shard index (0..shard-count-1)"),
+        typer.Option("--shard-index", min=0, help="Manual shard mode: shard index"),
     ] = None,
     db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
     limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
@@ -1730,12 +2147,92 @@ def bench_swebench_lite(
         str,
         typer.Option("--dataset", help="HuggingFace dataset name"),
     ] = "SWE-bench/SWE-bench_Lite",
+    on: Annotated[
+        str,
+        typer.Option("--on", help="Where to run the bench: local or bluevela"),
+    ] = "local",
+    fetch_db: Annotated[
+        bool,
+        typer.Option("--fetch-db/--no-fetch-db", help="Rsync DB back when --on bluevela"),
+    ] = True,
 ) -> None:
-    shard_count, shard_index = _validate_shards(shard_count=shard_count, shard_index=shard_index)
+    shards, shard_count, shard_index = _validate_shard_options(
+        shards=shards,
+        shard_count=shard_count,
+        shard_index=shard_index,
+    )
     sampling, sampling_budget = _validate_sampling(
         sampling=sampling,
         sampling_budget=sampling_budget,
     )
+    if on == "bluevela":
+        argv = _swebench_lite_cli_args(
+            model=model,
+            backend=backend,
+            loop_budget=loop_budget,
+            temperature=temperature,
+            seed=seed,
+            timeout_s=timeout_s,
+            split=split,
+            arch=arch,
+            namespace=namespace,
+            max_workers=max_workers,
+            force_rebuild=force_rebuild,
+            mem_limit=mem_limit,
+            pids_limit=pids_limit,
+            limit=limit,
+            n_samples=n_samples,
+            sampling=sampling,
+            sampling_budget=sampling_budget,
+            task_ids=task_ids,
+            dataset=dataset,
+        )
+        _append_option(argv, "--shards", shards)
+        _append_option(argv, "--shard-count", shard_count)
+        _append_option(argv, "--shard-index", shard_index)
+        _run_bluevela_benchmark(
+            command="swebench-lite",
+            argv=argv,
+            model=model,
+            db=db,
+            fetch_db=fetch_db,
+        )
+    if on != "local":
+        typer.echo(f"✗ unknown --on target {on!r}; expected local or bluevela", err=True)
+        raise typer.Exit(2)
+    if shards and shards > 1:
+        _run_sharded_benchmark(
+            command="swebench-lite",
+            base_argv=_swebench_lite_cli_args(
+                model=model,
+                backend=backend,
+                loop_budget=loop_budget,
+                temperature=temperature,
+                seed=seed,
+                timeout_s=timeout_s,
+                split=split,
+                arch=arch,
+                namespace=namespace,
+                max_workers=max_workers,
+                force_rebuild=force_rebuild,
+                mem_limit=mem_limit,
+                pids_limit=pids_limit,
+                limit=limit,
+                n_samples=n_samples,
+                sampling=sampling,
+                sampling_budget=sampling_budget,
+                task_ids=task_ids,
+                dataset=dataset,
+            ),
+            shards=shards,
+            db=db,
+            benchmark="swebench-lite",
+            backend=backend,
+            model=model,
+            loop_budget=loop_budget,
+            timeout_s=timeout_s,
+        )
+        return
     if shard_count and shard_count > 1 and db == DEFAULT_DB_PATH:
         typer.echo(
             "Note: when running shards in parallel, use a unique --db per shard to avoid SQLite "
@@ -1764,12 +2261,12 @@ def bench_swebench_lite(
         sampling_budget=sampling_budget,
         swebench_dataset=dataset,
     )
-    parsed_task_ids = _parse_task_ids(task_ids)
-    runner = BenchmarkRunner(config=config, results_db=ResultsDB(db))
-    summary = runner.run_benchmark("swebench-lite", limit=limit, task_ids=parsed_task_ids)
-    _print_run_summary(
-        summary=summary,
+    _run_single_benchmark(
         benchmark="swebench-lite",
+        config=config,
+        db=db,
+        limit=limit,
+        task_ids=task_ids,
         backend=backend,
         model=model,
         loop_budget=loop_budget,
@@ -1787,6 +2284,18 @@ def bench_smoke(
     mem_limit: Annotated[
         str, typer.Option("--mem-limit", help="Eval container memory limit")
     ] = "8g",
+    shards: Annotated[
+        int | None,
+        typer.Option("--shards", min=1, help="Run N shard workers and merge the DB automatically"),
+    ] = None,
+    shard_count: Annotated[
+        int | None,
+        typer.Option("--shard-count", min=1, help="Manual shard mode: total shard count"),
+    ] = None,
+    shard_index: Annotated[
+        int | None,
+        typer.Option("--shard-index", min=0, help="Manual shard mode: shard index"),
+    ] = None,
     on: Annotated[
         str,
         typer.Option("--on", help="Where to run the bench: local or bluevela"),
@@ -1803,13 +2312,14 @@ def bench_smoke(
     """
     import importlib.resources as ir
 
-    task_ids_file = ir.files("mcode.bench.fixtures").joinpath("smoke-16.txt")
+    shards, shard_count, shard_index = _validate_shard_options(
+        shards=shards,
+        shard_count=shard_count,
+        shard_index=shard_index,
+    )
 
     if on == "bluevela":
-        from mcode.bench.remote import RemoteBenchError, run_bench_on_bluevela
-
         argv = [
-            "smoke",
             "--model",
             model,
             "--backend",
@@ -1817,35 +2327,42 @@ def bench_smoke(
             "--mem-limit",
             mem_limit,
         ]
-        try:
-            rc = run_bench_on_bluevela(bench_argv=argv, model=model, local_db=db, fetch_db=fetch_db)
-        except RemoteBenchError as e:
-            typer.echo(f"✗ {e}", err=True)
-            raise typer.Exit(1) from e
-        raise typer.Exit(rc)
+        _append_option(argv, "--shards", shards)
+        _append_option(argv, "--shard-count", shard_count)
+        _append_option(argv, "--shard-index", shard_index)
+        _run_bluevela_benchmark(
+            command="smoke",
+            argv=argv,
+            model=model,
+            db=db,
+            fetch_db=fetch_db,
+        )
     if on != "local":
         typer.echo(f"✗ unknown --on target {on!r}; expected local or bluevela", err=True)
         raise typer.Exit(2)
 
-    bench_swebench_lite(
-        model=model,
-        backend=backend,
-        loop_budget=15,
-        temperature=None,
-        seed=None,
-        timeout_s=300,
-        split="test",
-        arch="auto",
-        namespace="swebench",
-        max_workers=4,
-        force_rebuild=False,
-        mem_limit=mem_limit,
-        pids_limit=512,
-        shard_count=None,
-        shard_index=None,
-        db=db,
-        limit=None,
-        n_samples=1,
-        task_ids=str(task_ids_file),
-        dataset="princeton-nlp/SWE-bench_Verified",
-    )
+    task_ids_resource = ir.files("mcode.bench.fixtures").joinpath("smoke-16.txt")
+    with ir.as_file(task_ids_resource) as task_ids_file:
+        bench_swebench_lite(
+            model=model,
+            backend=backend,
+            loop_budget=15,
+            temperature=None,
+            seed=None,
+            timeout_s=300,
+            split="test",
+            arch="auto",
+            namespace="swebench",
+            max_workers=4,
+            force_rebuild=False,
+            mem_limit=mem_limit,
+            pids_limit=512,
+            shards=shards,
+            shard_count=shard_count,
+            shard_index=shard_index,
+            db=db,
+            limit=None,
+            n_samples=1,
+            task_ids=str(task_ids_file),
+            dataset="princeton-nlp/SWE-bench_Verified",
+        )

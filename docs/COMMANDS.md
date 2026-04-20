@@ -11,13 +11,16 @@ uv run mcode deps sync --extra swebench --extra datasets --extra observability
 
 ```bash
 uv run mcode bench swebench-lite --model granite3.3:8b --limit 5
+MCODE_CONTEXT_WINDOW=262144 uv run mcode bench swebench-lite --backend openai --model Qwen/Qwen3.6-35B-A3B --on bluevela --limit 5
+uv run mcode bench swebench-lite --model granite3.3:8b --limit 16 --shards 4
 uv run mcode bench swebench-lite --model granite3.3:8b --sampling rejection --n-samples 3 --limit 5
 uv run mcode bench swebench-live --model granite3.3:8b --limit 5
-uv run mcode bench smoke --model Qwen/Qwen3.5-35B-A3B --backend openai
+MCODE_CONTEXT_WINDOW=262144 uv run mcode bench smoke --model Qwen/Qwen3.6-35B-A3B --backend openai --shards 4
 ```
 
 Key flags:
 
+- `--shards N`
 - `--sampling {none,rejection,repair,sofai}`
 - `--sampling-budget N`
 - `--n-samples N`
@@ -38,7 +41,7 @@ uv run mcode export-csv -i experiments/results --out-dir experiments/results --p
 ```bash
 uv run mcode launch doctor bluevela --init --login <user>@<login-host>
 uv run mcode launch sync bluevela
-uv run mcode launch bluevela --model Qwen/Qwen3.5-35B-A3B
+uv run mcode launch bluevela --model Qwen/Qwen3.6-35B-A3B
 uv run mcode launch status
 uv run mcode launch refresh
 uv run mcode launch stop --all

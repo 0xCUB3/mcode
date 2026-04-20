@@ -36,9 +36,12 @@ def test_cli_help() -> None:
 def test_cli_bench_swebench_help() -> None:
     _invoke_help("bench", "swebench-lite", "--help")
     option_names = _command_option_names("bench", "swebench-lite")
+    assert "shards" in option_names
     assert "n_samples" in option_names
     assert "sampling" in option_names
     assert "sampling_budget" in option_names
+    assert "on" in option_names
+    assert "fetch_db" in option_names
 
 
 def test_cli_report_help() -> None:
@@ -47,9 +50,17 @@ def test_cli_report_help() -> None:
 
 def test_cli_bench_swebench_live_help() -> None:
     option_names = _command_option_names("bench", "swebench-live")
+    assert "shards" in option_names
     assert "n_samples" in option_names
     assert "sampling" in option_names
     assert "sampling_budget" in option_names
+    assert "on" in option_names
+    assert "fetch_db" in option_names
+
+
+def test_cli_bench_smoke_help() -> None:
+    option_names = _command_option_names("bench", "smoke")
+    assert "shards" in option_names
 
 
 def test_cli_compare_help() -> None:
