@@ -165,6 +165,48 @@ def test_run_react_loop_uses_plain_final_answer_without_format(monkeypatch):
     assert terminal_reason == "submitted"
     assert submission == "done"
 
+def test_run_react_loop_uses_finalizer_content_when_other_tools_returned(monkeypatch):
+    outputs = iter([
+        (
+            SimpleNamespace(tool_calls={"edit": object(), "final_answer": object()}),
+            ChatContext(),
+        )
+    ])
+
+    async def fake_aact(*args, **kwargs):
+        del args, kwargs
+        return next(outputs)
+
+    async def fake_acall_tools(result, backend):
+        del result, backend
+        return [
+            SimpleNamespace(name="edit", content="patched"),
+            SimpleNamespace(name="final_answer", content="done"),
+        ]
+
+    session = SimpleNamespace(ctx=ChatContext(), backend=object())
+    monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
+    monkeypatch.setattr("mcode.llm.react_driver.acall_tools", fake_acall_tools)
+
+    submission, terminal_reason = asyncio.run(
+        run_react_loop(
+            session,
+            goal="Fix it",
+            tools=[],
+            model_options={},
+            loop_budget=1,
+            timeout_s=5,
+            submission_format=None,
+            collector=SolveTraceCollector(),
+            turn_requirements=lambda turn, budget, state: [],
+            submission_requirements=[],
+            strategy_for_requirements=lambda requirements: None,
+            hooks_enabled=False,
+        )
+    )
+
+    assert terminal_reason == "submitted"
+    assert submission == "done"
 
 def test_run_react_loop_times_out_as_budget_exhausted():
     async def fake_aact(*args, **kwargs):

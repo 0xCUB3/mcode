@@ -193,9 +193,17 @@ async def run_react_loop(
                             success=not isinstance(tool_output, Exception),
                         )
 
-            if any(tool_result.name == MELLEA_FINALIZER_TOOL for tool_result in tool_responses):
+            finalizer_response = next(
+                (
+                    tool_result
+                    for tool_result in tool_responses
+                    if tool_result.name == MELLEA_FINALIZER_TOOL
+                ),
+                None,
+            )
+            if finalizer_response is not None:
                 if submission_format is None:
-                    submission = str(tool_responses[0].content)
+                    submission = str(finalizer_response.content)
                 else:
                     submission, next_context = await mfuncs.aact(
                         ReactThought(),
