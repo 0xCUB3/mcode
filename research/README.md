@@ -24,6 +24,8 @@ Short notes for benchmark runs and parameter sweeps. Each entry should include:
 - `2026-04-18-verify-rerank-v1-ab`: Blue Vela smoke-16 A/B of controller-side reranking on Qwen and Gemma. Qwen was flat at 4/16, Gemma treatment stalled at 4/9, and the experiment was reverted.
 - `2026-04-20-final-answer-selection-fix`: finalizer tool-selection fix in the Mellea ReAct driver, plus Blue Vela Qwen3.5 smoke A/Bs around generic control-loop nudges. The kept fix is small and correct, the best valid control hit 7/16, and every extra nudge regressed.
 - `2026-04-21-mellea-first-harness-ab`: Mellea-first Qwen3.5 smoke A/Bs on Blue Vela. Reusing more of the forked Mellea surface exposed a weaker 3/16 control, loop detection did not recover it, the stock Mellea tool builder was not drop-in, and several malformed-call repair experiments were drowned by infra failures.
+- `2026-04-21-upstream-clean-head-repair-ab`: upstream-compatible Blue Vela Qwen3.5 smoke sweep from a clean worktree. Repair sampling was the only clear positive signal, improving the clean full control from 4/16 to 6/16 on the first run and 5/16 on rerun. The small malformed-arg retry looked neutral on pass rate.
+
 
 
 
