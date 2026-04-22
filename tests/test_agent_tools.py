@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 
-from mcode.llm.session import _get_diff
+from mcode.llm.repo_state import get_git_diff
 
 
 def test_diff_after_edits(tmp_path):
@@ -21,6 +21,6 @@ def test_diff_after_edits(tmp_path):
 
     (tmp_path / "foo.py").write_text("a = 1\nb = 42\n")
 
-    patch = _get_diff(str(tmp_path))
+    patch = get_git_diff(str(tmp_path))
     assert "-b = 2" in patch
     assert "+b = 42" in patch

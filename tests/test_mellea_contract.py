@@ -14,7 +14,7 @@ def test_installed_mellea_exposes_native_solver_surface():
                 "from mellea.stdlib.frameworks.react import react; "
                 "from mellea.backends.tools import MelleaTool; "
                 "from mellea.plugins.pluginset import PluginSet; "
-                "from mellea.eval.compare import compare_runs; "
+                "from mcode.bench.compare import compare_runs; "
                 "from mcode.mellea_compat import import_requirements, import_sampling; "
                 "assert callable(start_session); "
                 "assert callable(react); "

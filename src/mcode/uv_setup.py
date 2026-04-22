@@ -70,7 +70,7 @@ def _build_runtime_check(selection: UvDependencySelection) -> str:
         "react = importlib.import_module('mellea.stdlib.frameworks.react'); "
         "telemetry = importlib.import_module('mellea.telemetry'); "
         "plugins = importlib.import_module('mellea.plugins.pluginset'); "
-        "compare = importlib.import_module('mellea.eval.compare'); "
+        "compare = importlib.import_module('mcode.bench.compare'); "
         "compat = importlib.import_module('mcode.mellea_compat'); "
         "location = str(pathlib.Path(mellea.__file__).resolve()); "
         f"expected = {expected!r}; "
