@@ -100,6 +100,7 @@ def test_build_sampling_strategy_variants(monkeypatch):
         lambda: SimpleNamespace(
             RejectionSamplingStrategy=make_strategy("rejection"),
             RepairTemplateStrategy=make_strategy("repair"),
+            MultiTurnStrategy=make_strategy("multiturn"),
             SOFAISamplingStrategy=make_strategy("sofai"),
         ),
     )
@@ -107,9 +108,15 @@ def test_build_sampling_strategy_variants(monkeypatch):
     backend = object()
     _build_sampling_strategy(backend=backend, strategy_name="rejection", sampling_budget=2)
     _build_sampling_strategy(backend=backend, strategy_name="repair", sampling_budget=3)
-    _build_sampling_strategy(backend=backend, strategy_name="sofai", sampling_budget=4)
+    _build_sampling_strategy(backend=backend, strategy_name="multiturn", sampling_budget=4)
+    _build_sampling_strategy(backend=backend, strategy_name="sofai", sampling_budget=5)
 
-    assert captured == [("rejection", 2), ("repair", 3), ("sofai", 4)]
+    assert captured == [
+        ("rejection", 2),
+        ("repair", 3),
+        ("multiturn", 4),
+        ("sofai", 5),
+    ]
 
 
 def test_strategy_for_requirements_skips_sampling_when_disabled(monkeypatch):

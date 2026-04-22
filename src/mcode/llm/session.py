@@ -442,6 +442,8 @@ def _build_sampling_strategy(*, backend, strategy_name: str, sampling_budget: in
         return sampling.RejectionSamplingStrategy(loop_budget=max(1, sampling_budget))
     if strategy_name == "repair":
         return sampling.RepairTemplateStrategy(loop_budget=max(1, sampling_budget))
+    if strategy_name == "multiturn":
+        return sampling.MultiTurnStrategy(loop_budget=max(1, sampling_budget))
     if strategy_name == "sofai":
         return sampling.SOFAISamplingStrategy(
             backend,

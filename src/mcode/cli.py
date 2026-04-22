@@ -1931,7 +1931,7 @@ def bench_swebench_live(
         typer.Option("--n-samples", min=1, help="Outer attempts or sampling budget"),
     ] = 1,
     sampling: Annotated[
-        Literal["none", "rejection", "repair", "sofai"],
+        Literal["none", "rejection", "repair", "multiturn", "sofai"],
         typer.Option("--sampling", help="Mellea sampling strategy"),
     ] = "none",
     sampling_budget: Annotated[
@@ -2129,7 +2129,7 @@ def bench_swebench_lite(
         typer.Option("--n-samples", min=1, help="Outer attempts or sampling budget"),
     ] = 1,
     sampling: Annotated[
-        Literal["none", "rejection", "repair", "sofai"],
+        Literal["none", "rejection", "repair", "multiturn", "sofai"],
         typer.Option("--sampling", help="Mellea sampling strategy"),
     ] = "none",
     sampling_budget: Annotated[
