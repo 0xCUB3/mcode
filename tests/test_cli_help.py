@@ -79,6 +79,7 @@ def test_cli_rejects_sampling_budget_without_sampling() -> None:
             "--sampling-budget",
             "2",
         ],
+        color=False,
     )
 
     assert res.exit_code != 0

@@ -135,6 +135,7 @@ def test_cli_rejects_auto_and_manual_shards_together() -> None:
             "--shard-count",
             "2",
         ],
+        color=False,
     )
 
     assert res.exit_code != 0
