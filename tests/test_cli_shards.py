@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import io
+import re
 from pathlib import Path
 
 from typer.testing import CliRunner
 
 from mcode.bench.results import ResultsDB
 from mcode.cli import _latest_run_summary, _run_sharded_benchmark, app
+
+
+def _strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
 class _FakePopen:
@@ -137,9 +142,9 @@ def test_cli_rejects_auto_and_manual_shards_together() -> None:
         ],
         color=False,
     )
-
     assert res.exit_code != 0
-    assert "--shards cannot be combined with --shard-count/--shard-index" in res.output
+    output = _strip_ansi(res.output)
+    assert "--shards cannot be combined with --shard-count/--shard-index" in output
 
 
 def test_smoke_bluevela_forwards_shard_args(monkeypatch, tmp_path: Path) -> None:

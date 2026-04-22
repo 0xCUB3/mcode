@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from typer.main import get_command
 from typer.testing import CliRunner
 
 from mcode.cli import app
+
+
+def _strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
 def _invoke_help(*args: str) -> str:
@@ -81,9 +86,9 @@ def test_cli_rejects_sampling_budget_without_sampling() -> None:
         ],
         color=False,
     )
-
     assert res.exit_code != 0
-    assert "--sampling-budget requires --sampling != none" in res.output
+    output = _strip_ansi(res.output)
+    assert "--sampling-budget requires --sampling != none" in output
 
 
 def test_cli_deps_sync_help() -> None:
