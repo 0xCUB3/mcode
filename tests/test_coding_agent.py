@@ -32,6 +32,12 @@ def test_build_coding_agent_assembles_prompt_and_tools(tmp_path):
             return_value="Likely files to inspect first:\nfoo.py",
         ),
         patch("mcode.agent.coding_agent.make_agent_tools", return_value=["tool-a"]),
+        patch(
+            "mcode.agent.coding_agent.collect_workspace_context",
+            return_value=SimpleNamespace(
+                text="Local workspace context:\n- README.md\nUse project docs.",
+            ),
+        ),
     ):
         assembly = build_coding_agent(
             session=session,
@@ -46,6 +52,8 @@ def test_build_coding_agent_assembles_prompt_and_tools(tmp_path):
     assert "repo map" in assembly.goal
     assert "Hint text" in assembly.goal
     assert "run_tests default" in assembly.goal
+    assert "Local workspace context:" in assembly.goal
+    assert "Use project docs." in assembly.goal
     assert assembly.model_options[ModelOption.TEMPERATURE] == 0.25
     assert assembly.model_options[ModelOption.SEED] == 7
     assert assembly.loop_budget == 9

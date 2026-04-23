@@ -22,6 +22,7 @@ from mcode.agent.verification import (
     build_run_tests_tool,
     build_verification_policy,
 )
+from mcode.agent.workspace_context import collect_workspace_context
 from mcode.llm.harness_experiments import (
     MELLEA_TOOLKIT_V1,
     active_harness_experiments,
@@ -88,6 +89,12 @@ def build_coding_agent(
     except Exception as e:
         print(f"  [localization] failed: {e}", flush=True)
 
+    workspace_context_text = ""
+    try:
+        workspace_context_text = collect_workspace_context(repo_root, problem_statement).text
+    except Exception as e:
+        print(f"  [workspace_context] failed: {e}", flush=True)
+
     repo_customization = load_repo_customization(repo_root)
     coding_policy = build_coding_policy(
         repo=repo,
@@ -96,6 +103,7 @@ def build_coding_agent(
         repo_map_text=repo_map_text,
         candidate_files_text=candidate_files_text,
         repo_customization_text=repo_customization.text,
+        workspace_context_text=workspace_context_text,
         verification_prompt=verification_policy.prompt_block,
     )
     harness_experiments = active_harness_experiments()

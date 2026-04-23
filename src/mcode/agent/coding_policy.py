@@ -36,6 +36,7 @@ def build_goal(
     candidate_files_text: str = "",
     hints_text: str = "",
     repo_customization_text: str = "",
+    workspace_context_text: str = "",
     verification_prompt: str = "",
 ) -> str:
     repo_map_block = f"\n\nRepository structure:\n{repo_map_text}" if repo_map_text else ""
@@ -52,10 +53,14 @@ def build_goal(
         if repo_customization_text.strip()
         else ""
     )
+    workspace_context_block = (
+        f"\n\n{workspace_context_text.strip()}" if workspace_context_text.strip() else ""
+    )
     return (
         f"Fix this bug in {repo} by editing the existing source code.\n\n"
         f"Issue:\n{problem_statement.strip()}"
-        f"{repo_map_block}{candidate_files_block}{hints_block}{customization_block}{verification_prompt}\n\n"
+        f"{repo_map_block}{candidate_files_block}{hints_block}{customization_block}"
+        f"{workspace_context_block}{verification_prompt}\n\n"
         "Do not open a second solving path. Diagnose, edit, verify, then submit."
     )
 
@@ -68,6 +73,7 @@ def build_coding_policy(
     repo_map_text: str = "",
     candidate_files_text: str = "",
     repo_customization_text: str = "",
+    workspace_context_text: str = "",
     verification_prompt: str = "",
 ) -> CodingPolicy:
     return CodingPolicy(
@@ -79,6 +85,7 @@ def build_coding_policy(
             repo_map_text=repo_map_text,
             candidate_files_text=candidate_files_text,
             repo_customization_text=repo_customization_text,
+            workspace_context_text=workspace_context_text,
             verification_prompt=verification_prompt,
         ),
     )
