@@ -88,6 +88,7 @@ def test_run_bench_on_bluevela_forwards_context_env(tmp_path, monkeypatch) -> No
     monkeypatch.setattr(remote.time, "time", lambda: 1777000001)
     monkeypatch.setenv("MCODE_CONTEXT_WINDOW", "262144")
     monkeypatch.setenv("MCODE_MAX_NEW_TOKENS", "4096")
+    monkeypatch.setenv("MCODE_HARNESS_EXPERIMENTS", "mellea_loop_detect_v1")
 
     remote.run_bench_on_bluevela(
         bench_argv=["smoke", "--model", "Qwen/Qwen3.6-35B-A3B"],
@@ -100,6 +101,8 @@ def test_run_bench_on_bluevela_forwards_context_env(tmp_path, monkeypatch) -> No
     launch_cmd = next(cmd for cmd in ssh.commands if cmd.startswith("nohup bash -lc "))
     assert "export MCODE_CONTEXT_WINDOW=262144" in launch_cmd
     assert "export MCODE_MAX_NEW_TOKENS=4096" in launch_cmd
+    assert "export MCODE_HARNESS_EXPERIMENTS=mellea_loop_detect_v1" in launch_cmd
+
 
 
 def test_run_bench_on_bluevela_prefers_openai_env_override(tmp_path, monkeypatch) -> None:

@@ -94,6 +94,7 @@ class McodeSolverPowerup:
         collector: SolveTraceCollector,
         sampling_strategy_name: str,
         sampling_budget: int,
+        harness_experiments: tuple[str, ...],
         hooks_enabled: bool,
     ) -> SolveResult:
         use_requirement_sampling = sampling_strategy_name != "none"
@@ -128,6 +129,7 @@ class McodeSolverPowerup:
                 strategy_name=sampling_strategy_name,
                 sampling_budget=sampling_budget,
             ),
+            harness_experiments=harness_experiments,
             hooks_enabled=hooks_enabled,
         )
 
@@ -367,6 +369,7 @@ class LLMSession:
                             collector=collector,
                             sampling_strategy_name=self.sampling_strategy,
                             sampling_budget=sampling_budget,
+                            harness_experiments=agent.harness_experiments,
                             hooks_enabled=enable_hooks,
                         )
                     )

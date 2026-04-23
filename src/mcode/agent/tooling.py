@@ -277,6 +277,19 @@ def _count_errors(tree) -> int:
         stack.extend(node.children)
     return count
 
+# Tree-sitter is too noisy for C-family headers and macro-heavy sources.
+# The compiler-backed benchmark verifier is the reliable syntax boundary there.
+_SYNTAX_GUARD_UNRELIABLE_SUFFIXES = {
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cxx",
+    ".h",
+    ".hh",
+    ".hpp",
+    ".hxx",
+}
+
 
 def _syntax_details(path: str, content: str) -> tuple[int, str | None] | None:
     ext = Path(path).suffix.lower()
@@ -324,6 +337,10 @@ def _format_edit_result(status: str, path: str, detail: str) -> str:
     return format_tool_result(f"edit {path}", status, detail)
 
 
+def _should_skip_syntax_guard(path: str) -> bool:
+    return Path(path).suffix.lower() in _SYNTAX_GUARD_UNRELIABLE_SUFFIXES
+
+
 def str_replace_edit(path: str, old_str: str, new_str: str, *, repo_root: str) -> str:
     try:
         full_path = Path(repo_root) / path if not Path(path).is_absolute() else Path(path)
@@ -353,18 +370,19 @@ def str_replace_edit(path: str, old_str: str, new_str: str, *, repo_root: str) -
             f"Error: old_str appears {count} times. Provide more context to make the match unique.",
         )
 
-    pre_syntax = _syntax_details(str(full_path), content)
     new_content = content.replace(old_str, new_str, 1)
-    post_syntax = _syntax_details(str(full_path), new_content)
-    pre_error_count = 0 if pre_syntax is None else pre_syntax[0]
-    post_error_count = 0 if post_syntax is None else post_syntax[0]
-    post_error = None if post_syntax is None else post_syntax[1]
-    if post_error_count > pre_error_count and post_error is not None:
-        return _format_edit_result(
-            "REJECTED",
-            path,
-            f"Edit rejected: introduces syntax error. {post_error}. File unchanged.",
-        )
+    if not _should_skip_syntax_guard(path):
+        pre_syntax = _syntax_details(str(full_path), content)
+        post_syntax = _syntax_details(str(full_path), new_content)
+        pre_error_count = 0 if pre_syntax is None else pre_syntax[0]
+        post_error_count = 0 if post_syntax is None else post_syntax[0]
+        post_error = None if post_syntax is None else post_syntax[1]
+        if post_error_count > pre_error_count and post_error is not None:
+            return _format_edit_result(
+                "REJECTED",
+                path,
+                f"Edit rejected: introduces syntax error. {post_error}. File unchanged.",
+            )
 
     try:
         full_path.write_text(new_content)

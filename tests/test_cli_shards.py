@@ -346,3 +346,59 @@ def test_smoke_local_forwards_manual_shards(monkeypatch, tmp_path: Path) -> None
     assert captured["shard_count"] == 4
     assert captured["shard_index"] == 2
     assert captured["task_ids"].endswith("smoke-16.txt")
+
+
+def test_aider_polyglot_cli_forwards_config(monkeypatch, tmp_path: Path) -> None:
+    runner = CliRunner()
+    captured: dict[str, object] = {}
+
+    def fake_run_single_benchmark(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("mcode.cli._run_single_benchmark", fake_run_single_benchmark)
+
+    res = runner.invoke(
+        app,
+        [
+            "bench",
+            "aider-polyglot",
+            "--model",
+            "test-model",
+            "--language",
+            "python",
+            "--exercise",
+            "hello-world",
+            "--benchmark-root",
+            str(tmp_path / "polyglot"),
+        ],
+    )
+
+    assert res.exit_code == 0
+    assert captured["benchmark"] == "aider-polyglot"
+    assert captured["task_ids"] == "python/hello-world"
+    config = captured["config"]
+    assert config.model_id == "test-model"
+    assert config.backend_name == "openai"
+    assert config.loop_budget == 12
+    assert config.aider_polyglot_retry_loop_budget == 8
+    assert config.aider_polyglot_language == "python"
+    assert config.aider_polyglot_root == tmp_path / "polyglot"
+    assert captured["loop_budget"] == 20
+
+
+def test_aider_polyglot_cli_rejects_exercise_without_language() -> None:
+    runner = CliRunner()
+    res = runner.invoke(
+        app,
+        [
+            "bench",
+            "aider-polyglot",
+            "--model",
+            "test-model",
+            "--exercise",
+            "hello-world",
+        ],
+    )
+
+    assert res.exit_code != 0
+    assert "--exercise requires a concrete --language" in res.output

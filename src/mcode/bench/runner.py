@@ -46,6 +46,10 @@ class BenchConfig:
     swebench_mem_limit: str = "4g"
     swebench_pids_limit: int = 512
     swebench_dataset: str = "SWE-bench/SWE-bench_Lite"
+    aider_polyglot_root: Path | None = None
+    aider_polyglot_language: str = "all"
+    aider_polyglot_retry: bool = True
+    aider_polyglot_retry_loop_budget: int = 8
     n_samples: int = 1
     sampling_strategy: str = "none"
     sampling_budget: int | None = None
@@ -73,14 +77,17 @@ class BenchmarkRunner:
     def __init__(self, *, config: BenchConfig, results_db: ResultsDB):
         self.config = config
         self.results_db = results_db
-        self.llm = LLMSession(
-            model_id=config.model_id,
-            backend_name=config.backend_name,
-            loop_budget=config.loop_budget,
-            temperature=config.temperature,
-            seed=config.seed,
-            sampling_strategy=config.sampling_strategy,
-            sampling_budget=config.sampling_budget,
+        self.llm = self._build_llm(loop_budget=config.loop_budget)
+
+    def _build_llm(self, *, loop_budget: int) -> LLMSession:
+        return LLMSession(
+            model_id=self.config.model_id,
+            backend_name=self.config.backend_name,
+            loop_budget=loop_budget,
+            temperature=self.config.temperature,
+            seed=self.config.seed,
+            sampling_strategy=self.config.sampling_strategy,
+            sampling_budget=self.config.sampling_budget,
         )
 
     def run_benchmark(
@@ -97,6 +104,9 @@ class BenchmarkRunner:
         if name in {"swebench-live", "swebench_live"}:
             self.llm.check_available()
             return self._run_swebench_live(limit=limit, task_ids=task_ids)
+        if name in {"aider-polyglot", "aider_polyglot"}:
+            self.llm.check_available()
+            return self._run_aider_polyglot(limit=limit, task_ids=task_ids)
         raise ValueError(f"Unknown benchmark: {benchmark}")
 
     def _run_swebench_lite(
@@ -200,6 +210,227 @@ class BenchmarkRunner:
 
         return RunSummary(run_id=run_id, total=total, passed=passed)
 
+    def _run_aider_polyglot(
+        self,
+        *,
+        limit: int | None,
+        task_ids: list[str] | None = None,
+    ) -> RunSummary:
+        from mcode.bench.aider_polyglot import load_aider_polyglot
+
+        tasks = load_aider_polyglot(
+            self.config.aider_polyglot_root,
+            language=self.config.aider_polyglot_language,
+            limit=limit,
+            task_ids=task_ids,
+        )
+        tasks = _apply_task_shard(tasks, self.config.task_shard_count, self.config.task_shard_index)
+        config = _augment_run_config(asdict(self.config))
+        config["planned_task_count"] = len(tasks)
+        config["dataset"] = {
+            "name": "Aider Polyglot",
+            "root": (
+                str(self.config.aider_polyglot_root) if self.config.aider_polyglot_root else None
+            ),
+            "language": self.config.aider_polyglot_language,
+            "retry": self.config.aider_polyglot_retry,
+            "retry_loop_budget": self.config.aider_polyglot_retry_loop_budget,
+        }
+        run_id = self.results_db.start_run("aider-polyglot", config)
+
+        passed = 0
+        total = 0
+        with Progress() as progress:
+            t = progress.add_task("[bold]Running aider-polyglot[/bold]", total=len(tasks))
+            for task in tasks:
+                total += 1
+                result = self._run_aider_polyglot_task(task)
+                if result["passed"]:
+                    passed += 1
+                self.results_db.save_task_result(run_id, result)
+                progress.advance(t, 1)
+
+        return RunSummary(run_id=run_id, total=total, passed=passed)
+
+    def _run_aider_polyglot_task(self, task) -> dict[str, object]:
+        from pathlib import Path
+        
+        from mcode.bench.aider_polyglot import (
+            cleanup_prepared_task,
+            prepare_task,
+            run_test_commands,
+        )
+        from mcode.llm.repo_state import get_git_diff, restore_repo_snapshot
+        
+        start = time.time()
+        prepared = None
+        first_metrics: dict[str, object] | None = None
+        final_metrics: dict[str, object] | None = None
+        first_pass_snapshot = None
+        final_pass_snapshot = None
+        evaluation = None
+        attempts_used = 0
+        try:
+            prepared = prepare_task(task, benchmark_root=self.config.aider_polyglot_root)
+            if not prepared.stub_paths or not prepared.test_paths:
+                raise RuntimeError(
+                    f"benchmark task {task.task_id} is missing stubs or tests after preparation"
+                )
+            
+            first_metrics, first_pass_snapshot = self._run_aider_polyglot_attempt(
+                task=task,
+                prepared=prepared,
+                prompt=prepared.build_first_prompt(),
+                loop_budget=self.config.loop_budget,
+            )
+            evaluation = run_test_commands(prepared)
+            if not evaluation.passed and first_pass_snapshot is not None:
+                restore_repo_snapshot(
+                    str(prepared.work_dir),
+                    Path(first_pass_snapshot.name) / "snapshot",
+                )
+                evaluation = run_test_commands(prepared)
+            attempts_used = 1
+            
+            if not evaluation.passed and self.config.aider_polyglot_retry:
+                final_metrics, final_pass_snapshot = self._run_aider_polyglot_attempt(
+                    task=task,
+                    prepared=prepared,
+                    prompt=prepared.build_retry_prompt(evaluation.output),
+                    loop_budget=self.config.aider_polyglot_retry_loop_budget,
+                )
+                evaluation = run_test_commands(prepared)
+                if not evaluation.passed and final_pass_snapshot is not None:
+                    restore_repo_snapshot(
+                        str(prepared.work_dir),
+                        Path(final_pass_snapshot.name) / "snapshot",
+                    )
+                    evaluation = run_test_commands(prepared)
+                attempts_used = 2
+            else:
+                final_metrics = first_metrics
+            
+            terminal_reason = None
+            if evaluation.passed:
+                terminal_reason = "submitted"
+            metrics = _merge_polyglot_metrics(
+                first=first_metrics,
+                second=final_metrics if attempts_used > 1 else None,
+                first_loop_budget=self.config.loop_budget,
+                terminal_reason=terminal_reason,
+            )
+            diff = get_git_diff(str(prepared.work_dir))
+            sha = (
+                hashlib.sha256(diff.encode("utf-8", errors="ignore")).hexdigest()
+                if diff
+                else None
+            )
+            return {
+                "task_id": task.task_id,
+                "passed": evaluation.passed,
+                "attempts_used": attempts_used,
+                "time_ms": int((time.time() - start) * 1000),
+                "exit_code": evaluation.exit_code,
+                "timed_out": evaluation.timed_out,
+                "stdout": _truncate(evaluation.output),
+                "stderr": None,
+                "error": None if evaluation.passed else "Tests failed",
+                "code_sha256": sha,
+                **metrics,
+            }
+        except Exception as e:
+            return _task_error_result(
+                task_id=task.task_id,
+                start_time=start,
+                error=e,
+                scaffold_metrics=final_metrics or first_metrics,
+                attempts_used=attempts_used,
+            )
+        finally:
+            for snapshot in (first_pass_snapshot, final_pass_snapshot):
+                if snapshot is not None:
+                    snapshot.cleanup()
+            if prepared is not None:
+                cleanup_prepared_task(prepared)
+    
+    def _run_aider_polyglot_attempt(
+        self,
+        *,
+        task,
+        prepared,
+        prompt: str,
+        loop_budget: int,
+    ) -> tuple[dict[str, object] | None, object | None]:
+        import shutil
+        from tempfile import TemporaryDirectory
+        
+        from mcode.agent.tooling import format_tool_result
+        from mcode.bench.aider_polyglot import run_command_sequence, run_single_command
+        
+        llm = self._build_llm(loop_budget=loop_budget)
+        pass_snapshot = None
+        allowed_commands = tuple(prepared.test_commands)
+        
+        def _capture_passing_state() -> None:
+            nonlocal pass_snapshot
+            if pass_snapshot is not None:
+                return
+            pass_snapshot = TemporaryDirectory(prefix="mcode-polyglot-pass-")
+            snapshot_dir = Path(pass_snapshot.name) / "snapshot"
+            shutil.copytree(
+                prepared.work_dir,
+                snapshot_dir,
+                ignore=shutil.ignore_patterns(".git"),
+                symlinks=True,
+            )
+        
+        allowed_commands = _allowed_polyglot_test_commands(prepared)
+
+        def test_fn(test_cmd: str = "default") -> str:
+            normalized = test_cmd.strip() or "default"
+            if normalized.lower() == "default":
+                outcome = run_command_sequence(
+                    prepared.work_dir,
+                    prepared.test_commands,
+                    timeout_s=prepared.timeout_s,
+                )
+                label = "run_tests default"
+            elif normalized in allowed_commands:
+                outcome = run_single_command(
+                    prepared.work_dir,
+                    normalized,
+                    timeout_s=prepared.timeout_s,
+                )
+                label = normalized
+            else:
+                allowed = ", ".join(allowed_commands)
+                return format_tool_result(
+                    normalized,
+                    "BLOCKED",
+                    (
+                        "Only `run_tests default` or one of the declared benchmark "
+                        f"commands is allowed here: {allowed}"
+                    ),
+                )
+            if outcome.passed:
+                _capture_passing_state()
+            status = (
+                "PASSED"
+                if outcome.passed
+                else ("TIMEOUT" if outcome.timed_out else "FAILED")
+            )
+            return format_tool_result(label, status, outcome.output)
+        
+        llm.solve(
+            repo=task.repo,
+            problem_statement=prompt,
+            repo_root=str(prepared.work_dir),
+            n_samples=self.config.n_samples,
+            test_cmds={"test_cmds": list(prepared.test_commands)},
+            test_fn=test_fn,
+            visible_repo_root=str(prepared.work_dir),
+        )
+        return _generation_result(llm), pass_snapshot
     def _generate_task_patch(
         self,
         task,
@@ -412,7 +643,7 @@ def _scaffold_metrics(
     metrics: dict[str, object] | None,
     *,
     terminal_reason: str | None = None,
-) -> dict[str, object]:
+ ) -> dict[str, object]:
     out = {
         "terminal_reason": None,
         "turns_to_first_edit": None,
@@ -433,6 +664,98 @@ def _scaffold_metrics(
     if terminal_reason is not None:
         out["terminal_reason"] = terminal_reason
     return out
+
+
+def _merge_polyglot_metrics(
+    *,
+    first: dict[str, object] | None,
+    second: dict[str, object] | None,
+    first_loop_budget: int,
+    terminal_reason: str | None = None,
+ ) -> dict[str, object]:
+    merged = _scaffold_metrics(first)
+    if second is None:
+        if terminal_reason is not None:
+            merged["terminal_reason"] = terminal_reason
+        return merged
+
+    second_metrics = _scaffold_metrics(second)
+    merged["turns_to_first_edit"] = _merge_polyglot_turn(
+        first=merged.get("turns_to_first_edit"),
+        second=second_metrics.get("turns_to_first_edit"),
+        offset=first_loop_budget,
+    )
+    merged["turns_to_first_verification"] = _merge_polyglot_turn(
+        first=merged.get("turns_to_first_verification"),
+        second=second_metrics.get("turns_to_first_verification"),
+        offset=first_loop_budget,
+    )
+    merged["zero_edit"] = bool(
+        merged.get("zero_edit", True) and second_metrics.get("zero_edit", True)
+    )
+    merged["zero_verification"] = bool(
+        merged.get("zero_verification", True)
+        and second_metrics.get("zero_verification", True)
+    )
+    merged["verification_succeeded"] = bool(
+        merged.get("verification_succeeded", False)
+        or second_metrics.get("verification_succeeded", False)
+    )
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        merged[key] = _sum_metric(merged.get(key), second_metrics.get(key))
+    for key in (
+        "prompt_snapshot",
+        "provider",
+        "response_model",
+        "submission_json",
+        "terminal_reason",
+    ):
+        if second_metrics.get(key) is not None:
+            merged[key] = second_metrics[key]
+    if terminal_reason is not None:
+        merged["terminal_reason"] = terminal_reason
+    return merged
+
+
+def _merge_polyglot_turn(*, first: object, second: object, offset: int) -> int | None:
+    if isinstance(first, int):
+        return first
+    if isinstance(second, int):
+        return offset + second
+    return None
+
+
+def _sum_metric(left: object, right: object) -> int | None:
+    total = 0
+    seen = False
+    for value in (left, right):
+        if isinstance(value, int):
+            total += value
+            seen = True
+    return total if seen else None
+
+
+def _allowed_polyglot_test_commands(prepared) -> set[str]:
+    allowed = set(prepared.test_commands)
+    if prepared.task.language == "python":
+        suffix = " -v --tb=short -q"
+        prefix = "python -m pytest "
+        test_names = [Path(path).name for path in prepared.test_paths]
+        if test_names:
+            allowed.add(prefix + " ".join(test_names) + suffix)
+            allowed.update(prefix + name + suffix for name in test_names)
+    if prepared.task.language == "go":
+        base = "go test ./..."
+        allowed.update(
+            {
+                base,
+                base + " -count=1",
+                base + " -v",
+                base + " -v -count=1",
+                base + " -count=1 -v",
+            }
+        )
+    return allowed
 
 
 def _truncate(s: str, max_chars: int = 8000) -> str:

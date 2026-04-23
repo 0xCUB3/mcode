@@ -2273,6 +2273,99 @@ def bench_swebench_lite(
         timeout_s=timeout_s,
     )
 
+@bench_app.command("aider-polyglot")
+def bench_aider_polyglot(
+    model: Annotated[str, typer.Option("--model", help="Mellea model id")],
+    backend: Annotated[str, typer.Option("--backend", help="Mellea backend name")] = "openai",
+    loop_budget: Annotated[
+        int,
+        typer.Option("--loop-budget", min=1, help="First-attempt turn budget"),
+    ] = 12,
+    retry_loop_budget: Annotated[
+        int,
+        typer.Option("--retry-loop-budget", min=1, help="Second-attempt turn budget"),
+    ] = 8,
+    temperature: Annotated[
+        float | None,
+        typer.Option("--temperature", help="Sampling temperature"),
+    ] = 0.3,
+    seed: Annotated[
+        int | None,
+        typer.Option("--seed", help="Random seed for reproducibility"),
+    ] = None,
+    benchmark_root: Annotated[
+        Path | None,
+        typer.Option(
+            "--benchmark-root",
+            help="Path to the cloned Aider Polyglot benchmark repo",
+        ),
+    ] = None,
+    language: Annotated[
+        str,
+        typer.Option("--language", help="Language to run (python/go/rust/javascript/cpp/java/all)"),
+    ] = "all",
+    exercise: Annotated[
+        str | None,
+        typer.Option("--exercise", help="Single exercise name (requires --language)"),
+    ] = None,
+    limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
+    no_retry: Annotated[
+        bool,
+        typer.Option("--no-retry", help="Disable the second attempt with test output feedback"),
+    ] = False,
+    task_ids: Annotated[
+        str | None,
+        typer.Option(
+            "--task-ids",
+            help="Comma-separated task IDs like python/hello-world (or path to JSON/text file)",
+        ),
+    ] = None,
+    db: Annotated[
+        Path,
+        typer.Option("--db", help="SQLite results DB path"),
+    ] = Path("experiments/results/aider-polyglot.db"),
+) -> None:
+    """Run the Aider Polyglot benchmark through mcode's harness."""
+
+    from mcode.bench.aider_polyglot import default_benchmark_root, supported_languages
+
+    if exercise is not None and language == "all":
+        raise typer.BadParameter("--exercise requires a concrete --language")
+    if task_ids is not None and exercise is not None:
+        raise typer.BadParameter("--task-ids cannot be combined with --exercise")
+    if language != "all" and language not in supported_languages():
+        known = ", ".join(supported_languages())
+        raise typer.BadParameter(f"unknown --language {language!r}; expected one of {known}, all")
+
+    selected_root = benchmark_root if benchmark_root is not None else default_benchmark_root()
+    selected_task_ids = task_ids
+    if exercise is not None:
+        selected_task_ids = f"{language}/{exercise}"
+
+    config = BenchConfig(
+        backend_name=backend,
+        model_id=model,
+        loop_budget=loop_budget,
+        temperature=temperature,
+        seed=seed,
+        timeout_s=300,
+        aider_polyglot_root=selected_root,
+        aider_polyglot_language=language,
+        aider_polyglot_retry=not no_retry,
+        aider_polyglot_retry_loop_budget=retry_loop_budget,
+    )
+    _run_single_benchmark(
+        benchmark="aider-polyglot",
+        config=config,
+        db=db,
+        limit=limit,
+        task_ids=selected_task_ids,
+        backend=backend,
+        model=model,
+        loop_budget=loop_budget + (0 if no_retry else retry_loop_budget),
+        timeout_s=300,
+    )
+
 
 @bench_app.command("smoke")
 def bench_smoke(

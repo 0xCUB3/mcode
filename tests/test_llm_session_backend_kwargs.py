@@ -3,10 +3,12 @@ from __future__ import annotations
 import os
 from types import SimpleNamespace
 
+import pytest
 from mellea.backends import ModelOption
 from mellea.stdlib.context import ChatContext
 
 from mcode.launch.models import ServerRecord, Target
+from mcode.llm.harness_experiments import parse_harness_experiments
 from mcode.llm.session import LLMSession, _build_sampling_strategy, _strategy_for_requirements
 
 
@@ -133,6 +135,22 @@ def test_strategy_for_requirements_skips_sampling_when_disabled(monkeypatch):
     )
 
     assert strategy is None
+
+
+def test_parse_harness_experiments_normalizes_and_validates():
+    assert parse_harness_experiments(
+        "mellea_loop_detect_v1,mellea_toolkit_v1,required_arg_repair_v1,finalizer_success_guard_v1,mellea_loop_detect_v1"
+    ) == (
+        "mellea_loop_detect_v1",
+        "mellea_toolkit_v1",
+        "required_arg_repair_v1",
+        "finalizer_success_guard_v1",
+    )
+
+
+def test_parse_harness_experiments_rejects_unknown_name():
+    with pytest.raises(ValueError, match="unknown harness experiment"):
+        parse_harness_experiments("not_real")
 
 
 def test_start_session_uses_chat_context(monkeypatch):

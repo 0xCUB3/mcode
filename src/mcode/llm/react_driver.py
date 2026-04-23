@@ -122,8 +122,9 @@ async def run_react_loop(
     turn_requirements: Callable[[int, int, SolveTraceCollector], list[object]],
     submission_requirements: list[object],
     strategy_for_requirements: Callable[[list[object]], object | None],
-    hooks_enabled: bool,
-) -> tuple[object | None, str]:
+    harness_experiments: tuple[str, ...] = (),
+    hooks_enabled: bool = False,
+ ) -> tuple[object | None, str]:
     from mellea.core.utils import FancyLogger
     from mellea.stdlib import functional as mfuncs
     from mellea.stdlib.components.chat import Message
@@ -133,6 +134,20 @@ async def run_react_loop(
         ReactThought,
     )
     from mellea.stdlib.context import ChatContext
+    
+    from mcode.llm.harness_experiments import (
+        FINALIZER_SUCCESS_GUARD_V1,
+        MELLEA_LOOP_DETECT_V1,
+    )
+
+    loop_detect_enabled = MELLEA_LOOP_DETECT_V1 in harness_experiments
+    finalizer_success_guard_enabled = FINALIZER_SUCCESS_GUARD_V1 in harness_experiments
+    if loop_detect_enabled:
+        from mellea.agent.strategy.loop_detect import (
+            FORCE_MESSAGE,
+            NUDGE_MESSAGE,
+            detect_loop,
+        )
 
     async def _run() -> tuple[object | None, str]:
         context = getattr(session, "ctx", None)
@@ -144,12 +159,31 @@ async def run_react_loop(
         )
 
         compress_context = os.environ.get("MCODE_COMPRESS_CONTEXT", "0") == "1"
+        loop_history: list[tuple[str, tuple[tuple[str, str], ...]]] = []
+        last_loop_signal: str | None = None
         for turn in range(1, loop_budget + 1):
             collector.note_turn(turn)
             FancyLogger.get_logger().info(f"## ReACT TURN NUMBER {turn}")
 
             if compress_context and turn == max(3, loop_budget // 2):
                 context = _compress_old_tool_outputs(context)
+
+            if loop_detect_enabled:
+                loop_signal = detect_loop(loop_history)
+                if loop_signal is None:
+                    last_loop_signal = None
+                elif loop_signal != last_loop_signal:
+                    context = context.add(
+                        Message(
+                            role="user",
+                            content=(
+                                FORCE_MESSAGE
+                                if loop_signal == "force_switch"
+                                else NUDGE_MESSAGE
+                            ),
+                        )
+                    )
+                    last_loop_signal = loop_signal
 
             requirements = turn_requirements(turn, loop_budget, collector)
             result, next_context = await mfuncs.aact(
@@ -176,6 +210,43 @@ async def run_react_loop(
 
             tool_responses = []
             if result.tool_calls:
+                invalid_calls = []
+                for tool_call in result.tool_calls.values():
+                    tool_name = getattr(tool_call, "name", "")
+                    if not tool_name:
+                        continue
+                    missing_args = _missing_required_args(tool_call)
+                    if _should_autofill_finalizer(
+                        tool_name,
+                        missing_args,
+                        collector=collector,
+                    ):
+                        tool_call.args = {"answer": "Verified patch ready."}
+                        missing_args = []
+                    if missing_args and not _allow_default_missing_args(
+                        tool_name,
+                        missing_args,
+                    ):
+                        invalid_calls.append(
+                            f"{tool_name} is missing required args: {', '.join(missing_args)}"
+                        )
+                        continue
+                    if tool_name != MELLEA_FINALIZER_TOOL:
+                        loop_history.append(
+                            (tool_name, _freeze_tool_args(getattr(tool_call, "args", None)))
+                        )
+                if invalid_calls:
+                    context = context.add(
+                        Message(
+                            role="user",
+                            content=(
+                                "Your last tool call was malformed. "
+                                "Retry with all required arguments. "
+                                + " ".join(invalid_calls)
+                            ),
+                        )
+                    )
+                    continue
                 tool_responses = await acall_tools(result, backend=session.backend)
                 for tool_result in tool_responses:
                     if strict_tool_ordering:
@@ -192,7 +263,6 @@ async def run_react_loop(
                             output=tool_output,
                             success=not isinstance(tool_output, Exception),
                         )
-
             finalizer_response = next(
                 (
                     tool_result
@@ -202,6 +272,13 @@ async def run_react_loop(
                 None,
             )
             if finalizer_response is not None:
+                finalizer_output = getattr(
+                    finalizer_response,
+                    "tool_output",
+                    getattr(finalizer_response, "content", None),
+                )
+                if finalizer_success_guard_enabled and isinstance(finalizer_output, Exception):
+                    continue
                 if submission_format is None:
                     submission = str(finalizer_response.content)
                 else:
@@ -335,3 +412,49 @@ def _requires_strict_tool_ordering(model_id: object | None) -> bool:
         return False
     lowered = text.lower()
     return "minimax" in lowered or "mistral" in lowered
+
+
+def _freeze_tool_args(args: object) -> tuple[tuple[str, str], ...]:
+    if not isinstance(args, dict):
+        return ()
+    return tuple(
+        sorted(
+            (str(key), json.dumps(value, sort_keys=True, default=str))
+            for key, value in args.items()
+        )
+    )
+def _missing_required_args(tool_call) -> list[str]:
+    tool = getattr(tool_call, "func", None)
+    schema = getattr(tool, "as_json_tool", None)
+    if not isinstance(schema, dict):
+        return []
+    function_schema = schema.get("function")
+    if not isinstance(function_schema, dict):
+        return []
+    parameters = function_schema.get("parameters")
+    if not isinstance(parameters, dict):
+        return []
+    required = parameters.get("required")
+    if not isinstance(required, list):
+        return []
+    args = getattr(tool_call, "args", None)
+    if not isinstance(args, dict):
+        args = {}
+    return [name for name in required if name not in args]
+
+
+def _allow_default_missing_args(tool_name: str, missing_args: list[str]) -> bool:
+    return tool_name == "run_tests" and missing_args == ["test_cmd"]
+
+
+def _should_autofill_finalizer(
+    tool_name: str,
+    missing_args: list[str],
+    *,
+    collector: SolveTraceCollector,
+ ) -> bool:
+    return (
+        tool_name == "final_answer"
+        and missing_args == ["answer"]
+        and collector.verification_succeeded
+    )

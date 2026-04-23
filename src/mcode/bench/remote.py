@@ -19,7 +19,11 @@ class RemoteBenchError(RuntimeError):
     """User-facing remote execution error."""
 
 
-_FORWARDED_ENV_VARS = ("MCODE_CONTEXT_WINDOW", "MCODE_MAX_NEW_TOKENS")
+_FORWARDED_ENV_VARS = (
+    "MCODE_CONTEXT_WINDOW",
+    "MCODE_MAX_NEW_TOKENS",
+    "MCODE_HARNESS_EXPERIMENTS",
+)
 
 
 def _resolve_endpoint(model: str, *, cfg: launch_config.LaunchConfig) -> str:

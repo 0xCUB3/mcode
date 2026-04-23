@@ -4,6 +4,8 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from mellea.agent.tools import make_agent_tools as make_mellea_agent_tools
+
 from mcode.agent.coding_policy import CodingPolicy, build_coding_policy
 from mcode.agent.repo_customization import load_repo_customization
 from mcode.agent.tooling import (
@@ -20,6 +22,10 @@ from mcode.agent.verification import (
     build_run_tests_tool,
     build_verification_policy,
 )
+from mcode.llm.harness_experiments import (
+    MELLEA_TOOLKIT_V1,
+    active_harness_experiments,
+)
 from mcode.mellea_compat import build_tool_from_callable
 
 
@@ -33,6 +39,7 @@ class CodingAgentAssembly:
     model_options: dict
     loop_budget: int
     timeout_s: int
+    harness_experiments: tuple[str, ...]
 
     @property
     def system_prompt(self) -> str:
@@ -91,10 +98,11 @@ def build_coding_agent(
         repo_customization_text=repo_customization.text,
         verification_prompt=verification_policy.prompt_block,
     )
-
-    tools = make_agent_tools(
+    harness_experiments = active_harness_experiments()
+    tools = _build_tools_for_experiments(
         repo_root,
         verification_policy=verification_policy,
+        harness_experiments=harness_experiments,
     )
 
     return CodingAgentAssembly(
@@ -106,7 +114,33 @@ def build_coding_agent(
         model_options=session._model_options(system_prompt=coding_policy.system_prompt),
         loop_budget=budget,
         timeout_s=timeout_s,
+        harness_experiments=harness_experiments,
     )
+
+
+def _build_tools_for_experiments(
+    repo_root: str,
+    *,
+    verification_policy: VerificationPolicy,
+    harness_experiments: tuple[str, ...],
+):
+    if MELLEA_TOOLKIT_V1 not in harness_experiments:
+        return make_agent_tools(repo_root, verification_policy=verification_policy)
+
+    previous_bash = os.environ.get("MELLEA_BASH_TOOL")
+    os.environ["MELLEA_BASH_TOOL"] = "0"
+    try:
+        return make_mellea_agent_tools(
+            repo_root,
+            test_cmds=verification_policy.test_cmds or None,
+            test_fn=verification_policy.test_fn,
+            command_fn=verification_policy.command_fn,
+        )
+    finally:
+        if previous_bash is None:
+            os.environ.pop("MELLEA_BASH_TOOL", None)
+        else:
+            os.environ["MELLEA_BASH_TOOL"] = previous_bash
 
 
 def make_agent_tools(

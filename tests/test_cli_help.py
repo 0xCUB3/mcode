@@ -63,6 +63,16 @@ def test_cli_bench_swebench_live_help() -> None:
     assert "fetch_db" in option_names
 
 
+def test_cli_bench_aider_polyglot_help() -> None:
+    option_names = _command_option_names("bench", "aider-polyglot")
+    assert "retry_loop_budget" in option_names
+    assert "benchmark_root" in option_names
+    assert "language" in option_names
+    assert "exercise" in option_names
+    assert "no_retry" in option_names
+    assert "task_ids" in option_names
+
+
 def test_cli_bench_smoke_help() -> None:
     option_names = _command_option_names("bench", "smoke")
     assert "shards" in option_names

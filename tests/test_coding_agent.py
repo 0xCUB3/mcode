@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -48,6 +49,29 @@ def test_build_coding_agent_assembles_prompt_and_tools(tmp_path):
     assert assembly.model_options[ModelOption.TEMPERATURE] == 0.25
     assert assembly.model_options[ModelOption.SEED] == 7
     assert assembly.loop_budget == 9
+
+def test_build_coding_agent_uses_mellea_toolkit_experiment(tmp_path, monkeypatch):
+    session = LLMSession(model_id="test", backend_name="openai", loop_budget=9)
+    session._m = SimpleNamespace(backend=object())
+    monkeypatch.setenv("MCODE_HARNESS_EXPERIMENTS", "mellea_toolkit_v1")
+
+    with (
+        patch("mcode.agent.coding_agent.build_repo_map", return_value="repo map"),
+        patch("mcode.agent.coding_agent.build_candidate_files", return_value=""),
+        patch("mcode.agent.coding_agent.make_mellea_agent_tools", return_value=["mellea-tool"]),
+    ):
+        assembly = build_coding_agent(
+            session=session,
+            repo="test/repo",
+            problem_statement="Fix the bug",
+            repo_root=str(tmp_path),
+            test_cmds={"verification_cmds": ["pytest -q tests/test_bug.py"]},
+        )
+
+    assert assembly.tools == ["mellea-tool"]
+    assert assembly.harness_experiments == ("mellea_toolkit_v1",)
+    assert os.environ.get("MELLEA_BASH_TOOL") is None
+
 
 
 def test_build_verification_policy_normalizes_commands():

@@ -208,6 +208,248 @@ def test_run_react_loop_uses_finalizer_content_when_other_tools_returned(monkeyp
     assert terminal_reason == "submitted"
     assert submission == "done"
 
+def test_run_react_loop_adds_loop_detect_nudge(monkeypatch):
+    seen_user_messages: list[list[str]] = []
+    repeated_call = SimpleNamespace(name="read_file", args={"path": "foo.py"})
+    outputs = iter(
+        [
+            (SimpleNamespace(tool_calls={"read_file": repeated_call}), ChatContext()),
+            (SimpleNamespace(tool_calls={"read_file": repeated_call}), ChatContext()),
+            (SimpleNamespace(tool_calls=None), ChatContext()),
+        ]
+    )
+
+    async def fake_aact(*args, **kwargs):
+        del args
+        context = kwargs["context"]
+        seen_user_messages.append(
+            [
+                str(message.content)
+                for message in context.as_list()
+                if getattr(message, "role", None) == "user"
+            ]
+        )
+        return next(outputs)
+
+    async def fake_acall_tools(result, backend):
+        del result, backend
+        return [SimpleNamespace(name="read_file", content="ok")]
+
+    session = SimpleNamespace(ctx=ChatContext(), backend=object())
+    monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
+    monkeypatch.setattr("mcode.llm.react_driver.acall_tools", fake_acall_tools)
+
+    submission, terminal_reason = asyncio.run(
+        run_react_loop(
+            session,
+            goal="Fix it",
+            tools=[],
+            model_options={},
+            loop_budget=3,
+            timeout_s=5,
+            submission_format=None,
+            collector=SolveTraceCollector(),
+            turn_requirements=lambda turn, budget, state: [],
+            submission_requirements=[],
+            strategy_for_requirements=lambda requirements: None,
+            harness_experiments=("mellea_loop_detect_v1",),
+            hooks_enabled=False,
+        )
+    )
+
+    assert submission is None
+    assert terminal_reason == "budget_exhausted"
+    assert any(
+        "already tried this exact tool call" in message
+        for message in seen_user_messages[-1]
+    )
+
+
+def test_run_react_loop_repairs_missing_required_args(monkeypatch):
+    seen_user_messages: list[list[str]] = []
+    outputs = iter(
+        [
+            (
+                SimpleNamespace(
+                    tool_calls={
+                        "read_file": SimpleNamespace(
+                            name="read_file",
+                            args={},
+                            func=MelleaTool.from_callable(
+                                lambda path: path,
+                                name="read_file",
+                            ),
+                        ),
+                    }
+                ),
+                ChatContext(),
+            ),
+            (SimpleNamespace(tool_calls=None), ChatContext()),
+        ]
+    )
+    acall_invoked = {"value": False}
+
+    async def fake_aact(*args, **kwargs):
+        del args
+        context = kwargs["context"]
+        seen_user_messages.append(
+            [
+                str(message.content)
+                for message in context.as_list()
+                if getattr(message, "role", None) == "user"
+            ]
+        )
+        return next(outputs)
+
+    async def fake_acall_tools(result, backend):
+        del result, backend
+        acall_invoked["value"] = True
+        return []
+
+    session = SimpleNamespace(ctx=ChatContext(), backend=object())
+    monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
+    monkeypatch.setattr("mcode.llm.react_driver.acall_tools", fake_acall_tools)
+
+    submission, terminal_reason = asyncio.run(
+        run_react_loop(
+            session,
+            goal="Fix it",
+            tools=[],
+            model_options={},
+            loop_budget=2,
+            timeout_s=5,
+            submission_format=None,
+            collector=SolveTraceCollector(),
+            turn_requirements=lambda turn, budget, state: [],
+            submission_requirements=[],
+            strategy_for_requirements=lambda requirements: None,
+            harness_experiments=("required_arg_repair_v1",),
+            hooks_enabled=False,
+        )
+    )
+
+    assert submission is None
+    assert terminal_reason == "budget_exhausted"
+    assert acall_invoked["value"] is False
+    assert any(
+        "read_file is missing required args: path" in message
+        for message in seen_user_messages[-1]
+    )
+
+
+def test_run_react_loop_autofills_verified_finalizer(monkeypatch):
+    finalizer_tool = MelleaTool.from_callable(
+        lambda answer: answer,
+        name="final_answer",
+    )
+    outputs = iter(
+        [
+            (
+                SimpleNamespace(
+                    tool_calls={
+                        "final_answer": ModelToolCall(
+                            name="final_answer",
+                            func=finalizer_tool,
+                            args={},
+                        )
+                    }
+                ),
+                ChatContext(),
+            )
+        ]
+    )
+    captured: dict[str, object] = {}
+
+    async def fake_aact(*args, **kwargs):
+        del args, kwargs
+        return next(outputs)
+
+    async def fake_acall_tools(result, backend):
+        del backend
+        captured["args"] = result.tool_calls["final_answer"].args
+        return [SimpleNamespace(name="final_answer", content="done")]
+
+    session = SimpleNamespace(ctx=ChatContext(), backend=object())
+    collector = SolveTraceCollector()
+    collector.verification_succeeded = True
+    monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
+    monkeypatch.setattr("mcode.llm.react_driver.acall_tools", fake_acall_tools)
+
+    submission, terminal_reason = asyncio.run(
+        run_react_loop(
+            session,
+            goal="Fix it",
+            tools=[],
+            model_options={},
+            loop_budget=1,
+            timeout_s=5,
+            submission_format=None,
+            collector=collector,
+            turn_requirements=lambda turn, budget, state: [],
+            submission_requirements=[],
+            strategy_for_requirements=lambda requirements: None,
+            hooks_enabled=False,
+        )
+    )
+
+    assert captured["args"] == {"answer": "Verified patch ready."}
+    assert submission == "done"
+    assert terminal_reason == "submitted"
+
+
+def test_run_react_loop_skips_failed_finalizer(monkeypatch):
+    outputs = iter(
+        [
+            (SimpleNamespace(tool_calls={"final_answer": object()}), ChatContext()),
+            (SimpleNamespace(tool_calls=None), ChatContext()),
+        ]
+    )
+    tool_calls = iter(
+        [
+            [
+                SimpleNamespace(
+                    name="final_answer",
+                    content="TypeError: missing answer",
+                    tool_output=TypeError("missing answer"),
+                )
+            ],
+        ]
+    )
+
+    async def fake_aact(*args, **kwargs):
+        del args, kwargs
+        return next(outputs)
+
+    async def fake_acall_tools(result, backend):
+        del result, backend
+        return next(tool_calls)
+
+    session = SimpleNamespace(ctx=ChatContext(), backend=object())
+    monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
+    monkeypatch.setattr("mcode.llm.react_driver.acall_tools", fake_acall_tools)
+
+    submission, terminal_reason = asyncio.run(
+        run_react_loop(
+            session,
+            goal="Fix it",
+            tools=[],
+            model_options={},
+            loop_budget=2,
+            timeout_s=5,
+            submission_format=None,
+            collector=SolveTraceCollector(),
+            turn_requirements=lambda turn, budget, state: [],
+            submission_requirements=[],
+            strategy_for_requirements=lambda requirements: None,
+            harness_experiments=("finalizer_success_guard_v1",),
+            hooks_enabled=False,
+        )
+    )
+
+    assert submission is None
+    assert terminal_reason == "budget_exhausted"
+
+
 def test_run_react_loop_times_out_as_budget_exhausted():
     async def fake_aact(*args, **kwargs):
         del args, kwargs
