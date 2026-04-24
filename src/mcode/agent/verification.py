@@ -48,14 +48,17 @@ def build_verification_prompt(test_cmds: list[str]) -> str:
         more = "" if len(test_cmds) <= 3 else f" and {len(test_cmds) - 3} more"
         return (
             "\n\nVerification:\n"
-            "Use `run_tests` before `final_answer`. Start with `run_tests default` "
-            f"to execute the task checks ({formatted}{more}), then narrow only if needed. "
-            "Keep the `final_answer` text short."
+            "Use `run_tests` before `final_answer`. Start by calling `run_tests` with "
+            f"`test_cmd=\"default\"` to execute the task checks ({formatted}{more}). "
+            "Do not pass `run_tests default` as the argument value and do not join commands "
+            "with `&&`; use `default` for the declared command sequence. Keep the "
+            "`final_answer` text short."
         )
     return (
         "\n\nVerification:\n"
-        "Use `run_tests` before `final_answer`. Pick the narrowest real test command that "
-        "covers the edited path. Keep the `final_answer` text short."
+        "Use `run_tests` before `final_answer`. Pass only the command text in `test_cmd`; "
+        "use `test_cmd=\"default\"` when a default verifier exists. Keep the `final_answer` "
+        "text short."
     )
 
 
@@ -86,7 +89,7 @@ def build_turn_requirements(
     return [
         reqs.uses_tool("run_tests"),
         reqs.tool_arg_validator(
-            "Use `run_tests default` or one of the declared test commands.",
+            "Set `run_tests.test_cmd` to `default` or to one declared test command.",
             "run_tests",
             "test_cmd",
             lambda value: _valid_test_command(value, verification_policy.test_cmds),

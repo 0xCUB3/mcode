@@ -51,7 +51,7 @@ def test_build_coding_agent_assembles_prompt_and_tools(tmp_path):
     assert assembly.tools == ["tool-a"]
     assert "repo map" in assembly.goal
     assert "Hint text" in assembly.goal
-    assert "run_tests default" in assembly.goal
+    assert 'test_cmd="default"' in assembly.goal
     assert "Local workspace context:" in assembly.goal
     assert "Use project docs." in assembly.goal
     assert assembly.model_options[ModelOption.TEMPERATURE] == 0.25
@@ -88,7 +88,8 @@ def test_build_verification_policy_normalizes_commands():
     )
 
     assert policy.test_cmds == ["pytest -q tests/test_bug.py"]
-    assert "run_tests default" in policy.prompt_block
+    assert 'test_cmd="default"' in policy.prompt_block
+    assert "not pass `run_tests default`" in policy.prompt_block
 
 
 def test_build_run_tests_tool_uses_command_fn_for_default_commands(tmp_path):
