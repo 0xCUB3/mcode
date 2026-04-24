@@ -27,6 +27,7 @@ Short notes for benchmark runs and parameter sweeps. Each entry should include:
 - `2026-04-21-mellea-first-harness-ab`: Mellea-first Qwen3.5 smoke A/Bs on Blue Vela. Reusing more of the forked Mellea surface exposed a weaker 3/16 control, loop detection did not recover it, the stock Mellea tool builder was not drop-in, and several malformed-call repair experiments were drowned by infra failures.
 - `2026-04-21-upstream-clean-head-repair-ab`: upstream-compatible Blue Vela Qwen3.5 smoke sweep from a clean worktree. Repair sampling helped, but upstream `multiturn` was the bigger find. We now have valid multiturn full-smoke runs at 8/16, 7/16, and 5/16, plus a 15/20 by 2/3 matrix where `15-3` and `20-2` both landed at 7/16.
 - `2026-04-20-little-coder-gap-analysis-untracked`: little-coder comparison plus Aider Polyglot Qwen3.6 harness run. Baseline full run was 103/225, Java 21 fixed Java from 0/47 to 30/47, C-family edit guard bypass moved C++ from 2/26 to 17/26, and the corrected score is 148/225 (65.8%). Report: `2026-04-20-little-coder-gap-analysis-report.html`.
+- `2026-04-24-aider-polyglot-workspace-context-full`: full Aider Polyglot Qwen3.6 run with generic workspace context discovery. Final result: 149/225 (66.2%), mostly flat versus the corrected 148/225 estimate and still below little-coder's 177/225. Report: `2026-04-24-aider-polyglot-workspace-context-full/aider-polyglot-workspace-context-report.html`.
 
 
 
