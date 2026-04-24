@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from mcode.bench.aider_polyglot import cleanup_prepared_task, load_aider_polyglot, prepare_task
+from mcode.bench.aider_polyglot import (
+    cleanup_prepared_task,
+    load_aider_polyglot,
+    prepare_task,
+    run_single_command,
+)
 
 
 def _make_exercise(root: Path, language: str, exercise: str, files: dict[str, str]) -> Path:
@@ -66,3 +71,15 @@ def test_prepare_task_strips_meta_and_javascript_skip_markers(tmp_path: Path) ->
         assert (prepared.work_dir / ".git").is_dir()
     finally:
         cleanup_prepared_task(prepared)
+
+
+
+def test_run_single_command_replaces_invalid_utf8(tmp_path: Path) -> None:
+    result = run_single_command(
+        tmp_path,
+        "python -c 'import sys; sys.stdout.buffer.write(bytes([0xff]))'",
+        timeout_s=10,
+    )
+
+    assert result.passed
+    assert "�" in result.output

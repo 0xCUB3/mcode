@@ -226,6 +226,7 @@ def run_single_command(work_dir: Path, command: str, *, timeout_s: int) -> Comma
             cwd=work_dir,
             capture_output=True,
             text=True,
+            errors="replace",
             timeout=command_timeout,
             env=env,
         )
