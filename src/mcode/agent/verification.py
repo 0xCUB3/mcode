@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import html
 import json
+import re
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
+from pathlib import Path
 
 from mellea.backends.tools import MelleaTool
 
@@ -166,7 +169,13 @@ def build_run_tests_tool(
             if command_fn is not None:
                 result = command_fn(command)
                 if is_tool_result(result):
-                    outputs.append(result)
+                    outputs.append(
+                        _append_failure_artifacts(
+                            result,
+                            repo_root=repo_root,
+                            max_output_chars=max_output_chars,
+                        )
+                    )
                 else:
                     outputs.append(format_tool_result(command, "COMPLETED", result))
                 continue
@@ -175,9 +184,11 @@ def build_run_tests_tool(
                 repo_root=repo_root,
                 timeout=timeout_s,
             )
-            if len(output) > max_output_chars:
-                output = output[-max_output_chars:]
-            outputs.append(format_tool_result(command, status, output))
+            result = format_tool_result(command, status, output)
+            result = _append_failure_artifacts(
+                result, repo_root=repo_root, max_output_chars=max_output_chars
+            )
+            outputs.append(_truncate_tool_result(result, max_output_chars))
         if outputs:
             return "\n---\n".join(outputs)
         return format_tool_result(test_cmd, "SKIPPED", "No test commands available.")
@@ -208,3 +219,89 @@ def _patch_run_tests_schema(schema: object) -> object:
             properties["max_output_chars"]["type"] = "integer"
     parameters["required"] = ["test_cmd"]
     return patched
+
+
+def _append_failure_artifacts(
+    tool_result: str,
+    *,
+    repo_root: str,
+    max_output_chars: int,
+) -> str:
+    if _tool_result_passed(tool_result):
+        return _truncate_tool_result(tool_result, max_output_chars)
+    artifact_text = _collect_failure_artifacts(Path(repo_root))
+    if not artifact_text:
+        return _truncate_tool_result(tool_result, max_output_chars)
+    combined = f"{tool_result.rstrip()}\n\nFailure report snippets:\n{artifact_text}"
+    return _truncate_tool_result(combined, max_output_chars)
+
+
+def _tool_result_passed(tool_result: str) -> bool:
+    lines = tool_result.splitlines()
+    if len(lines) < 2:
+        return False
+    return lines[1].strip() == "PASSED"
+
+
+def _truncate_tool_result(value: str, max_output_chars: int) -> str:
+    if len(value) <= max_output_chars:
+        return value
+    return value[-max_output_chars:]
+
+
+def _collect_failure_artifacts(repo_root: Path) -> str:
+    if not repo_root.is_dir():
+        return ""
+    candidates = _failure_artifact_candidates(repo_root)
+    snippets: list[str] = []
+    for path in candidates[:4]:
+        snippet = _failure_artifact_snippet(path)
+        if snippet:
+            rel = path.relative_to(repo_root).as_posix()
+            snippets.append(f"{rel}:\n{snippet}")
+    return "\n\n".join(snippets)
+
+
+def _failure_artifact_candidates(repo_root: Path) -> list[Path]:
+    patterns = (
+        "build/test-results/test/*.xml",
+        "target/surefire-reports/*.txt",
+        "target/surefire-reports/*.xml",
+        "test-results/**/*.xml",
+        "reports/**/*.xml",
+        "build/reports/tests/test/classes/*.html",
+    )
+    seen: set[Path] = set()
+    candidates: list[Path] = []
+    for pattern in patterns:
+        for path in repo_root.glob(pattern):
+            if path in seen or not path.is_file():
+                continue
+            seen.add(path)
+            candidates.append(path)
+    candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    return candidates
+
+
+def _failure_artifact_snippet(path: Path) -> str:
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return ""
+    if path.suffix.lower() in {".html", ".xml"}:
+        attributes = re.findall(r'\b(?:message|type|name|classname)="([^"]+)"', text)
+        text = "\n".join(attributes + [re.sub(r"<[^>]+>", " ", text)])
+        text = html.unescape(text)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    interesting = [
+        line
+        for line in lines
+        if re.search(
+            r"fail|error|expected|actual|assert|exception|traceback",
+            line,
+            re.IGNORECASE,
+        )
+    ]
+    selected = interesting or lines
+    snippet = "\n".join(selected[:30])
+    return snippet[:2000]

@@ -113,6 +113,32 @@ def test_build_run_tests_tool_uses_command_fn_for_default_commands(tmp_path):
     assert "PASSED" in result
 
 
+def test_run_tests_tool_appends_failure_report_snippets(tmp_path):
+    report_dir = tmp_path / "build" / "test-results" / "test"
+    report_dir.mkdir(parents=True)
+    (report_dir / "TEST-example.xml").write_text(
+        '<testsuite><testcase name="badCase" classname="ExampleTest">'
+        '<failure message="expected 1 but was 2">stack trace</failure>'
+        "</testcase></testsuite>"
+    )
+
+    def command_fn(command: str) -> str:
+        return format_tool_result(command, "FAILED", "There were failing tests.")
+
+    policy = build_verification_policy(
+        test_cmds=["./gradlew test --no-daemon -q"],
+        command_fn=command_fn,
+    )
+    tool = build_run_tests_tool(repo_root=str(tmp_path), verification_policy=policy)
+
+    assert tool is not None
+    result = tool.run("default")
+
+    assert "Failure report snippets:" in result
+    assert "build/test-results/test/TEST-example.xml" in result
+    assert "expected 1 but was 2" in result
+
+
 def test_make_agent_tools_appends_run_tests(tmp_path):
     policy = build_verification_policy(test_cmds=["pytest -q"])
 
