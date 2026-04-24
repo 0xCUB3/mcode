@@ -590,28 +590,6 @@ def test_runtime_patch_normalizes_openai_helper_tool_args():
 
     assert helpers.validate_tool_arguments(tool, "default", strict=False) == {"test_cmd": "default"}
 
-    read_tool = build_tool_from_callable(
-        lambda path, start_line=1, end_line=None: "ok",
-        name="read_file",
-    )
-    assert helpers.validate_tool_arguments(read_tool, "README.md", strict=False) == {
-        "path": "README.md"
-    }
-
-
-def test_runtime_patch_normalizes_backend_tool_args():
-    import mellea.backends.tools as backend_tools
-
-    apply_runtime_patches()
-    read_tool = build_tool_from_callable(
-        lambda path, start_line=1, end_line=None: "ok",
-        name="read_file",
-    )
-
-    assert backend_tools.validate_tool_arguments(read_tool, "README.md", strict=False) == {
-        "path": "README.md"
-    }
-
 
 def test_runtime_patch_preserves_optional_defaults_in_validated_tool_args():
     import mellea.helpers.openai_compatible_helpers as helpers

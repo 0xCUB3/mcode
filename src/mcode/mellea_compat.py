@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import inspect
 import json
-import sys
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from typing import Any
@@ -48,7 +47,7 @@ def hooks_available() -> bool:
 
 
 def apply_runtime_patches() -> None:
-    _patch_tool_validation()
+    _patch_openai_tool_validation()
     _patch_openai_tool_ordering()
 
 
@@ -194,37 +193,23 @@ def _drop_unspecified_optional_nones(
     }
 
 
-def _patch_tool_validation() -> None:
-    import mellea.backends.tools as backend_tools
+def _patch_openai_tool_validation() -> None:
     import mellea.helpers.openai_compatible_helpers as helpers
 
-    if not getattr(backend_tools, "_mcode_tool_validation_patch", False):
-        original_validate = backend_tools.validate_tool_arguments
+    if getattr(helpers, "_mcode_tool_validation_patch", False):
+        return
 
-        def wrapped_validate(tool, args, *args2: Any, **kwargs: Any) -> object:
-            param_names = _tool_param_names(tool)
-            required_param_names = _tool_required_param_names(tool)
-            normalized_args = _coerce_raw_tool_args(args, param_names, required_param_names)
-            validated_args = original_validate(tool, normalized_args, *args2, **kwargs)
-            return _drop_unspecified_optional_nones(validated_args, normalized_args)
+    original_validate = helpers.validate_tool_arguments
 
-        backend_tools.validate_tool_arguments = wrapped_validate
-        backend_tools._mcode_tool_validation_patch = True
+    def wrapped_validate(tool, args, *args2, **kwargs):
+        param_names = _tool_param_names(tool)
+        required_param_names = _tool_required_param_names(tool)
+        normalized_args = _coerce_raw_tool_args(args, param_names, required_param_names)
+        validated_args = original_validate(tool, normalized_args, *args2, **kwargs)
+        return _drop_unspecified_optional_nones(validated_args, normalized_args)
 
-    helpers.validate_tool_arguments = backend_tools.validate_tool_arguments
-    _patch_cached_tool_validators(backend_tools.validate_tool_arguments)
-
-
-def _patch_cached_tool_validators(validate_tool_arguments: Callable[..., object]) -> None:
-    for module_name in (
-        "mellea.backends.litellm",
-        "mellea.backends.utils",
-        "mellea.backends.watsonx",
-        "mellea.helpers.openai_compatible_helpers",
-    ):
-        module = sys.modules.get(module_name)
-        if module is not None and hasattr(module, "validate_tool_arguments"):
-            module.validate_tool_arguments = validate_tool_arguments
+    helpers.validate_tool_arguments = wrapped_validate
+    helpers._mcode_tool_validation_patch = True
 
 
 def _patch_openai_tool_ordering() -> None:
