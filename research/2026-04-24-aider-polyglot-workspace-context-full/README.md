@@ -7,7 +7,7 @@ This run tested the generic workspace context collector on the full Aider Polygl
 - Model: `Qwen/Qwen3.6-35B-A3B`
 - Backend: OpenAI-compatible vLLM endpoint on Blue Vela through local tunnel `http://127.0.0.1:18325/v1`
 - Benchmark root: `/Users/skula/Documents/polyglot-benchmark`
-- mcode commits under test: `e7fbecf` (`add workspace context discovery`) for run 1, `00bdec3` (`clarify run tests default argument`) for run 2, plus `10452ff` for the `go/poker` infra rerun
+- mcode commits under test: `e7fbecf` (`add workspace context discovery`) for run 1, `00bdec3` (`clarify run tests default argument`) for run 2, `10452ff` for the `go/poker` infra rerun, and `e18df56` plus `--loop-budget 20` for run 3
 - Baseline to beat: little-coder Qwen3.6 result, `177/225 = 78.67%`
 
 ## Commands
@@ -58,6 +58,22 @@ uv run mcode bench aider-polyglot \
   --db research/2026-04-24-aider-polyglot-workspace-context-full/run2-verification-prompt/go-poker-rerun.db
 ```
 
+Run 3:
+```bash
+OPENAI_BASE_URL=http://127.0.0.1:18325/v1 \
+OPENAI_API_KEY=dummy \
+MCODE_CONTEXT_WINDOW=32768 \
+MCODE_MAX_NEW_TOKENS=4096 \
+MCODE_REACT_TIMEOUT=2400 \
+uv run mcode bench aider-polyglot \
+  --model Qwen/Qwen3.6-35B-A3B \
+  --backend openai \
+  --temperature 0.3 \
+  --loop-budget 20 \
+  --benchmark-root /Users/skula/Documents/polyglot-benchmark \
+  --db research/2026-04-24-aider-polyglot-workspace-context-full/run3-loop20/results.db
+```
+
 ## Results
 
 Run 1:
@@ -82,6 +98,17 @@ Run 2:
 | Java | 29 | 47 | 61.7% |
 | Total | 159 | 225 | 70.7% |
 
+Run 3:
+| Language | Passed | Total | Rate |
+|-|-:|-:|-:|
+| Python | 26 | 34 | 76.5% |
+| Go | 29 | 39 | 74.4% |
+| Rust | 20 | 30 | 66.7% |
+| JavaScript | 43 | 49 | 87.8% |
+| C++ | 20 | 26 | 76.9% |
+| Java | 30 | 47 | 63.8% |
+| Total | 168 | 225 | 74.7% |
+
 Terminal reasons:
 
 Run 1:
@@ -99,11 +126,19 @@ Run 2:
 | budget_exhausted | 17 | 0 |
 | infra_failure | 1 | 0 |
 
+Run 3:
+| Reason | Count | Passed |
+|-|-:|-:|
+| submitted | 168 | 168 |
+| unverified_diff_discarded | 53 | 0 |
+| budget_exhausted | 4 | 0 |
+
 ## Files
 
 - Run 1 DB/log: `run1-workspace-context/results.db`, `run1-workspace-context/benchmark.log`
 - Run 2 DB/log: `run2-verification-prompt/results.db`, `run2-verification-prompt/benchmark.log`
 - `go/poker` rerun DB: `run2-verification-prompt/go-poker-rerun.db`
+- Run 3 DB/log: `run3-loop20/results.db`, `run3-loop20/benchmark.log`
 - HTML report: `aider-polyglot-workspace-context-report.html`
 
 ## Findings
@@ -114,4 +149,8 @@ The second run changed only the generic verifier wording so the model is told to
 
 Run 2 had one infrastructure failure, `go/poker`, caused by non-UTF8 command output. Commit `10452ff` fixed command decoding with replacement characters and the single-task rerun produced a normal `unverified_diff_discarded` failure, not an infra failure. The corrected score stays `159/225`.
 
-The main remaining failure bucket is still unverified diffs. The next iteration should focus on malformed tool-call recovery and better failed-test feedback, not more benchmark-local prompt content.
+After run 2, the main remaining failure bucket was still unverified diffs. That pointed the next iteration toward generic control-loop behavior and better failed-test feedback, not more benchmark-local prompt content.
+
+Run 3 raised the loop budget from the default to `20` and extended the per-task timeout to `2400`. That was a generic control-loop change, not benchmark prompt content, and it moved the full run from `159/225` to `168/225`. It also cut budget exhaustion from 17 tasks to 4 tasks, which confirms that some earlier failures were agents running out of turns while still working.
+
+The gap to little-coder is now 10 tasks. The remaining misses are mostly `unverified_diff_discarded`, so the next iteration should not be another raw budget increase. The useful target is better failure information after a verification failure, especially for projects whose test runners hide the actual assertion in report files.
