@@ -139,10 +139,9 @@ def test_strategy_for_requirements_skips_sampling_when_disabled(monkeypatch):
 
 def test_parse_harness_experiments_normalizes_and_validates():
     assert parse_harness_experiments(
-        "mellea_loop_detect_v1,mellea_toolkit_v1,required_arg_repair_v1,finalizer_success_guard_v1,mellea_loop_detect_v1"
+        "mellea_loop_detect_v1,required_arg_repair_v1,finalizer_success_guard_v1,mellea_loop_detect_v1"
     ) == (
         "mellea_loop_detect_v1",
-        "mellea_toolkit_v1",
         "required_arg_repair_v1",
         "finalizer_success_guard_v1",
     )

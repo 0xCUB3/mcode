@@ -10,6 +10,7 @@ def test_installed_mellea_exposes_native_solver_surface():
             sys.executable,
             "-c",
             (
+                "import importlib.util; "
                 "from mellea import start_session; "
                 "from mellea.stdlib.frameworks.react import react; "
                 "from mellea.backends.tools import MelleaTool; "
@@ -22,7 +23,8 @@ def test_installed_mellea_exposes_native_solver_surface():
                 "assert PluginSet is not None; "
                 "assert callable(compare_runs); "
                 "assert import_requirements() is not None; "
-                "assert import_sampling() is not None"
+                "assert import_sampling() is not None; "
+                "assert importlib.util.find_spec('mellea.agent') is None"
             ),
         ],
         capture_output=True,

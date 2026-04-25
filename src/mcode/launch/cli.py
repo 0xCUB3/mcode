@@ -645,6 +645,7 @@ def cmd_sync(
         # Remote-only dirs that the launcher writes and sync must never wipe.
         "--exclude=bench-runs/",
         "--exclude=runs/",
+        "--exclude=benchmarks/",
         f"--exclude={marker}",  # never delete our own safety marker
     ]
     if gitignore.exists():

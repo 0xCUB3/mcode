@@ -4,8 +4,6 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from mellea.agent.tools import make_agent_tools as make_mellea_agent_tools
-
 from mcode.agent.coding_policy import CodingPolicy, build_coding_policy
 from mcode.agent.repo_customization import load_repo_customization
 from mcode.agent.tooling import (
@@ -19,14 +17,12 @@ from mcode.agent.tooling import (
 )
 from mcode.agent.verification import (
     VerificationPolicy,
+    VerificationProgress,
     build_run_tests_tool,
     build_verification_policy,
 )
 from mcode.agent.workspace_context import collect_workspace_context
-from mcode.llm.harness_experiments import (
-    MELLEA_TOOLKIT_V1,
-    active_harness_experiments,
-)
+from mcode.llm.harness_experiments import active_harness_experiments
 from mcode.mellea_compat import build_tool_from_callable
 
 
@@ -132,23 +128,8 @@ def _build_tools_for_experiments(
     verification_policy: VerificationPolicy,
     harness_experiments: tuple[str, ...],
 ):
-    if MELLEA_TOOLKIT_V1 not in harness_experiments:
-        return make_agent_tools(repo_root, verification_policy=verification_policy)
-
-    previous_bash = os.environ.get("MELLEA_BASH_TOOL")
-    os.environ["MELLEA_BASH_TOOL"] = "0"
-    try:
-        return make_mellea_agent_tools(
-            repo_root,
-            test_cmds=verification_policy.test_cmds or None,
-            test_fn=verification_policy.test_fn,
-            command_fn=verification_policy.command_fn,
-        )
-    finally:
-        if previous_bash is None:
-            os.environ.pop("MELLEA_BASH_TOOL", None)
-        else:
-            os.environ["MELLEA_BASH_TOOL"] = previous_bash
+    del harness_experiments
+    return make_agent_tools(repo_root, verification_policy=verification_policy)
 
 
 def make_agent_tools(
@@ -156,11 +137,16 @@ def make_agent_tools(
     *,
     verification_policy: VerificationPolicy,
 ):
+    progress = VerificationProgress()
+
     def _search(query: str) -> str:
         return search_code(query, repo_root=repo_root)
 
     def _edit(path: str, old_str: str, new_str: str) -> str:
-        return str_replace_edit(path, old_str, new_str, repo_root=repo_root)
+        result = str_replace_edit(path, old_str, new_str, repo_root=repo_root)
+        if "APPLIED" in result:
+            progress.note_edit_applied()
+        return result
 
     def _read(path: str, start_line: int = 1, end_line: int | None = None) -> str:
         return read_file(path, start_line, end_line, repo_root=repo_root)
@@ -181,6 +167,7 @@ def make_agent_tools(
     run_tests_tool = build_run_tests_tool(
         repo_root=repo_root,
         verification_policy=verification_policy,
+        progress=progress,
     )
     if run_tests_tool is not None:
         tools.append(run_tests_tool)

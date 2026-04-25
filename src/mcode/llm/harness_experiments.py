@@ -3,14 +3,12 @@ from __future__ import annotations
 import os
 
 MELLEA_LOOP_DETECT_V1 = "mellea_loop_detect_v1"
-MELLEA_TOOLKIT_V1 = "mellea_toolkit_v1"
 REQUIRED_ARG_REPAIR_V1 = "required_arg_repair_v1"
 FINALIZER_SUCCESS_GUARD_V1 = "finalizer_success_guard_v1"
 
 _KNOWN_HARNESS_EXPERIMENTS = frozenset(
     {
         MELLEA_LOOP_DETECT_V1,
-        MELLEA_TOOLKIT_V1,
         REQUIRED_ARG_REPAIR_V1,
         FINALIZER_SUCCESS_GUARD_V1,
     }

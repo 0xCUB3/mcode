@@ -1880,6 +1880,45 @@ def _swebench_lite_cli_args(
     return argv
 
 
+def _aider_polyglot_cli_args(
+    *,
+    model: str,
+    backend: str,
+    loop_budget: int,
+    retry_loop_budget: int,
+    temperature: float | None,
+    seed: int | None,
+    benchmark_root: Path,
+    language: str,
+    exercise: str | None,
+    limit: int | None,
+    no_retry: bool,
+    task_ids: str | None,
+) -> list[str]:
+    argv = [
+        "--model",
+        model,
+        "--backend",
+        backend,
+        "--loop-budget",
+        str(loop_budget),
+        "--retry-loop-budget",
+        str(retry_loop_budget),
+        "--benchmark-root",
+        str(benchmark_root),
+        "--language",
+        language,
+    ]
+    _append_option(argv, "--temperature", temperature)
+    _append_option(argv, "--seed", seed)
+    _append_option(argv, "--exercise", exercise)
+    _append_option(argv, "--limit", limit)
+    _append_option(argv, "--task-ids", task_ids)
+    if no_retry:
+        argv.append("--no-retry")
+    return argv
+
+
 @bench_app.command("swebench-live")
 def bench_swebench_live(
     model: Annotated[str, typer.Option("--model", help="Mellea model id")],
@@ -2320,14 +2359,39 @@ def bench_aider_polyglot(
             help="Comma-separated task IDs like python/hello-world (or path to JSON/text file)",
         ),
     ] = None,
+    shards: Annotated[
+        int | None,
+        typer.Option("--shards", min=1, help="Run N shard workers and merge the DB automatically"),
+    ] = None,
+    shard_count: Annotated[
+        int | None,
+        typer.Option("--shard-count", min=1, help="Manual shard mode: total shard count"),
+    ] = None,
+    shard_index: Annotated[
+        int | None,
+        typer.Option("--shard-index", min=0, help="Manual shard mode: shard index"),
+    ] = None,
     db: Annotated[
         Path,
         typer.Option("--db", help="SQLite results DB path"),
     ] = Path("experiments/results/aider-polyglot.db"),
+    on: Annotated[
+        str,
+        typer.Option("--on", help="Where to run the bench: local or bluevela"),
+    ] = "local",
+    fetch_db: Annotated[
+        bool,
+        typer.Option("--fetch-db/--no-fetch-db", help="Rsync DB back when --on bluevela"),
+    ] = True,
 ) -> None:
     """Run the Aider Polyglot benchmark through mcode's harness."""
 
     from mcode.bench.aider_polyglot import default_benchmark_root, supported_languages
+    shards, shard_count, shard_index = _validate_shard_options(
+        shards=shards,
+        shard_count=shard_count,
+        shard_index=shard_index,
+    )
 
     if exercise is not None and language == "all":
         raise typer.BadParameter("--exercise requires a concrete --language")
@@ -2342,6 +2406,67 @@ def bench_aider_polyglot(
     if exercise is not None:
         selected_task_ids = f"{language}/{exercise}"
 
+    if on == "bluevela":
+        argv = _aider_polyglot_cli_args(
+            model=model,
+            backend=backend,
+            loop_budget=loop_budget,
+            retry_loop_budget=retry_loop_budget,
+            temperature=temperature,
+            seed=seed,
+            benchmark_root=selected_root,
+            language=language,
+            exercise=exercise,
+            limit=limit,
+            no_retry=no_retry,
+            task_ids=task_ids,
+        )
+        _append_option(argv, "--shards", shards)
+        _append_option(argv, "--shard-count", shard_count)
+        _append_option(argv, "--shard-index", shard_index)
+        _run_bluevela_benchmark(
+            command="aider-polyglot",
+            argv=argv,
+            model=model,
+            db=db,
+            fetch_db=fetch_db,
+        )
+    if on != "local":
+        typer.echo(f"✗ unknown --on target {on!r}; expected local or bluevela", err=True)
+        raise typer.Exit(2)
+    if shards and shards > 1:
+        _run_sharded_benchmark(
+            command="aider-polyglot",
+            base_argv=_aider_polyglot_cli_args(
+                model=model,
+                backend=backend,
+                loop_budget=loop_budget,
+                retry_loop_budget=retry_loop_budget,
+                temperature=temperature,
+                seed=seed,
+                benchmark_root=selected_root,
+                language=language,
+                exercise=exercise,
+                limit=limit,
+                no_retry=no_retry,
+                task_ids=task_ids,
+            ),
+            shards=shards,
+            db=db,
+            benchmark="aider-polyglot",
+            backend=backend,
+            model=model,
+            loop_budget=loop_budget + (0 if no_retry else retry_loop_budget),
+            timeout_s=300,
+        )
+        return
+    if shard_count and shard_count > 1 and db == Path("experiments/results/aider-polyglot.db"):
+        typer.echo(
+            "Note: when running shards in parallel, use a unique --db per shard to avoid SQLite "
+            "locks.",
+            err=True,
+        )
+
     config = BenchConfig(
         backend_name=backend,
         model_id=model,
@@ -2353,6 +2478,8 @@ def bench_aider_polyglot(
         aider_polyglot_language=language,
         aider_polyglot_retry=not no_retry,
         aider_polyglot_retry_loop_budget=retry_loop_budget,
+        task_shard_count=shard_count,
+        task_shard_index=shard_index,
     )
     _run_single_benchmark(
         benchmark="aider-polyglot",

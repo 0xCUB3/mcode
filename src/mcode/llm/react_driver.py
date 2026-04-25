@@ -142,12 +142,10 @@ async def run_react_loop(
 
     loop_detect_enabled = MELLEA_LOOP_DETECT_V1 in harness_experiments
     finalizer_success_guard_enabled = FINALIZER_SUCCESS_GUARD_V1 in harness_experiments
-    if loop_detect_enabled:
-        from mellea.agent.strategy.loop_detect import (
-            FORCE_MESSAGE,
-            NUDGE_MESSAGE,
-            detect_loop,
-        )
+    force_message = "Switch approaches now. The recent tool-call pattern is stuck."
+    nudge_message = (
+        "You already tried this exact tool call. Use the result you have and make progress."
+    )
 
     async def _run() -> tuple[object | None, str]:
         context = getattr(session, "ctx", None)
@@ -161,6 +159,9 @@ async def run_react_loop(
         compress_context = os.environ.get("MCODE_COMPRESS_CONTEXT", "0") == "1"
         loop_history: list[tuple[str, tuple[tuple[str, str], ...]]] = []
         last_loop_signal: str | None = None
+        has_run_tests_tool = any(getattr(tool, "name", "") == "run_tests" for tool in tools)
+        edit_since_verification = False
+        reminded_after_edit = False
         for turn in range(1, loop_budget + 1):
             collector.note_turn(turn)
             FancyLogger.get_logger().info(f"## ReACT TURN NUMBER {turn}")
@@ -169,7 +170,7 @@ async def run_react_loop(
                 context = _compress_old_tool_outputs(context)
 
             if loop_detect_enabled:
-                loop_signal = detect_loop(loop_history)
+                loop_signal = _detect_loop(loop_history)
                 if loop_signal is None:
                     last_loop_signal = None
                 elif loop_signal != last_loop_signal:
@@ -177,13 +178,31 @@ async def run_react_loop(
                         Message(
                             role="user",
                             content=(
-                                FORCE_MESSAGE
+                                force_message
                                 if loop_signal == "force_switch"
-                                else NUDGE_MESSAGE
+                                else nudge_message
                             ),
                         )
                     )
                     last_loop_signal = loop_signal
+
+            if (
+                has_run_tests_tool
+                and edit_since_verification
+                and not reminded_after_edit
+                and not collector.verification_succeeded
+            ):
+                context = context.add(
+                    Message(
+                        role="user",
+                        content=(
+                            "You changed files but have not verified the patch. "
+                            "Call run_tests with test_cmd=\"default\" now, then fix failures "
+                            "before final_answer."
+                        ),
+                    )
+                )
+                reminded_after_edit = True
 
             requirements = turn_requirements(turn, loop_budget, collector)
             result, next_context = await mfuncs.aact(
@@ -211,9 +230,20 @@ async def run_react_loop(
             tool_responses = []
             if result.tool_calls:
                 invalid_calls = []
-                for tool_call in result.tool_calls.values():
-                    tool_name = getattr(tool_call, "name", "")
+                blocked_finalizers = []
+                valid_tool_calls = {}
+                for key, tool_call in result.tool_calls.items():
+                    tool_name = getattr(tool_call, "name", "") or str(key)
                     if not tool_name:
+                        continue
+                    if (
+                        tool_name == MELLEA_FINALIZER_TOOL
+                        and has_run_tests_tool
+                        and not collector.verification_succeeded
+                    ):
+                        blocked_finalizers.append(
+                            "final_answer requires successful verification first"
+                        )
                         continue
                     missing_args = _missing_required_args(tool_call)
                     if _should_autofill_finalizer(
@@ -231,38 +261,59 @@ async def run_react_loop(
                             f"{tool_name} is missing required args: {', '.join(missing_args)}"
                         )
                         continue
+                    valid_tool_calls[key] = tool_call
                     if tool_name != MELLEA_FINALIZER_TOOL:
                         loop_history.append(
                             (tool_name, _freeze_tool_args(getattr(tool_call, "args", None)))
                         )
+                if blocked_finalizers:
+                    context = context.add(
+                        Message(
+                            role="user",
+                            content=(
+                                "Do not call final_answer yet. Run run_tests with "
+                                "test_cmd=\"default\" or fix the failing tests first. "
+                                + " ".join(blocked_finalizers)
+                            ),
+                        )
+                    )
                 if invalid_calls:
                     context = context.add(
                         Message(
                             role="user",
                             content=(
-                                "Your last tool call was malformed. "
-                                "Retry with all required arguments. "
+                                "Some tool calls were malformed and were skipped. "
+                                "Retry them with all required arguments. "
                                 + " ".join(invalid_calls)
                             ),
                         )
                     )
+                if not valid_tool_calls:
                     continue
+                if len(valid_tool_calls) != len(result.tool_calls):
+                    result.tool_calls = valid_tool_calls
                 tool_responses = await acall_tools(result, backend=session.backend)
                 for tool_result in tool_responses:
                     if strict_tool_ordering:
                         context = context.add(Message(role="assistant", content=""))
                     context = context.add(tool_result)
+                    tool_output = getattr(
+                        tool_result,
+                        "tool_output",
+                        getattr(tool_result, "content", None),
+                    )
                     if not hooks_enabled:
-                        tool_output = getattr(
-                            tool_result,
-                            "tool_output",
-                            getattr(tool_result, "content", None),
-                        )
                         collector.note_tool(
                             tool_name=tool_result.name,
                             output=tool_output,
                             success=not isinstance(tool_output, Exception),
                         )
+                    if tool_result.name == "edit" and _edit_was_applied(tool_output):
+                        edit_since_verification = True
+                        reminded_after_edit = False
+                    elif tool_result.name == "run_tests":
+                        edit_since_verification = False
+                        reminded_after_edit = False
             finalizer_response = next(
                 (
                     tool_result
@@ -357,6 +408,12 @@ def _run_tests_succeeded(output: str) -> bool:
     )
 
 
+def _edit_was_applied(output: object) -> bool:
+    if isinstance(output, Exception):
+        return False
+    return "APPLIED" in str(output)
+
+
 def _serialize_prompt(value: object | None) -> str | None:
     if value is None:
         return None
@@ -423,6 +480,18 @@ def _freeze_tool_args(args: object) -> tuple[tuple[str, str], ...]:
             for key, value in args.items()
         )
     )
+
+
+def _detect_loop(history: list[tuple[str, tuple[tuple[str, str], ...]]]) -> str | None:
+    if len(history) < 2:
+        return None
+    if history[-1] != history[-2]:
+        return None
+    if len(history) >= 3 and history[-1] == history[-3]:
+        return "force_switch"
+    return "nudge"
+
+
 def _missing_required_args(tool_call) -> list[str]:
     tool = getattr(tool_call, "func", None)
     schema = getattr(tool, "as_json_tool", None)

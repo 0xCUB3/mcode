@@ -7,6 +7,7 @@ import shlex
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 from mcode.launch import config as launch_config
@@ -22,6 +23,7 @@ class RemoteBenchError(RuntimeError):
 _FORWARDED_ENV_VARS = (
     "MCODE_CONTEXT_WINDOW",
     "MCODE_MAX_NEW_TOKENS",
+    "MCODE_REACT_TIMEOUT",
     "MCODE_HARNESS_EXPERIMENTS",
 )
 
@@ -70,6 +72,57 @@ def _resolve_endpoint(model: str, *, cfg: launch_config.LaunchConfig) -> str:
     )
 
 
+def _replace_or_append_option(argv: list[str], flag: str, value: str) -> None:
+    if flag in argv:
+        i = argv.index(flag)
+        argv[i + 1] = value
+        return
+    argv.extend([flag, value])
+
+
+def _prepare_remote_benchmark_root(
+    argv: list[str],
+    *,
+    workspace_root: str,
+    shared_root: str,
+) -> str:
+    if not argv or argv[0] != "aider-polyglot":
+        return ""
+
+    remote_root = f"{workspace_root}/benchmarks/polyglot-benchmark"
+    toolchain_root = f"{shared_root}/toolchains/aider-polyglot"
+    _replace_or_append_option(argv, "--benchmark-root", remote_root)
+    root_q = shlex.quote(remote_root)
+    parent_q = shlex.quote(str(Path(remote_root).parent))
+    toolchain_q = shlex.quote(toolchain_root)
+    return f"""
+mkdir -p {parent_q}
+(
+  flock 9
+  if [ -d {root_q}/.git ]; then
+    git -C {root_q} fetch --depth=1 origin main
+    git -C {root_q} reset --hard origin/main
+  elif [ -e {root_q} ]; then
+    echo "remote benchmark root exists but is not a git checkout: {remote_root}" >&2
+    exit 96
+  else
+    git clone --depth=1 https://github.com/Aider-AI/polyglot-benchmark.git {root_q}
+  fi
+) 9>{parent_q}/.polyglot-benchmark.lock
+TOOLCHAIN_ROOT={toolchain_q}
+if [ -d "$TOOLCHAIN_ROOT" ]; then
+  export GOROOT="$TOOLCHAIN_ROOT/go"
+  export JAVA_HOME="$TOOLCHAIN_ROOT/jdk"
+  export CARGO_HOME="$TOOLCHAIN_ROOT/cargo"
+  export RUSTUP_HOME="$TOOLCHAIN_ROOT/rustup"
+  export PATH="$TOOLCHAIN_ROOT/go/bin:$TOOLCHAIN_ROOT/node/bin:$PATH"
+  export PATH="$TOOLCHAIN_ROOT/cmake/bin:$TOOLCHAIN_ROOT/jdk/bin:$PATH"
+  export PATH="$TOOLCHAIN_ROOT/cargo/bin:$PATH"
+  export npm_config_cache="$TOOLCHAIN_ROOT/npm-cache"
+fi
+""".strip()
+
+
 def run_bench_on_bluevela(
     *,
     bench_argv: list[str],
@@ -93,7 +146,7 @@ def run_bench_on_bluevela(
     api_key = os.environ.get("OPENAI_API_KEY", "dummy")
 
     ssh = SshClient(bv.login)
-    run_id = f"bench-{int(time.time())}-{model.replace('/', '-')[:24]}"
+    run_id = f"bench-{int(time.time())}-{uuid.uuid4().hex[:8]}-{model.replace('/', '-')[:24]}"
     remote_dir = f"{bv.workspace_root}/bench-runs/{run_id}"
     remote_db = f"{remote_dir}/results.db"
     remote_log = f"{remote_dir}/bench.log"
@@ -110,6 +163,12 @@ def run_bench_on_bluevela(
         argv[i + 1] = remote_db
     else:
         argv += ["--db", remote_db]
+
+    remote_benchmark_setup = _prepare_remote_benchmark_root(
+        argv,
+        workspace_root=bv.workspace_root,
+        shared_root=bv.shared_root,
+    )
 
     ssh.run(f"mkdir -p {shlex.quote(remote_dir)}", timeout=30)
 
@@ -161,6 +220,7 @@ export DOCKER_HOST="unix://$SOCK"
 export OPENAI_BASE_URL={shlex.quote(endpoint)}
 export OPENAI_API_KEY={shlex.quote(api_key)}
 {forwarded_exports}\
+{remote_benchmark_setup}
 set +e
 {bench_cmd}
 rc=$?

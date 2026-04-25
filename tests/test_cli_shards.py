@@ -386,6 +386,121 @@ def test_aider_polyglot_cli_forwards_config(monkeypatch, tmp_path: Path) -> None
     assert captured["loop_budget"] == 20
 
 
+def test_aider_polyglot_bluevela_forwards_args(monkeypatch, tmp_path: Path) -> None:
+    runner = CliRunner()
+    captured: dict[str, object] = {}
+
+    def fake_run_bench_on_bluevela(*, bench_argv, model, local_db, fetch_db):
+        captured["bench_argv"] = bench_argv
+        captured["model"] = model
+        captured["local_db"] = local_db
+        captured["fetch_db"] = fetch_db
+        return 0
+
+    monkeypatch.setattr("mcode.bench.remote.run_bench_on_bluevela", fake_run_bench_on_bluevela)
+
+    res = runner.invoke(
+        app,
+        [
+            "bench",
+            "aider-polyglot",
+            "--model",
+            "test-model",
+            "--backend",
+            "openai",
+            "--on",
+            "bluevela",
+            "--db",
+            str(tmp_path / "aider.db"),
+            "--loop-budget",
+            "20",
+            "--retry-loop-budget",
+            "8",
+            "--temperature",
+            "0.3",
+            "--seed",
+            "123",
+            "--language",
+            "python",
+            "--task-ids",
+            "python/connect,go/react",
+            "--limit",
+            "2",
+            "--benchmark-root",
+            str(tmp_path / "polyglot"),
+            "--shards",
+            "4",
+            "--no-retry",
+            "--no-fetch-db",
+        ],
+    )
+
+    assert res.exit_code == 0
+    assert captured["fetch_db"] is False
+    assert captured["local_db"] == tmp_path / "aider.db"
+    assert captured["model"] == "test-model"
+    assert captured["bench_argv"] == [
+        "aider-polyglot",
+        "--model",
+        "test-model",
+        "--backend",
+        "openai",
+        "--loop-budget",
+        "20",
+        "--retry-loop-budget",
+        "8",
+        "--benchmark-root",
+        str(tmp_path / "polyglot"),
+        "--language",
+        "python",
+        "--temperature",
+        "0.3",
+        "--seed",
+        "123",
+        "--limit",
+        "2",
+        "--task-ids",
+        "python/connect,go/react",
+        "--no-retry",
+        "--shards",
+        "4",
+    ]
+
+
+def test_aider_polyglot_local_forwards_manual_shards(monkeypatch, tmp_path: Path) -> None:
+    runner = CliRunner()
+    captured: dict[str, object] = {}
+
+    def fake_run_single_benchmark(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("mcode.cli._run_single_benchmark", fake_run_single_benchmark)
+
+    res = runner.invoke(
+        app,
+        [
+            "bench",
+            "aider-polyglot",
+            "--model",
+            "test-model",
+            "--db",
+            str(tmp_path / "aider.db"),
+            "--task-ids",
+            "python/connect,go/react",
+            "--shard-count",
+            "4",
+            "--shard-index",
+            "2",
+        ],
+    )
+
+    assert res.exit_code == 0
+    config = captured["config"]
+    assert config.task_shard_count == 4
+    assert config.task_shard_index == 2
+    assert captured["task_ids"] == "python/connect,go/react"
+
+
 def test_aider_polyglot_cli_rejects_exercise_without_language() -> None:
     runner = CliRunner()
     res = runner.invoke(

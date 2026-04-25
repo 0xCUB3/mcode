@@ -3,6 +3,11 @@ from __future__ import annotations
 import os
 import subprocess
 
+from mcode.agent.verification import (
+    VerificationProgress,
+    build_run_tests_tool,
+    build_verification_policy,
+)
 from mcode.llm.repo_state import get_git_diff
 
 
@@ -24,3 +29,36 @@ def test_diff_after_edits(tmp_path):
     patch = get_git_diff(str(tmp_path))
     assert "-b = 2" in patch
     assert "+b = 42" in patch
+
+
+
+def test_run_tests_suppresses_repeat_failed_run_without_edit(tmp_path):
+    calls: list[str] = []
+
+    def command_fn(command: str) -> str:
+        calls.append(command)
+        return "$ pytest\nFAILED\nfailed"
+
+    progress = VerificationProgress()
+    policy = build_verification_policy(
+        test_cmds={"verification_cmds": ["pytest"]},
+        command_fn=command_fn,
+    )
+    tool = build_run_tests_tool(
+        repo_root=str(tmp_path),
+        verification_policy=policy,
+        progress=progress,
+    )
+    assert tool is not None
+
+    first = tool.run("default")
+    second = tool.run("default")
+    progress.note_edit_applied()
+    third = tool.run("default")
+
+    assert "FAILED" in first
+    assert "SKIPPED" in second
+    assert "Previous run_tests already returned FAILED" in second
+    assert "Edit the code before rerunning" in second
+    assert "FAILED" in third
+    assert calls == ["pytest", "pytest"]

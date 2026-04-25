@@ -58,6 +58,8 @@ def test_run_bench_on_bluevela_uses_tmp_for_podman_storage(tmp_path, monkeypatch
     monkeypatch.setattr(remote, "SshClient", _FakeSshClient)
     monkeypatch.setattr(remote, "_stream_remote_log", lambda ssh, remote_log, pid: None)
     monkeypatch.setattr(remote.time, "time", lambda: 1777000000)
+    fake_uuid = type("FakeUUID", (), {"hex": "abcdef123456"})()
+    monkeypatch.setattr(remote.uuid, "uuid4", lambda: fake_uuid)
 
     exit_code = remote.run_bench_on_bluevela(
         bench_argv=["smoke", "--model", "Qwen/Qwen3.5-35B-A3B"],
@@ -69,7 +71,7 @@ def test_run_bench_on_bluevela_uses_tmp_for_podman_storage(tmp_path, monkeypatch
     ssh = _FakeSshClient.last
     assert ssh is not None
     launch_cmd = next(cmd for cmd in ssh.commands if cmd.startswith("nohup bash -lc "))
-    run_id = "bench-1777000000-Qwen-Qwen3.5-35B-A3B"
+    run_id = "bench-1777000000-abcdef12-Qwen-Qwen3.5-35B-A3B"
 
     assert f"export XDG_RUNTIME_DIR=/tmp/mcode-bench-{run_id}" in launch_cmd
     assert 'WORKSPACE_TMP="$XDG_RUNTIME_DIR/tmp"' in launch_cmd
@@ -89,6 +91,7 @@ def test_run_bench_on_bluevela_forwards_context_env(tmp_path, monkeypatch) -> No
     monkeypatch.setenv("MCODE_CONTEXT_WINDOW", "262144")
     monkeypatch.setenv("MCODE_MAX_NEW_TOKENS", "4096")
     monkeypatch.setenv("MCODE_HARNESS_EXPERIMENTS", "mellea_loop_detect_v1")
+    monkeypatch.setenv("MCODE_REACT_TIMEOUT", "2400")
 
     remote.run_bench_on_bluevela(
         bench_argv=["smoke", "--model", "Qwen/Qwen3.6-35B-A3B"],
@@ -102,6 +105,7 @@ def test_run_bench_on_bluevela_forwards_context_env(tmp_path, monkeypatch) -> No
     assert "export MCODE_CONTEXT_WINDOW=262144" in launch_cmd
     assert "export MCODE_MAX_NEW_TOKENS=4096" in launch_cmd
     assert "export MCODE_HARNESS_EXPERIMENTS=mellea_loop_detect_v1" in launch_cmd
+    assert "export MCODE_REACT_TIMEOUT=2400" in launch_cmd
 
 
 
@@ -125,3 +129,42 @@ def test_run_bench_on_bluevela_prefers_openai_env_override(tmp_path, monkeypatch
     launch_cmd = next(cmd for cmd in ssh.commands if cmd.startswith("nohup bash -lc "))
     assert "export OPENAI_BASE_URL=https://example.test/v1" in launch_cmd
     assert "export OPENAI_API_KEY=secret-key" in launch_cmd
+
+
+
+def test_run_bench_on_bluevela_sets_up_aider_polyglot_root(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(remote.launch_config, "load", lambda: _bluevela_cfg())
+    monkeypatch.setattr(remote.launch_config, "validate_for_bluevela", lambda cfg: [])
+    monkeypatch.setattr(remote, "_resolve_endpoint", lambda model, cfg: "http://host:8321/v1")
+    monkeypatch.setattr(remote, "SshClient", _FakeSshClient)
+    monkeypatch.setattr(remote, "_stream_remote_log", lambda ssh, remote_log, pid: None)
+    monkeypatch.setattr(remote.time, "time", lambda: 1777000003)
+
+    remote.run_bench_on_bluevela(
+        bench_argv=[
+            "aider-polyglot",
+            "--model",
+            "Qwen/Qwen3.6-35B-A3B",
+            "--benchmark-root",
+            "/Users/skula/Documents/polyglot-benchmark",
+        ],
+        model="Qwen/Qwen3.6-35B-A3B",
+        local_db=tmp_path / "results.db",
+    )
+
+    ssh = _FakeSshClient.last
+    assert ssh is not None
+    launch_cmd = next(cmd for cmd in ssh.commands if cmd.startswith("nohup bash -lc "))
+    remote_root = "/u/skula/mcode-launch/benchmarks/polyglot-benchmark"
+    assert "git clone --depth=1 https://github.com/Aider-AI/polyglot-benchmark.git" in launch_cmd
+    assert ") 9>/u/skula/mcode-launch/benchmarks/.polyglot-benchmark.lock" in launch_cmd
+    assert f"--benchmark-root {remote_root}" in launch_cmd
+    assert "/Users/skula/Documents/polyglot-benchmark" not in launch_cmd
+    toolchain_root = "/u/skula/mcode-shared/toolchains/aider-polyglot"
+    assert f"TOOLCHAIN_ROOT={toolchain_root}" in launch_cmd
+    assert 'export GOROOT="$TOOLCHAIN_ROOT/go"' in launch_cmd
+    assert 'export JAVA_HOME="$TOOLCHAIN_ROOT/jdk"' in launch_cmd
+    assert 'export RUSTUP_HOME="$TOOLCHAIN_ROOT/rustup"' in launch_cmd
+    assert 'export CARGO_HOME="$TOOLCHAIN_ROOT/cargo"' in launch_cmd
+    assert "$TOOLCHAIN_ROOT/node/bin" in launch_cmd
+    assert "$TOOLCHAIN_ROOT/cmake/bin" in launch_cmd

@@ -71,6 +71,11 @@ def test_cli_bench_aider_polyglot_help() -> None:
     assert "exercise" in option_names
     assert "no_retry" in option_names
     assert "task_ids" in option_names
+    assert "on" in option_names
+    assert "fetch_db" in option_names
+    assert "shards" in option_names
+    assert "shard_count" in option_names
+    assert "shard_index" in option_names
 
 
 def test_cli_bench_smoke_help() -> None:

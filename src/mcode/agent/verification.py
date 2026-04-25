@@ -22,6 +22,31 @@ class VerificationPolicy:
     prompt_block: str
 
 
+
+@dataclass
+class VerificationProgress:
+    edit_revision: int = 0
+    last_failed_run: tuple[int, str, str] | None = None
+
+    def note_edit_applied(self) -> None:
+        self.edit_revision += 1
+        self.last_failed_run = None
+
+    def repeated_failed_run(self, test_cmd: str) -> str | None:
+        if self.last_failed_run is None:
+            return None
+        revision, previous_cmd, previous_result = self.last_failed_run
+        if revision == self.edit_revision and previous_cmd == _normalize_test_cmd_key(test_cmd):
+            return previous_result
+        return None
+
+    def note_run_tests_result(self, test_cmd: str, result: str) -> None:
+        if _tool_result_passed(result):
+            self.last_failed_run = None
+            return
+        self.last_failed_run = (self.edit_revision, _normalize_test_cmd_key(test_cmd), result)
+
+
 def normalize_verification_commands(source: object | None) -> list[str]:
     if source is None:
         return []
@@ -143,6 +168,7 @@ def build_run_tests_tool(
     *,
     repo_root: str,
     verification_policy: VerificationPolicy,
+    progress: VerificationProgress | None = None,
 ):
     test_cmds = verification_policy.test_cmds
     test_fn = verification_policy.test_fn
@@ -155,11 +181,25 @@ def build_run_tests_tool(
         timeout_s: int = 120,
         max_output_chars: int = 4000,
     ) -> str:
+        if progress is not None and (previous_result := progress.repeated_failed_run(test_cmd)):
+            previous_status = _tool_result_status(previous_result) or "FAILED"
+            return format_tool_result(
+                f"run_tests {test_cmd}",
+                "SKIPPED",
+                f"Previous run_tests already returned {previous_status} with no edit since then. "
+                "Edit the code before rerunning the same tests.",
+            )
+
+        def _record(result: str) -> str:
+            if progress is not None:
+                progress.note_run_tests_result(test_cmd, result)
+            return result
+
         if test_fn is not None:
             result = test_fn(test_cmd)
             if is_tool_result(result):
-                return result
-            return format_tool_result(test_cmd, "COMPLETED", result)
+                return _record(result)
+            return _record(format_tool_result(test_cmd, "COMPLETED", result))
 
         commands = test_cmds if test_cmd.strip().lower() == "default" else [test_cmd]
         outputs: list[str] = []
@@ -190,8 +230,8 @@ def build_run_tests_tool(
             )
             outputs.append(_truncate_tool_result(result, max_output_chars))
         if outputs:
-            return "\n---\n".join(outputs)
-        return format_tool_result(test_cmd, "SKIPPED", "No test commands available.")
+            return _record("\n---\n".join(outputs))
+        return _record(format_tool_result(test_cmd, "SKIPPED", "No test commands available."))
 
     tool = build_tool_from_callable(_run_tests, name="run_tests")
     return MelleaTool(
@@ -234,6 +274,18 @@ def _append_failure_artifacts(
         return _truncate_tool_result(tool_result, max_output_chars)
     combined = f"{tool_result.rstrip()}\n\nFailure report snippets:\n{artifact_text}"
     return _truncate_tool_result(combined, max_output_chars)
+
+
+def _normalize_test_cmd_key(test_cmd: str) -> str:
+    return test_cmd.strip().lower() or "default"
+
+
+def _tool_result_status(tool_result: str) -> str | None:
+    lines = tool_result.splitlines()
+    if len(lines) < 2:
+        return None
+    status = lines[1].strip()
+    return status or None
 
 
 def _tool_result_passed(tool_result: str) -> bool:
