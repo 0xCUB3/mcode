@@ -184,7 +184,10 @@ export XDG_RUNTIME_DIR={shlex.quote(runtime_dir)}
 WORKSPACE_TMP="$XDG_RUNTIME_DIR/tmp"
 GRAPHROOT="$XDG_RUNTIME_DIR/graphroot"
 RUNROOT="$XDG_RUNTIME_DIR/runroot"
+CONTAINERS_CONF="$XDG_RUNTIME_DIR/containers.conf"
 mkdir -p "$WORKSPACE_TMP" "$GRAPHROOT" "$RUNROOT"
+printf '[containers]\nkeyring=false\n' > "$CONTAINERS_CONF"
+export CONTAINERS_CONF
 export TMPDIR="$WORKSPACE_TMP"
 SOCK="$XDG_RUNTIME_DIR/podman.sock"
 rm -f "$SOCK"

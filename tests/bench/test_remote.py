@@ -77,6 +77,9 @@ def test_run_bench_on_bluevela_uses_tmp_for_podman_storage(tmp_path, monkeypatch
     assert 'WORKSPACE_TMP="$XDG_RUNTIME_DIR/tmp"' in launch_cmd
     assert 'GRAPHROOT="$XDG_RUNTIME_DIR/graphroot"' in launch_cmd
     assert 'RUNROOT="$XDG_RUNTIME_DIR/runroot"' in launch_cmd
+    assert 'CONTAINERS_CONF="$XDG_RUNTIME_DIR/containers.conf"' in launch_cmd
+    assert "keyring=false" in launch_cmd
+    assert "export CONTAINERS_CONF" in launch_cmd
     assert "trap cleanup EXIT" in launch_cmd
     assert "/u/skula/mcode-shared" not in launch_cmd
 
