@@ -20,8 +20,6 @@ class VerificationPolicy:
     test_fn: Callable[[str], str] | None
     command_fn: Callable[[str], str] | None
     prompt_block: str
-    allow_default_test_cmd: bool
-    suggested_cmds: list[str]
 
 
 
@@ -72,15 +70,7 @@ def normalize_verification_commands(source: object | None) -> list[str]:
     return [text] if text else []
 
 
-def build_verification_prompt(
-    test_cmds: list[str],
-    *,
-    allow_default_test_cmd: bool,
-    suggested_cmds: list[str] | None = None,
-    has_command_fn: bool = False,
-    has_test_fn: bool = False,
-    ) -> str:
-    suggestions = list(suggested_cmds or [])
+def build_verification_prompt(test_cmds: list[str]) -> str:
     if test_cmds:
         formatted = ", ".join(f"`{cmd}`" for cmd in test_cmds[:3])
         more = "" if len(test_cmds) <= 3 else f" and {len(test_cmds) - 3} more"
@@ -92,31 +82,11 @@ def build_verification_prompt(
             "with `&&`; use `default` for the declared command sequence. Keep the "
             "`final_answer` text short."
         )
-    if allow_default_test_cmd and has_test_fn:
-        return (
-            "\n\nVerification:\n"
-            "Use `run_tests` before `final_answer`. Pass `test_cmd=\"default\"` when "
-            "using the benchmark-provided verifier, or pass one focused command if the "
-            "repository makes a better verifier obvious. Keep the `final_answer` text short."
-        )
-    suggestion_text = ""
-    if suggestions:
-        formatted = ", ".join(f"`{cmd}`" for cmd in suggestions[:4])
-        more = "" if len(suggestions) <= 4 else f" and {len(suggestions) - 4} more"
-        suggestion_text = f" Visible repo-derived command suggestions: {formatted}{more}."
-    if has_command_fn:
-        return (
-            "\n\nVerification:\n"
-            "Use `run_tests` before `final_answer`. There is no default verifier in this "
-            "repo, so do not use `test_cmd=\"default\"`. Infer and run one focused existing "
-            "project command, for example a pytest, tox, runtests.py, or manage.py command."
-            f"{suggestion_text} Pass the exact command text in `test_cmd`. Keep the "
-            "`final_answer` text short."
-        )
     return (
         "\n\nVerification:\n"
-        "Use `run_tests` before `final_answer` when a verifier is available. Pass only "
-        "the command text in `test_cmd`. Keep the `final_answer` text short."
+        "Use `run_tests` before `final_answer`. Pass only the command text in `test_cmd`; "
+        "use `test_cmd=\"default\"` when a default verifier exists. Keep the `final_answer` "
+        "text short."
     )
 
 
@@ -125,24 +95,13 @@ def build_verification_policy(
     test_cmds: object | None = None,
     test_fn: Callable[[str], str] | None = None,
     command_fn: Callable[[str], str] | None = None,
-    suggested_test_cmds: object | None = None,
 ) -> VerificationPolicy:
     verification_cmds = normalize_verification_commands(test_cmds)
-    suggested_cmds = normalize_verification_commands(suggested_test_cmds)
-    allow_default = bool(verification_cmds or test_fn is not None)
     return VerificationPolicy(
         test_cmds=verification_cmds,
         test_fn=test_fn,
         command_fn=command_fn,
-        prompt_block=build_verification_prompt(
-            verification_cmds,
-            allow_default_test_cmd=allow_default,
-            suggested_cmds=suggested_cmds,
-            has_command_fn=command_fn is not None,
-            has_test_fn=test_fn is not None,
-        ),
-        allow_default_test_cmd=allow_default,
-        suggested_cmds=suggested_cmds,
+        prompt_block=build_verification_prompt(verification_cmds),
     )
 
 
@@ -158,10 +117,10 @@ def build_turn_requirements(
     return [
         reqs.uses_tool("run_tests"),
         reqs.tool_arg_validator(
-            _run_tests_requirement_message(verification_policy),
+            "Set `run_tests.test_cmd` to `default` or to one declared test command.",
             "run_tests",
             "test_cmd",
-            lambda value: _valid_test_command(value, verification_policy),
+            lambda value: _valid_test_command(value, verification_policy.test_cmds),
         ),
     ]
 
@@ -179,24 +138,15 @@ def build_submission_requirements() -> list[object]:
     ]
 
 
-def _run_tests_requirement_message(verification_policy: VerificationPolicy) -> str:
-    if verification_policy.allow_default_test_cmd:
-        return "Set `run_tests.test_cmd` to `default` or to one declared test command."
-    if verification_policy.suggested_cmds:
-        formatted = ", ".join(verification_policy.suggested_cmds[:3])
-        return f"Set `run_tests.test_cmd` to a concrete repo command such as {formatted}."
-    return "Set `run_tests.test_cmd` to a concrete repo test command, not `default`."
-
-
-def _valid_test_command(value: object, verification_policy: VerificationPolicy) -> bool:
+def _valid_test_command(value: object, allowed_commands: list[str]) -> bool:
     text = str(value).strip()
     if not text:
         return False
     if text.lower() == "default":
-        return verification_policy.allow_default_test_cmd
-    if not verification_policy.test_cmds:
         return True
-    return text in verification_policy.test_cmds
+    if not allowed_commands:
+        return True
+    return text in allowed_commands
 
 
 def _valid_submission_text(text: str) -> bool:
@@ -231,17 +181,6 @@ def build_run_tests_tool(
         timeout_s: int = 120,
         max_output_chars: int = 4000,
     ) -> str:
-        if (
-            test_cmd.strip().lower() == "default"
-            and not verification_policy.allow_default_test_cmd
-        ):
-            return format_tool_result(
-                "run_tests default",
-                "REJECTED",
-                "No default verifier is available. Pass a concrete project test command "
-                "in test_cmd.",
-            )
-
         if progress is not None and (previous_result := progress.repeated_failed_run(test_cmd)):
             previous_status = _tool_result_status(previous_result) or "FAILED"
             return format_tool_result(

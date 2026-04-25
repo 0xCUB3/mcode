@@ -552,7 +552,7 @@ def test_run_react_loop_reminds_to_verify_after_edit(monkeypatch):
     assert submission is None
     assert terminal_reason == "budget_exhausted"
     assert any(
-        "Call run_tests with a focused test command" in message
+        "Call run_tests with test_cmd=\"default\"" in message
         for message in seen_user_messages[-1]
     )
 
@@ -592,7 +592,6 @@ def test_run_react_loop_autofills_verified_finalizer(monkeypatch):
     session = SimpleNamespace(ctx=ChatContext(), backend=object())
     collector = SolveTraceCollector()
     collector.verification_succeeded = True
-    collector.edit_applied = True
     monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
     monkeypatch.setattr("mcode.llm.react_driver.acall_tools", fake_acall_tools)
 
