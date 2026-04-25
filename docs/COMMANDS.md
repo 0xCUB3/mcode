@@ -16,6 +16,7 @@ uv run mcode bench swebench-lite --model granite3.3:8b --limit 16 --shards 4
 uv run mcode bench swebench-lite --model granite3.3:8b --sampling rejection --n-samples 3 --limit 5
 uv run mcode bench swebench-live --model granite3.3:8b --limit 5
 MCODE_CONTEXT_WINDOW=262144 uv run mcode bench smoke --model Qwen/Qwen3.6-35B-A3B --backend openai --shards 4
+MCODE_CONTEXT_WINDOW=32768 MCODE_MAX_NEW_TOKENS=4096 MCODE_REACT_TIMEOUT=2400 uv run mcode bench swebench-lite --model Qwen/Qwen3.6-35B-A3B --backend openai --dataset princeton-nlp/SWE-bench_Verified --task-ids src/mcode/bench/fixtures/smoke-16.txt --loop-budget 20 --sampling multiturn --sampling-budget 2 --selection-attempts 3 --timeout 300 --mem-limit 8g --pids-limit 512 --on bluevela --shards 4 --db research/<run>/smoke16-selection3.db
 ```
 
 Key flags:
@@ -24,6 +25,7 @@ Key flags:
 - `--sampling {none,rejection,repair,sofai}`
 - `--sampling-budget N`
 - `--n-samples N`
+- `--selection-attempts N` runs independent full-budget trajectories and selects one patch before official evaluation
 
 ## Results
 

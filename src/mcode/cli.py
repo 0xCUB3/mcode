@@ -1790,6 +1790,7 @@ def _swebench_live_cli_args(
     n_samples: int,
     sampling: str,
     sampling_budget: int | None,
+    selection_attempts: int,
     task_ids: str | None,
 ) -> list[str]:
     argv = [
@@ -1816,6 +1817,8 @@ def _swebench_live_cli_args(
     _append_option(argv, "--seed", seed)
     _append_option(argv, "--limit", limit)
     _append_option(argv, "--sampling-budget", sampling_budget)
+    if selection_attempts != 1:
+        _append_option(argv, "--selection-attempts", selection_attempts)
     _append_option(argv, "--task-ids", task_ids)
     return argv
 
@@ -1839,6 +1842,7 @@ def _swebench_lite_cli_args(
     n_samples: int,
     sampling: str,
     sampling_budget: int | None,
+    selection_attempts: int,
     task_ids: str | None,
     dataset: str,
 ) -> list[str]:
@@ -1874,6 +1878,8 @@ def _swebench_lite_cli_args(
     _append_option(argv, "--seed", seed)
     _append_option(argv, "--limit", limit)
     _append_option(argv, "--sampling-budget", sampling_budget)
+    if selection_attempts != 1:
+        _append_option(argv, "--selection-attempts", selection_attempts)
     _append_option(argv, "--task-ids", task_ids)
     if force_rebuild:
         argv.append("--force-rebuild")
@@ -1977,6 +1983,14 @@ def bench_swebench_live(
         int | None,
         typer.Option("--sampling-budget", min=1, help="Sampling loop budget override"),
     ] = None,
+    selection_attempts: Annotated[
+        int,
+        typer.Option(
+            "--selection-attempts",
+            min=1,
+            help="Independent full-budget trajectories; select one before official evaluation",
+        ),
+    ] = 1,
     task_ids: Annotated[
         str | None,
         typer.Option(
@@ -2019,6 +2033,7 @@ def bench_swebench_live(
             n_samples=n_samples,
             sampling=sampling,
             sampling_budget=sampling_budget,
+            selection_attempts=selection_attempts,
             task_ids=task_ids,
         )
         _append_option(argv, "--shards", shards)
@@ -2051,6 +2066,7 @@ def bench_swebench_live(
                 n_samples=n_samples,
                 sampling=sampling,
                 sampling_budget=sampling_budget,
+                selection_attempts=selection_attempts,
                 task_ids=task_ids,
             ),
             shards=shards,
@@ -2084,6 +2100,7 @@ def bench_swebench_live(
         n_samples=n_samples,
         sampling_strategy=sampling,
         sampling_budget=sampling_budget,
+        selection_attempts=selection_attempts,
     )
     _run_single_benchmark(
         benchmark="swebench-live",
@@ -2175,6 +2192,14 @@ def bench_swebench_lite(
         int | None,
         typer.Option("--sampling-budget", min=1, help="Sampling loop budget override"),
     ] = None,
+    selection_attempts: Annotated[
+        int,
+        typer.Option(
+            "--selection-attempts",
+            min=1,
+            help="Independent full-budget trajectories; select one before official evaluation",
+        ),
+    ] = 1,
     task_ids: Annotated[
         str | None,
         typer.Option(
@@ -2223,6 +2248,7 @@ def bench_swebench_lite(
             n_samples=n_samples,
             sampling=sampling,
             sampling_budget=sampling_budget,
+            selection_attempts=selection_attempts,
             task_ids=task_ids,
             dataset=dataset,
         )
@@ -2260,6 +2286,7 @@ def bench_swebench_lite(
                 n_samples=n_samples,
                 sampling=sampling,
                 sampling_budget=sampling_budget,
+                selection_attempts=selection_attempts,
                 task_ids=task_ids,
                 dataset=dataset,
             ),
@@ -2298,6 +2325,7 @@ def bench_swebench_lite(
         n_samples=n_samples,
         sampling_strategy=sampling,
         sampling_budget=sampling_budget,
+        selection_attempts=selection_attempts,
         swebench_dataset=dataset,
     )
     _run_single_benchmark(

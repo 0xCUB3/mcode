@@ -275,6 +275,75 @@ def test_generate_patch_disables_outer_retry_when_sampling_enabled(tmp_path, mon
     assert captured["sampling_budget"] == 4
 
 
+def test_selection_attempts_runs_sampling_trajectories_and_selects_best(tmp_path, monkeypatch):
+    _init_repo(tmp_path)
+    session = LLMSession(
+        model_id="test",
+        backend_name="openai",
+        loop_budget=4,
+        sampling_strategy="multiturn",
+        sampling_budget=2,
+        selection_attempts=3,
+    )
+    attempts = {"count": 0}
+    captured: list[object] = []
+
+    async def fake_solve_patch(**kwargs):
+        captured.append(kwargs["sampling_strategy_name"])
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            return SolveResult(
+                patch="diff --git a/foo.py b/foo.py\n+x = 2\n",
+                terminal_reason="budget_exhausted",
+                verification_succeeded=True,
+                zero_edit=False,
+                zero_verification=False,
+            )
+        if attempts["count"] == 2:
+            return SolveResult(
+                patch="",
+                terminal_reason="budget_exhausted",
+                verification_succeeded=False,
+            )
+        return SolveResult(
+            patch="diff --git a/foo.py b/foo.py\n+x = 3\n",
+            submission=PatchSubmission(summary="Attempt three", tests_ran=["default"]),
+            terminal_reason="submitted",
+            verification_succeeded=True,
+            zero_edit=False,
+            zero_verification=False,
+        )
+
+    monkeypatch.setattr(
+        session,
+        "_start_session",
+        lambda **kwargs: _session_context(
+            SimpleNamespace(backend=object(), solve_patch=fake_solve_patch)
+        ),
+    )
+    monkeypatch.setattr("mcode.agent.coding_agent.build_repo_map", lambda *args, **kwargs: "")
+    monkeypatch.setattr(
+        "mcode.agent.coding_agent.build_candidate_files",
+        lambda *args, **kwargs: "",
+    )
+
+    patch_text = session.generate_patch(
+        repo="test/repo",
+        problem_statement="Fix the bug",
+        repo_root=str(tmp_path),
+        n_samples=1,
+        test_cmds={"test_cmds": ["python -c pass"]},
+    )
+
+    assert attempts["count"] == 3
+    assert captured == ["multiturn", "multiturn", "multiturn"]
+    assert "+x = 3" in patch_text
+    assert session.last_submission == {
+        "summary": "Attempt three",
+        "tests_ran": ["default"],
+    }
+
+
 def test_generate_patch_retries_from_clean_repo_snapshot(tmp_path, monkeypatch):
     _init_repo(tmp_path)
     session = LLMSession(model_id="test", backend_name="openai", loop_budget=4)

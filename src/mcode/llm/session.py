@@ -172,6 +172,7 @@ class LLMSession:
     seed: int | None = None
     sampling_strategy: str = "none"
     sampling_budget: int | None = None
+    selection_attempts: int = 1
     _m: object | None = field(default=None, repr=False)
     _last_result: SolveResult | None = field(default=None, repr=False)
 
@@ -347,7 +348,12 @@ class LLMSession:
         )
 
         attempts: list[SolveResult] = []
-        outer_attempts = max(1, n_samples) if self.sampling_strategy == "none" else 1
+        if self.selection_attempts > 1:
+            outer_attempts = self.selection_attempts
+            select_best_attempt = True
+        else:
+            outer_attempts = max(1, n_samples) if self.sampling_strategy == "none" else 1
+            select_best_attempt = False
         sampling_budget = self.sampling_budget or max(1, n_samples)
         enable_hooks = hooks_available()
         with repo_snapshot(repo_root, enabled=outer_attempts > 1) as snapshot_dir:
@@ -374,20 +380,35 @@ class LLMSession:
                         )
                     )
                 attempts.append(result)
-                if result.patch and result.verification_succeeded:
+                if not select_best_attempt and result.patch and result.verification_succeeded:
                     self._last_result = result
                     return result
 
+            if select_best_attempt and snapshot_dir is not None:
+                restore_repo_snapshot(repo_root, snapshot_dir)
+
         if attempts:
-            for result in attempts:
-                if result.patch:
-                    self._last_result = result
-                    return result
-            self._last_result = attempts[-1]
-            return attempts[-1]
+            selected = _select_solve_result(attempts)
+            self._last_result = selected
+            return selected
 
         self._last_result = SolveResult()
         return self._last_result
+
+
+def _select_solve_result(attempts: list[SolveResult]) -> SolveResult:
+    return max(enumerate(attempts), key=lambda item: (_solve_result_score(item[1]), -item[0]))[1]
+
+
+def _solve_result_score(result: SolveResult) -> tuple[int, int, int, int, int, int]:
+    return (
+        1 if result.patch else 0,
+        1 if result.verification_succeeded else 0,
+        1 if result.terminal_reason == "submitted" else 0,
+        1 if result.submission is not None else 0,
+        0 if result.zero_edit else 1,
+        0 if result.zero_verification else 1,
+    )
 
 
 def _ensure_powerup_registered() -> None:

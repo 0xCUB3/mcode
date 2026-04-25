@@ -45,6 +45,7 @@ def test_cli_bench_swebench_help() -> None:
     assert "n_samples" in option_names
     assert "sampling" in option_names
     assert "sampling_budget" in option_names
+    assert "selection_attempts" in option_names
     assert "on" in option_names
     assert "fetch_db" in option_names
 
@@ -59,6 +60,7 @@ def test_cli_bench_swebench_live_help() -> None:
     assert "n_samples" in option_names
     assert "sampling" in option_names
     assert "sampling_budget" in option_names
+    assert "selection_attempts" in option_names
     assert "on" in option_names
     assert "fetch_db" in option_names
 

@@ -53,6 +53,7 @@ class BenchConfig:
     n_samples: int = 1
     sampling_strategy: str = "none"
     sampling_budget: int | None = None
+    selection_attempts: int = 1
 
 
 @dataclass(frozen=True)
@@ -88,6 +89,7 @@ class BenchmarkRunner:
             seed=self.config.seed,
             sampling_strategy=self.config.sampling_strategy,
             sampling_budget=self.config.sampling_budget,
+            selection_attempts=self.config.selection_attempts,
         )
 
     def run_benchmark(
