@@ -20,6 +20,7 @@ class SolveTraceCollector:
     turns_to_first_edit: int | None = None
     turns_to_first_verification: int | None = None
     verification_succeeded: bool = False
+    edit_applied: bool = False
     prompt_snapshot: str | None = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -60,6 +61,8 @@ class SolveTraceCollector:
         turn = max(1, self.current_turn or 1)
         if tool_name == "edit" and self.turns_to_first_edit is None:
             self.turns_to_first_edit = turn
+        if tool_name == "edit" and success and _edit_was_applied(output):
+            self.edit_applied = True
         if tool_name == "run_tests" and self.turns_to_first_verification is None:
             self.turns_to_first_verification = turn
         if tool_name == "run_tests" and success and _run_tests_succeeded(str(output)):
@@ -196,8 +199,7 @@ async def run_react_loop(
                     Message(
                         role="user",
                         content=(
-                            "You changed files but have not verified the patch. "
-                            "Call run_tests with test_cmd=\"default\" now, then fix failures "
+                            "Call run_tests with a focused test command now, then fix failures "
                             "before final_answer."
                         ),
                     )
@@ -271,8 +273,8 @@ async def run_react_loop(
                         Message(
                             role="user",
                             content=(
-                                "Do not call final_answer yet. Run run_tests with "
-                                "test_cmd=\"default\" or fix the failing tests first. "
+                                "Do not call final_answer yet. Run run_tests with a focused "
+                                "project test command or fix the failing tests first. "
                                 + " ".join(blocked_finalizers)
                             ),
                         )
@@ -525,5 +527,6 @@ def _should_autofill_finalizer(
     return (
         tool_name == "final_answer"
         and missing_args == ["answer"]
+        and collector.edit_applied
         and collector.verification_succeeded
     )

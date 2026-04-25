@@ -14,6 +14,7 @@ from mcode.agent.tooling import (
     read_file,
     search_code,
     str_replace_edit,
+    suggest_verification_commands,
 )
 from mcode.agent.verification import (
     VerificationPolicy,
@@ -67,10 +68,17 @@ def build_coding_agent(
 
     budget = max(1, session.loop_budget)
     timeout_s = int(os.environ.get("MCODE_REACT_TIMEOUT", str(budget * 30)))
+    verification_command_suggestions = []
+    try:
+        verification_command_suggestions = suggest_verification_commands(repo_root)
+    except Exception as e:
+        print(f"  [verification_suggestions] failed: {e}", flush=True)
+
     verification_policy = build_verification_policy(
         test_cmds=test_cmds,
         test_fn=test_fn,
         command_fn=command_fn,
+        suggested_test_cmds=verification_command_suggestions,
     )
 
     repo_map_text = ""

@@ -59,6 +59,37 @@ def test_build_coding_agent_assembles_prompt_and_tools(tmp_path):
 
 
 
+def test_build_coding_agent_includes_command_fn_suggestions(tmp_path):
+    session = LLMSession(model_id="test", backend_name="openai", loop_budget=9)
+    session._m = SimpleNamespace(backend=object())
+
+    with (
+        patch(
+            "mcode.agent.coding_agent.suggest_verification_commands",
+            return_value=["python -m pytest"],
+        ),
+        patch("mcode.agent.coding_agent.build_repo_map", return_value=""),
+        patch("mcode.agent.coding_agent.build_candidate_files", return_value=""),
+        patch(
+            "mcode.agent.coding_agent.collect_workspace_context",
+            return_value=SimpleNamespace(text=""),
+        ),
+        patch("mcode.agent.coding_agent.make_agent_tools", return_value=[]),
+    ):
+        assembly = build_coding_agent(
+            session=session,
+            repo="test/repo",
+            problem_statement="Fix the bug",
+            repo_root=str(tmp_path),
+            command_fn=lambda command: command,
+        )
+
+    assert "There is no default verifier" in assembly.goal
+    assert "python -m pytest" in assembly.goal
+    assert 'test_cmd="default"' in assembly.goal
+    assert "do not use" in assembly.goal
+
+
 
 def test_build_verification_policy_normalizes_commands():
     policy = build_verification_policy(

@@ -439,8 +439,53 @@ def list_dir(path: str = ".", *, repo_root: str) -> str:
     return f"{path}/\n" + "\n".join(entries) if entries else f"{path}/ (empty)"
 
 
+_TOKEN_STOPWORDS = {
+    "and",
+    "are",
+    "bug",
+    "but",
+    "can",
+    "error",
+    "fails",
+    "fix",
+    "for",
+    "from",
+    "issue",
+    "not",
+    "the",
+    "this",
+    "when",
+    "with",
+}
+
+
 def _query_tokens(query: str) -> list[str]:
-    return [token for token in re.findall(r"[A-Za-z0-9_]+", query.lower()) if len(token) >= 3]
+    seen: set[str] = set()
+    tokens: list[str] = []
+    for token in re.findall(r"[A-Za-z0-9_]+", query.lower()):
+        if len(token) < 3 or token in _TOKEN_STOPWORDS or token in seen:
+            continue
+        seen.add(token)
+        tokens.append(token)
+    return tokens
+
+
+def _query_symbol_tokens(query: str) -> list[str]:
+    seen: set[str] = set()
+    symbols: list[str] = []
+    for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", query):
+        if len(token) < 3:
+            continue
+        if token.lower() in _TOKEN_STOPWORDS:
+            continue
+        if not ("_" in token or any(ch.isupper() for ch in token[1:])):
+            continue
+        lowered = token.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        symbols.append(lowered)
+    return symbols
 
 
 def _candidate_files(repo_root: Path) -> list[Path]:
@@ -456,17 +501,135 @@ def _candidate_files(repo_root: Path) -> list[Path]:
     return candidates
 
 
-def _rank_candidate_paths(repo_root: Path, query: str) -> list[str]:
+def _extract_issue_paths(query: str) -> set[str]:
+    paths: set[str] = set()
+    suffixes = "|".join(re.escape(suffix.lstrip(".")) for suffix in sorted(_CODE_SUFFIXES))
+    pattern = re.compile(rf"[\w./-]+\.(?:{suffixes})")
+    for match in pattern.finditer(query):
+        raw = match.group(0).strip("`'\"(),:;")
+        if raw:
+            paths.add(raw.lstrip("./"))
+    return paths
+
+
+def _extract_issue_modules(query: str) -> set[str]:
+    modules: set[str] = set()
+    patterns = (
+        r"\bfrom\s+([A-Za-z_][\w.]*)\s+import\b",
+        r"\bimport\s+([A-Za-z_][\w.]*)",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, query):
+            module = match.group(1).strip(".")
+            if module and len(module) >= 3:
+                modules.add(module.lower().replace(".", "/"))
+    return modules
+
+
+def _read_candidate_text(path: Path) -> str:
+    try:
+        if path.stat().st_size > 300_000:
+            return ""
+        return path.read_text(errors="replace")
+    except OSError:
+        return ""
+
+
+def _candidate_snippets(text: str, tokens: list[str], *, max_snippets: int = 2) -> list[str]:
+    snippets: list[str] = []
+    if not tokens:
+        return snippets
+    lowered_tokens = [token.lower() for token in tokens]
+    for lineno, line in enumerate(text.splitlines(), 1):
+        line_lower = line.lower()
+        if not any(token in line_lower for token in lowered_tokens):
+            continue
+        snippet = line.strip()
+        if not snippet:
+            continue
+        if len(snippet) > 120:
+            snippet = snippet[:117] + "..."
+        snippets.append(f"line {lineno}: {snippet}")
+        if len(snippets) >= max_snippets:
+            break
+    return snippets
+
+
+def _score_candidate(
+    root: Path,
+    path: Path,
+    *,
+    tokens: list[str],
+    symbol_tokens: list[str],
+    issue_paths: set[str],
+    modules: set[str],
+) -> tuple[int, list[str], list[str]]:
+    rel = path.relative_to(root).as_posix()
+    rel_lower = rel.lower()
+    name_lower = path.name.lower()
+    score = 0
+    reasons: list[str] = []
+
+    path_score = sum(rel_lower.count(token) for token in tokens)
+    if path_score:
+        score += path_score * 6
+        reasons.append("path match")
+
+    if rel in issue_paths or any(issue_path.endswith(rel) for issue_path in issue_paths):
+        score += 80
+        reasons.append("issue path reference")
+    elif any(Path(issue_path).name.lower() == name_lower for issue_path in issue_paths):
+        score += 45
+        reasons.append("issue file reference")
+
+    for module in modules:
+        if module in rel_lower or module.split("/")[-1] in name_lower:
+            score += 18
+            reasons.append("module reference")
+            break
+
+    text = _read_candidate_text(path)
+    snippets: list[str] = []
+    if text:
+        text_lower = text.lower()
+        content_hits = sum(min(text_lower.count(token), 3) for token in tokens)
+        if content_hits:
+            score += content_hits
+            reasons.append("issue text match")
+        symbol_hits = 0
+        for symbol in symbol_tokens:
+            symbol_hits += len(re.findall(rf"\b{re.escape(symbol)}\b", text_lower))
+        if symbol_hits:
+            score += min(symbol_hits, 5) * 8
+            reasons.append("symbol match")
+        snippets = _candidate_snippets(text, symbol_tokens or tokens)
+
+    return score, reasons, snippets
+
+
+def _rank_candidate_entries(root: Path, query: str) -> list[tuple[int, str, list[str], list[str]]]:
     tokens = _query_tokens(query)
-    ranked: list[tuple[int, str]] = []
-    for path in _candidate_files(repo_root):
-        rel = path.relative_to(repo_root).as_posix()
-        rel_lower = rel.lower()
-        score = sum(rel_lower.count(token) for token in tokens)
+    symbol_tokens = _query_symbol_tokens(query)
+    issue_paths = _extract_issue_paths(query)
+    modules = _extract_issue_modules(query)
+    ranked: list[tuple[int, str, list[str], list[str]]] = []
+    for path in _candidate_files(root):
+        score, reasons, snippets = _score_candidate(
+            root,
+            path,
+            tokens=tokens,
+            symbol_tokens=symbol_tokens,
+            issue_paths=issue_paths,
+            modules=modules,
+        )
         if score:
-            ranked.append((score, rel))
+            ranked.append((score, path.relative_to(root).as_posix(), reasons, snippets))
     ranked.sort(key=lambda item: (-item[0], item[1]))
-    return [rel for _, rel in ranked]
+    return ranked
+
+
+def _rank_candidate_paths(repo_root: Path, query: str) -> list[str]:
+    return [rel for _, rel, _, _ in _rank_candidate_entries(repo_root, query)]
 
 
 def build_candidate_files(repo_root: str, query: str, *, top_n: int = 6) -> str:
@@ -474,14 +637,59 @@ def build_candidate_files(repo_root: str, query: str, *, top_n: int = 6) -> str:
     if not root.exists():
         return ""
 
-    ranked = _rank_candidate_paths(root, query)
+    ranked = _rank_candidate_entries(root, query)
     if not ranked:
         return ""
 
     lines = ["Likely files to inspect first:"]
-    for rel in ranked[: max(1, top_n)]:
-        lines.append(f"- {rel}")
+    for _, rel, reasons, snippets in ranked[: max(1, top_n)]:
+        reason_text = f" ({', '.join(dict.fromkeys(reasons))})" if reasons else ""
+        lines.append(f"- {rel}{reason_text}")
+        for snippet in snippets[:2]:
+            lines.append(f"  - {snippet}")
     return "\n".join(lines)
+
+
+def suggest_verification_commands(repo_root: str, *, max_suggestions: int = 4) -> list[str]:
+    root = Path(repo_root)
+    if not root.exists():
+        return []
+
+    suggestions: list[str] = []
+
+    tox_ini = root / "tox.ini"
+    if tox_ini.is_file():
+        text = _read_candidate_text(tox_ini).lower()
+        if "[testenv:py]" in text or re.search(r"envlist\s*=.*\bpy\b", text):
+            suggestions.append("tox -e py")
+        else:
+            suggestions.append("tox")
+
+    manage_py = root / "manage.py"
+    if manage_py.is_file():
+        text = _read_candidate_text(manage_py).lower()
+        if "django" in text or "django_settings_module" in text:
+            suggestions.append("python manage.py test")
+
+    runtests_py = root / "runtests.py"
+    if runtests_py.is_file():
+        suggestions.append("python runtests.py")
+
+    pytest_config = any(
+        (root / name).is_file()
+        for name in ("pytest.ini", "conftest.py", "setup.cfg", "pyproject.toml")
+    )
+    has_test_dir = any((root / name).is_dir() for name in ("test", "tests"))
+    if pytest_config or has_test_dir:
+        suggestions.append("python -m pytest")
+
+    deduped: list[str] = []
+    for suggestion in suggestions:
+        if suggestion not in deduped:
+            deduped.append(suggestion)
+        if len(deduped) >= max_suggestions:
+            break
+    return deduped
 
 
 def build_repo_map(repo_root: str, query: str, *, max_tokens: int = 4096) -> str:
