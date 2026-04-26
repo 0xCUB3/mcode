@@ -569,6 +569,87 @@ def test_run_react_loop_blocks_final_answer_until_verification_succeeds(monkeypa
     assert executed == ["run_tests", "final_answer"]
 
 
+def test_run_react_loop_blocks_final_answer_until_code_is_edited(monkeypatch):
+    finalizer_tool = MelleaTool.from_callable(lambda answer: answer, name="final_answer")
+    run_tests_tool = MelleaTool.from_callable(lambda test_cmd="default": test_cmd, name="run_tests")
+    outputs = iter(
+        [
+            (
+                SimpleNamespace(
+                    tool_calls={
+                        "run_tests": ModelToolCall(
+                            name="run_tests",
+                            func=run_tests_tool,
+                            args={"test_cmd": "default"},
+                        )
+                    }
+                ),
+                ChatContext(),
+            ),
+            (
+                SimpleNamespace(
+                    tool_calls={
+                        "final_answer": ModelToolCall(
+                            name="final_answer",
+                            func=finalizer_tool,
+                            args={"answer": "done"},
+                        )
+                    }
+                ),
+                ChatContext(),
+            ),
+        ]
+    )
+    executed: list[str] = []
+    seen_user_messages: list[list[str]] = []
+
+    async def fake_aact(*args, **kwargs):
+        del args
+        context = kwargs["context"]
+        seen_user_messages.append(
+            [
+                str(message.content)
+                for message in context.as_list()
+                if getattr(message, "role", None) == "user"
+            ]
+        )
+        return next(outputs)
+
+    async def fake_acall_tools(result, backend):
+        del backend
+        name = next(iter(result.tool_calls))
+        executed.append(name)
+        return [SimpleNamespace(name=name, content="$ pytest\nPASSED\nok")]
+
+    session = SimpleNamespace(ctx=ChatContext(), backend=object())
+    monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
+    monkeypatch.setattr("mcode.llm.react_driver.acall_tools", fake_acall_tools)
+
+    submission, terminal_reason = asyncio.run(
+        run_react_loop(
+            session,
+            goal="Fix it",
+            tools=[SimpleNamespace(name="run_tests"), SimpleNamespace(name="edit")],
+            model_options={},
+            loop_budget=2,
+            timeout_s=5,
+            submission_format=None,
+            collector=SolveTraceCollector(),
+            turn_requirements=lambda turn, budget, state: [],
+            submission_requirements=[],
+            strategy_for_requirements=lambda requirements: None,
+            hooks_enabled=False,
+        )
+    )
+
+    assert submission is None
+    assert terminal_reason == "budget_exhausted"
+    assert executed == ["run_tests"]
+    assert any(
+        "passed before any code edit" in message for message in seen_user_messages[-1]
+    )
+
+
 def test_run_react_loop_reminds_to_verify_after_edit(monkeypatch):
     seen_user_messages: list[list[str]] = []
     edit_tool = MelleaTool.from_callable(
