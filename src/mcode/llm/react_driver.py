@@ -107,7 +107,12 @@ class SolveTraceCollector:
             self.turns_to_first_edit = turn
         if tool_name == "run_tests" and self.turns_to_first_verification is None:
             self.turns_to_first_verification = turn
-        if tool_name == "run_tests" and success and _run_tests_succeeded(str(output)):
+        if (
+            tool_name == "run_tests"
+            and success
+            and _run_tests_succeeded(str(output))
+            and _run_tests_counts_as_verification(tool_args)
+        ):
             self.verification_succeeded = True
         self._note_tool_diagnostics(
             tool_name=tool_name,
@@ -657,14 +662,46 @@ def _edit_result_payload(args: Mapping[str, object], output_text: str) -> dict[s
 
 def _run_tests_payload(args: Mapping[str, object], output_text: str) -> dict[str, object]:
     command_match = re.search(r"^\$ (?P<command>.+)$", output_text, flags=re.MULTILINE)
+    counts_as_verification = _run_tests_counts_as_verification(args)
     return {
         "test_cmd": args.get("test_cmd"),
         "timeout_s": args.get("timeout_s"),
         "max_output_chars": args.get("max_output_chars"),
         "expanded_command": command_match.group("command") if command_match else None,
+        "counts_as_verification": counts_as_verification,
         "status": _parse_status(output_text),
         "output": _text_digest(output_text, max_preview=1000),
     }
+
+
+def _run_tests_counts_as_verification(tool_args: object | None) -> bool:
+    args = _args_mapping(tool_args)
+    test_cmd = args.get("test_cmd")
+    if test_cmd in (None, "", "default"):
+        return True
+    if not isinstance(test_cmd, str):
+        return False
+    command = re.sub(r"/testbed\b", "", test_cmd.lower())
+    marker_patterns = (
+        r"\bpytest\b",
+        r"\bunittest\b",
+        r"\btox\b",
+        r"\bnose\b",
+        r"\bassert\b",
+        r"\bmanage\.py\s+test\b",
+        r"\bgo\s+test\b",
+        r"\bcargo\s+test\b",
+        r"\bnpm\s+test\b",
+        r"\byarn\s+test\b",
+        r"\bpnpm\s+test\b",
+        r"\bmvn\s+test\b",
+        r"\bgradle\s+test\b",
+        r"\brspec\b",
+        r"\bswift\s+test\b",
+        r"(?:^|[\s/&|;])tests?(?:[\s/:]|$)",
+        r"(?:^|[\s/&|;])test_[\w.-]+",
+    )
+    return any(re.search(pattern, command) for pattern in marker_patterns)
 
 
 def _run_tests_succeeded(output: str) -> bool:

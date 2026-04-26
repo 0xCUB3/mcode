@@ -75,6 +75,36 @@ def test_solve_trace_plugin_collects_generation_tool_and_validation_data():
     assert collector.validation_failed_count == 1
 
 
+def test_run_tests_success_requires_test_like_command_for_verification():
+    collector = SolveTraceCollector(diagnostic_enabled=True)
+    collector.note_turn(1)
+
+    collector.note_tool(
+        tool_name="run_tests",
+        output="$ cd /testbed && find . -type f | head\nPASSED\n",
+        success=True,
+        tool_args={"test_cmd": "cd /testbed && find . -type f | head"},
+    )
+
+    assert collector.turns_to_first_verification == 1
+    assert collector.verification_succeeded is False
+    event = collector.diagnostic_events[-1]
+    assert event["event_type"] == "run_tests"
+    assert event["payload"]["counts_as_verification"] is False
+
+    collector.note_tool(
+        tool_name="run_tests",
+        output="$ cd /testbed && python -m pytest tests/test_foo.py\nPASSED\n",
+        success=True,
+        tool_args={"test_cmd": "cd /testbed && python -m pytest tests/test_foo.py"},
+    )
+
+    assert collector.verification_succeeded is True
+    event = collector.diagnostic_events[-1]
+    assert event["event_type"] == "run_tests"
+    assert event["payload"]["counts_as_verification"] is True
+
+
 def test_solve_trace_plugin_records_sanitized_diagnostic_events():
     collector = SolveTraceCollector(diagnostic_enabled=True)
     plugin = SolveTracePlugin(collector)
