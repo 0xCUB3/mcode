@@ -259,10 +259,8 @@ async def run_react_loop(
         loop_history: list[tuple[str, tuple[tuple[str, str], ...]]] = []
         last_loop_signal: str | None = None
         has_run_tests_tool = any(getattr(tool, "name", "") == "run_tests" for tool in tools)
-        has_edit_tool = any(getattr(tool, "name", "") == "edit" for tool in tools)
         edit_since_verification = False
         reminded_after_edit = False
-        reminded_after_pre_edit_verification = False
         for turn in range(1, loop_budget + 1):
             collector.note_turn(turn)
             FancyLogger.get_logger().info(f"## ReACT TURN NUMBER {turn}")
@@ -338,17 +336,15 @@ async def run_react_loop(
                     tool_name = getattr(tool_call, "name", "") or str(key)
                     if not tool_name:
                         continue
-                    if tool_name == MELLEA_FINALIZER_TOOL and has_run_tests_tool:
-                        if has_edit_tool and collector.turns_to_first_edit is None:
-                            blocked_finalizers.append(
-                                "final_answer requires a code edit before verification"
-                            )
-                            continue
-                        if not collector.verification_succeeded:
-                            blocked_finalizers.append(
-                                "final_answer requires successful verification first"
-                            )
-                            continue
+                    if (
+                        tool_name == MELLEA_FINALIZER_TOOL
+                        and has_run_tests_tool
+                        and not collector.verification_succeeded
+                    ):
+                        blocked_finalizers.append(
+                            "final_answer requires successful verification first"
+                        )
+                        continue
                     missing_args = _missing_required_args(tool_call)
                     if _should_autofill_finalizer(
                         tool_name,
@@ -442,23 +438,6 @@ async def run_react_loop(
                         edit_since_verification = True
                         reminded_after_edit = False
                     elif tool_result.name == "run_tests":
-                        if (
-                            has_edit_tool
-                            and collector.verification_succeeded
-                            and collector.turns_to_first_edit is None
-                            and not reminded_after_pre_edit_verification
-                        ):
-                            context = context.add(
-                                Message(
-                                    role="user",
-                                    content=(
-                                        "That command passed before any code edit. "
-                                        "Do not call final_answer yet. Edit the code, "
-                                        "then run tests again after the edit."
-                                    ),
-                                )
-                            )
-                            reminded_after_pre_edit_verification = True
                         edit_since_verification = False
                         reminded_after_edit = False
             finalizer_response = next(
