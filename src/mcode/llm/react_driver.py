@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
-from collections.abc import Callable
-from dataclasses import dataclass
+import re
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 from mellea.plugins.base import Plugin
@@ -17,6 +19,7 @@ from mcode.mellea_compat import acall_tools
 @dataclass
 class SolveTraceCollector:
     current_turn: int = 0
+    diagnostic_enabled: bool = False
     turns_to_first_edit: int | None = None
     turns_to_first_verification: int | None = None
     verification_succeeded: bool = False
@@ -29,9 +32,29 @@ class SolveTraceCollector:
     generation_latency_ms: int = 0
     validation_passed_count: int | None = None
     validation_failed_count: int | None = None
+    diagnostic_events: list[dict[str, object]] = field(default_factory=list)
+
+    def note_event(
+        self,
+        event_type: str,
+        payload: Mapping[str, object] | None = None,
+        *,
+        turn: int | None = None,
+    ) -> None:
+        if not self.diagnostic_enabled:
+            return
+        event_turn = self.current_turn if turn is None else turn
+        self.diagnostic_events.append(
+            {
+                "turn": event_turn if event_turn > 0 else None,
+                "event_type": event_type,
+                "payload": _sanitize_diagnostic_payload(payload or {}),
+            }
+        )
 
     def note_turn(self, turn: int) -> None:
         self.current_turn = turn
+        self.note_event("turn_start", {"turn": turn}, turn=turn)
 
     def note_generation(
         self,
@@ -41,6 +64,7 @@ class SolveTraceCollector:
         provider: object | None,
         response_model: object | None,
         latency_ms: int,
+        tool_calls: object | None = None,
     ) -> None:
         self.prompt_snapshot = _serialize_prompt(prompt)
         totals = _normalize_usage(usage)
@@ -55,8 +79,29 @@ class SolveTraceCollector:
         if normalized_model is not None:
             self.response_model = normalized_model
         self.generation_latency_ms += latency_ms
+        payload: dict[str, object] = {
+            "provider": normalized_provider,
+            "response_model": normalized_model,
+            "latency_ms": latency_ms,
+            "tool_call_count": _tool_call_count(tool_calls),
+        }
+        if totals is not None:
+            payload["usage"] = totals
+        sanitized_calls = _sanitize_tool_calls(tool_calls)
+        if sanitized_calls:
+            payload["tool_calls"] = sanitized_calls
+        self.note_event("generation", payload)
 
-    def note_tool(self, *, tool_name: str, output: object, success: bool) -> None:
+    def note_tool(
+        self,
+        *,
+        tool_name: str,
+        output: object,
+        success: bool,
+        tool_args: object | None = None,
+        execution_time_ms: int | None = None,
+        error: object | None = None,
+    ) -> None:
         turn = max(1, self.current_turn or 1)
         if tool_name == "edit" and self.turns_to_first_edit is None:
             self.turns_to_first_edit = turn
@@ -64,10 +109,55 @@ class SolveTraceCollector:
             self.turns_to_first_verification = turn
         if tool_name == "run_tests" and success and _run_tests_succeeded(str(output)):
             self.verification_succeeded = True
+        self._note_tool_diagnostics(
+            tool_name=tool_name,
+            output=output,
+            success=success,
+            tool_args=tool_args,
+            execution_time_ms=execution_time_ms,
+            error=error,
+        )
+
+    def _note_tool_diagnostics(
+        self,
+        *,
+        tool_name: str,
+        output: object,
+        success: bool,
+        tool_args: object | None,
+        execution_time_ms: int | None,
+        error: object | None,
+    ) -> None:
+        if not self.diagnostic_enabled:
+            return
+        output_text = _safe_text(output)
+        payload: dict[str, object] = {
+            "tool_name": tool_name,
+            "success": success,
+            "status": _parse_status(output_text),
+            "output": _text_digest(output_text, max_preview=1000),
+        }
+        if execution_time_ms is not None:
+            payload["execution_time_ms"] = execution_time_ms
+        if error is not None:
+            payload["error"] = _text_digest(_safe_text(error), max_preview=500)
+        self.note_event("tool_result", payload)
+
+        args = _args_mapping(tool_args)
+        if target := _read_search_target(tool_name, args):
+            self.note_event("read_search_target", target)
+        if tool_name == "edit":
+            self.note_event("edit_result", _edit_result_payload(args, output_text))
+        if tool_name == "run_tests":
+            self.note_event("run_tests", _run_tests_payload(args, output_text))
 
     def note_validation(self, *, passed_count: int, failed_count: int) -> None:
         self.validation_passed_count = passed_count
         self.validation_failed_count = failed_count
+        self.note_event(
+            "validation",
+            {"passed_count": passed_count, "failed_count": failed_count},
+        )
 
 
 class SolveTracePlugin(Plugin, name="mcode-solve-trace", priority=20):
@@ -87,6 +177,7 @@ class SolveTracePlugin(Plugin, name="mcode-solve-trace", priority=20):
             provider=provider,
             response_model=response_model,
             latency_ms=int(getattr(payload, "latency_ms", 0) or 0),
+            tool_calls=getattr(model_output, "tool_calls", None),
         )
 
     @hook("tool_post_invoke", mode=PluginMode.SEQUENTIAL)
@@ -98,6 +189,9 @@ class SolveTracePlugin(Plugin, name="mcode-solve-trace", priority=20):
             tool_name=tool_name,
             output=getattr(payload, "tool_output", None),
             success=bool(getattr(payload, "success", False)),
+            tool_args=getattr(tool_call, "args", None),
+            execution_time_ms=int(getattr(payload, "execution_time_ms", 0) or 0),
+            error=getattr(payload, "error", None),
         )
 
     @hook("validation_post_check", mode=PluginMode.SEQUENTIAL)
@@ -225,6 +319,7 @@ async def run_react_loop(
                     provider=getattr(result, "provider", None),
                     response_model=getattr(result, "model", None),
                     latency_ms=0,
+                    tool_calls=getattr(result, "tool_calls", None),
                 )
 
             tool_responses = []
@@ -253,6 +348,10 @@ async def run_react_loop(
                     ):
                         tool_call.args = {"answer": "Verified patch ready."}
                         missing_args = []
+                        collector.note_event(
+                            "final_answer",
+                            {"action": "autofilled", "reason": "verified_missing_answer"},
+                        )
                     if missing_args and not _allow_default_missing_args(
                         tool_name,
                         missing_args,
@@ -266,6 +365,19 @@ async def run_react_loop(
                         loop_history.append(
                             (tool_name, _freeze_tool_args(getattr(tool_call, "args", None)))
                         )
+                collector.note_event(
+                    "tool_call_filter",
+                    {
+                        "total_call_count": len(result.tool_calls),
+                        "valid_call_count": len(valid_tool_calls),
+                        "invalid_call_count": len(invalid_calls),
+                        "blocked_finalizer_count": len(blocked_finalizers),
+                        "valid_tool_names": [
+                            getattr(call, "name", str(key))
+                            for key, call in valid_tool_calls.items()
+                        ],
+                    },
+                )
                 if blocked_finalizers:
                     context = context.add(
                         Message(
@@ -276,6 +388,10 @@ async def run_react_loop(
                                 + " ".join(blocked_finalizers)
                             ),
                         )
+                    )
+                    collector.note_event(
+                        "final_answer",
+                        {"action": "blocked", "reasons": blocked_finalizers},
                     )
                 if invalid_calls:
                     context = context.add(
@@ -307,6 +423,11 @@ async def run_react_loop(
                             tool_name=tool_result.name,
                             output=tool_output,
                             success=not isinstance(tool_output, Exception),
+                            tool_args=getattr(
+                                tool_result,
+                                "args",
+                                getattr(tool_result, "arguments", None),
+                            ),
                         )
                     if tool_result.name == "edit" and _edit_was_applied(tool_output):
                         edit_since_verification = True
@@ -329,6 +450,13 @@ async def run_react_loop(
                     getattr(finalizer_response, "content", None),
                 )
                 if finalizer_success_guard_enabled and isinstance(finalizer_output, Exception):
+                    collector.note_event(
+                        "final_answer",
+                        {
+                            "action": "skipped_failed_finalizer",
+                            "error": _safe_text(finalizer_output),
+                        },
+                    )
                     continue
                 if submission_format is None:
                     submission = str(finalizer_response.content)
@@ -353,7 +481,9 @@ async def run_react_loop(
                             provider=getattr(submission, "provider", None),
                             response_model=getattr(submission, "model", None),
                             latency_ms=0,
+                            tool_calls=getattr(submission, "tool_calls", None),
                         )
+                collector.note_event("final_answer", {"action": "accepted"})
                 session.ctx = context
                 if submission_format is None:
                     return submission, "submitted"
@@ -396,6 +526,145 @@ def _compress_old_tool_outputs(context):
             continue
         new_ctx = new_ctx.add(message)
     return new_ctx
+
+
+_REDACTED_KEYS = {
+    "api_key",
+    "authorization",
+    "new_str",
+    "old_str",
+    "password",
+    "secret",
+    "token",
+}
+
+
+def _safe_text(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _text_digest(text: str, *, max_preview: int) -> dict[str, object]:
+    return {
+        "chars": len(text),
+        "sha256": hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest(),
+        "preview": text[:max_preview],
+    }
+
+
+def _sanitize_diagnostic_payload(value: object, *, max_preview: int = 500) -> object:
+    if isinstance(value, Mapping):
+        out: dict[str, object] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            lowered = key_text.lower()
+            if lowered in _REDACTED_KEYS or any(part in lowered for part in _REDACTED_KEYS):
+                out[key_text] = "[redacted]"
+                continue
+            out[key_text] = _sanitize_diagnostic_payload(item, max_preview=max_preview)
+        return out
+    if isinstance(value, list | tuple | set):
+        return [_sanitize_diagnostic_payload(item, max_preview=max_preview) for item in value]
+    if isinstance(value, bool | int | float) or value is None:
+        return value
+    text = _safe_text(value)
+    if len(text) <= max_preview:
+        return text
+    return {
+        "chars": len(text),
+        "sha256": hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest(),
+        "preview": text[:max_preview],
+    }
+
+
+def _args_mapping(value: object | None) -> Mapping[str, object]:
+    if isinstance(value, Mapping):
+        return value
+    return {}
+
+
+def _tool_call_count(tool_calls: object | None) -> int:
+    if isinstance(tool_calls, Mapping):
+        return len(tool_calls)
+    if isinstance(tool_calls, list | tuple):
+        return len(tool_calls)
+    return 0
+
+
+def _sanitize_tool_calls(tool_calls: object | None) -> list[dict[str, object]]:
+    items: list[object]
+    if isinstance(tool_calls, Mapping):
+        items = list(tool_calls.values())
+    elif isinstance(tool_calls, list | tuple):
+        items = list(tool_calls)
+    else:
+        return []
+    out: list[dict[str, object]] = []
+    for call in items:
+        name = _normalize_optional_str(getattr(call, "name", None))
+        args = _args_mapping(getattr(call, "args", None))
+        out.append(
+            {
+                "name": name or "unknown",
+                "args": _sanitize_diagnostic_payload(args),
+            }
+        )
+    return out
+
+
+def _read_search_target(tool_name: str, args: Mapping[str, object]) -> dict[str, object] | None:
+    if tool_name == "search_code":
+        return {"tool_name": tool_name, "query": args.get("query")}
+    if tool_name == "read_file":
+        return {
+            "tool_name": tool_name,
+            "path": args.get("path"),
+            "start_line": args.get("start_line"),
+            "end_line": args.get("end_line"),
+        }
+    if tool_name == "find_file":
+        return {"tool_name": tool_name, "pattern": args.get("pattern")}
+    if tool_name == "list_dir":
+        return {"tool_name": tool_name, "path": args.get("path")}
+    return None
+
+
+def _parse_status(text: str) -> str | None:
+    for status in ("APPLIED", "REJECTED", "PASSED", "FAILED", "TIMEOUT", "BLOCKED", "ERROR"):
+        if status in text:
+            return status
+    return None
+
+
+def _line_count(value: object | None) -> int | None:
+    if not isinstance(value, str):
+        return None
+    if value == "":
+        return 0
+    return value.count("\n") + (0 if value.endswith("\n") else 1)
+
+
+def _edit_result_payload(args: Mapping[str, object], output_text: str) -> dict[str, object]:
+    return {
+        "path": args.get("path"),
+        "status": _parse_status(output_text),
+        "old_line_count": _line_count(args.get("old_str")),
+        "new_line_count": _line_count(args.get("new_str")),
+        "output": _text_digest(output_text, max_preview=500),
+    }
+
+
+def _run_tests_payload(args: Mapping[str, object], output_text: str) -> dict[str, object]:
+    command_match = re.search(r"^\$ (?P<command>.+)$", output_text, flags=re.MULTILINE)
+    return {
+        "test_cmd": args.get("test_cmd"),
+        "timeout_s": args.get("timeout_s"),
+        "max_output_chars": args.get("max_output_chars"),
+        "expanded_command": command_match.group("command") if command_match else None,
+        "status": _parse_status(output_text),
+        "output": _text_digest(output_text, max_preview=1000),
+    }
 
 
 def _run_tests_succeeded(output: str) -> bool:

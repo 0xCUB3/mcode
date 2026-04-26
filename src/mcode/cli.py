@@ -1512,12 +1512,16 @@ def export_csv(
     report = export_csv_results(
         inputs=inputs, out_dir=out_dir, prefix=prefix, include_logs=include_logs
     )
-    console.print(
+    message = (
         f"exported dbs={report['dbs']} runs={report['runs']} "
-        f"task_results={report['task_results']}\n"
+        f"task_results={report['task_results']} "
+        f"diagnostic_events={report.get('diagnostic_events', 0)}\n"
         f"runs_csv={report['runs_csv']}\n"
         f"task_results_csv={report['task_results_csv']}"
     )
+    if report.get("diagnostic_events_csv"):
+        message += f"\ndiagnostic_events_csv={report['diagnostic_events_csv']}"
+    console.print(message)
 
 
 app.add_typer(bench_app, name="bench")
@@ -1792,6 +1796,7 @@ def _swebench_live_cli_args(
     sampling_budget: int | None,
     selection_attempts: int,
     task_ids: str | None,
+    diagnostic_traces: bool,
 ) -> list[str]:
     argv = [
         "--model",
@@ -1820,6 +1825,8 @@ def _swebench_live_cli_args(
     if selection_attempts != 1:
         _append_option(argv, "--selection-attempts", selection_attempts)
     _append_option(argv, "--task-ids", task_ids)
+    if diagnostic_traces:
+        argv.append("--diagnostic-traces")
     return argv
 
 
@@ -1845,6 +1852,7 @@ def _swebench_lite_cli_args(
     selection_attempts: int,
     task_ids: str | None,
     dataset: str,
+    diagnostic_traces: bool,
 ) -> list[str]:
     argv = [
         "--model",
@@ -1883,6 +1891,8 @@ def _swebench_lite_cli_args(
     _append_option(argv, "--task-ids", task_ids)
     if force_rebuild:
         argv.append("--force-rebuild")
+    if diagnostic_traces:
+        argv.append("--diagnostic-traces")
     return argv
 
 
@@ -2006,6 +2016,13 @@ def bench_swebench_live(
         bool,
         typer.Option("--fetch-db/--no-fetch-db", help="Rsync DB back when --on bluevela"),
     ] = True,
+    diagnostic_traces: Annotated[
+        bool,
+        typer.Option(
+            "--diagnostic-traces/--no-diagnostic-traces",
+            help="Persist compact benchmark diagnostic trace events",
+        ),
+    ] = False,
 ) -> None:
     """Run Microsoft SWE-bench-Live benchmark."""
 
@@ -2035,6 +2052,7 @@ def bench_swebench_live(
             sampling_budget=sampling_budget,
             selection_attempts=selection_attempts,
             task_ids=task_ids,
+            diagnostic_traces=diagnostic_traces,
         )
         _append_option(argv, "--shards", shards)
         _append_option(argv, "--shard-count", shard_count)
@@ -2068,6 +2086,7 @@ def bench_swebench_live(
                 sampling_budget=sampling_budget,
                 selection_attempts=selection_attempts,
                 task_ids=task_ids,
+                diagnostic_traces=diagnostic_traces,
             ),
             shards=shards,
             db=db,
@@ -2101,6 +2120,7 @@ def bench_swebench_live(
         sampling_strategy=sampling,
         sampling_budget=sampling_budget,
         selection_attempts=selection_attempts,
+        diagnostic_traces=diagnostic_traces,
     )
     _run_single_benchmark(
         benchmark="swebench-live",
@@ -2219,6 +2239,13 @@ def bench_swebench_lite(
         bool,
         typer.Option("--fetch-db/--no-fetch-db", help="Rsync DB back when --on bluevela"),
     ] = True,
+    diagnostic_traces: Annotated[
+        bool,
+        typer.Option(
+            "--diagnostic-traces/--no-diagnostic-traces",
+            help="Persist compact benchmark diagnostic trace events",
+        ),
+    ] = False,
 ) -> None:
     shards, shard_count, shard_index = _validate_shard_options(
         shards=shards,
@@ -2251,6 +2278,7 @@ def bench_swebench_lite(
             selection_attempts=selection_attempts,
             task_ids=task_ids,
             dataset=dataset,
+            diagnostic_traces=diagnostic_traces,
         )
         _append_option(argv, "--shards", shards)
         _append_option(argv, "--shard-count", shard_count)
@@ -2289,6 +2317,7 @@ def bench_swebench_lite(
                 selection_attempts=selection_attempts,
                 task_ids=task_ids,
                 dataset=dataset,
+                diagnostic_traces=diagnostic_traces,
             ),
             shards=shards,
             db=db,
@@ -2327,6 +2356,7 @@ def bench_swebench_lite(
         sampling_budget=sampling_budget,
         selection_attempts=selection_attempts,
         swebench_dataset=dataset,
+        diagnostic_traces=diagnostic_traces,
     )
     _run_single_benchmark(
         benchmark="swebench-lite",
@@ -2552,6 +2582,13 @@ def bench_smoke(
         bool,
         typer.Option("--fetch-db/--no-fetch-db", help="Rsync DB back when --on bluevela"),
     ] = True,
+    diagnostic_traces: Annotated[
+        bool,
+        typer.Option(
+            "--diagnostic-traces/--no-diagnostic-traces",
+            help="Persist compact benchmark diagnostic trace events",
+        ),
+    ] = False,
 ) -> None:
     """16-task SWE-bench Verified diagnostic slice (astropy smoke + 6 projects).
 
@@ -2575,6 +2612,8 @@ def bench_smoke(
             "--mem-limit",
             mem_limit,
         ]
+        if diagnostic_traces:
+            argv.append("--diagnostic-traces")
         _append_option(argv, "--shards", shards)
         _append_option(argv, "--shard-count", shard_count)
         _append_option(argv, "--shard-index", shard_index)
@@ -2613,4 +2652,5 @@ def bench_smoke(
             n_samples=1,
             task_ids=str(task_ids_file),
             dataset="princeton-nlp/SWE-bench_Verified",
+            diagnostic_traces=diagnostic_traces,
         )

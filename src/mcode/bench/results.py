@@ -97,11 +97,31 @@ class ResultsDB:
             )
             """
         )
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS diagnostic_events (
+              id INTEGER PRIMARY KEY,
+              run_id INTEGER NOT NULL,
+              task_id TEXT NOT NULL,
+              event_index INTEGER NOT NULL,
+              turn INTEGER,
+              event_type TEXT NOT NULL,
+              payload_json TEXT NOT NULL,
+              FOREIGN KEY (run_id) REFERENCES runs(id)
+            )
+            """
+        )
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_model ON runs(model_id)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_bench ON runs(benchmark)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_task_results_run ON task_results(run_id)")
         self.conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_run_task_unique ON task_results(run_id, task_id)"
+        )
+        self.conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_diagnostic_events_run_task_event
+            ON diagnostic_events(run_id, task_id, event_index)
+            """
         )
         self._ensure_column("runs", "backend_name", "TEXT NOT NULL DEFAULT 'ollama'")
         self._ensure_column("task_results", "terminal_reason", "TEXT")
@@ -206,6 +226,7 @@ class ResultsDB:
         return int(cursor.lastrowid)
 
     def save_task_result(self, run_id: int, result: dict) -> None:
+        task_id = str(result["task_id"])
         self.conn.execute(
             """
             INSERT OR REPLACE INTO task_results
@@ -219,7 +240,7 @@ class ResultsDB:
             """,
             (
                 run_id,
-                result["task_id"],
+                task_id,
                 1 if result["passed"] else 0,
                 result.get("attempts_used", 1),
                 result["time_ms"],
@@ -244,6 +265,24 @@ class ResultsDB:
                 result.get("submission_json"),
             ),
         )
+        self.conn.execute(
+            "DELETE FROM diagnostic_events WHERE run_id = ? AND task_id = ?",
+            (run_id, task_id),
+        )
+        events = result.get("diagnostic_events")
+        if isinstance(events, list) and events:
+            self.conn.executemany(
+                """
+                INSERT INTO diagnostic_events
+                (run_id, task_id, event_index, turn, event_type, payload_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    _coerce_diagnostic_event(run_id, task_id, index, event)
+                    for index, event in enumerate(events)
+                    if isinstance(event, dict)
+                ],
+            )
         self.conn.commit()
 
     def pass_rates_grouped(
@@ -764,6 +803,34 @@ class ResultsDB:
                         for tr in task_rows
                     ],
                 )
+                if _sqlite_table_exists(src, "diagnostic_events"):
+                    event_rows = src.execute(
+                        """
+                        SELECT task_id, event_index, turn, event_type, payload_json
+                        FROM diagnostic_events
+                        WHERE run_id = ?
+                        ORDER BY id
+                        """,
+                        (old_run_id,),
+                    ).fetchall()
+                    self.conn.executemany(
+                        """
+                        INSERT INTO diagnostic_events
+                        (run_id, task_id, event_index, turn, event_type, payload_json)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        [
+                            (
+                                new_run_id,
+                                str(event["task_id"]),
+                                int(event["event_index"]),
+                                _row_value(event, "turn"),
+                                str(event["event_type"]),
+                                str(event["payload_json"]),
+                            )
+                            for event in event_rows
+                        ],
+                    )
         finally:
             src.close()
 
@@ -793,6 +860,70 @@ def _time_percentiles_ms(time_ms: list[int]) -> dict[str, float | None]:
         "p50_ms": _percentile(values, 0.50),
         "p95_ms": _percentile(values, 0.95),
     }
+
+
+def _coerce_diagnostic_event(
+    run_id: int,
+    task_id: str,
+    event_index: int,
+    event: dict[str, object],
+) -> tuple[object, ...]:
+    payload = event.get("payload", {})
+    if not isinstance(payload, dict):
+        payload = {"value": payload}
+    turn = event.get("turn")
+    try:
+        normalized_turn = int(turn) if turn is not None else None
+    except (TypeError, ValueError):
+        normalized_turn = None
+    return (
+        run_id,
+        task_id,
+        event_index,
+        normalized_turn,
+        str(event.get("event_type", "unknown")),
+        json.dumps(payload, sort_keys=True, default=str),
+    )
+
+
+def _sqlite_table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table,),
+    ).fetchone()
+    return row is not None
+
+
+def _diagnostic_events_for_task(
+    conn: sqlite3.Connection,
+    run_id: int,
+    task_id: str,
+) -> list[dict[str, object]]:
+    if not _sqlite_table_exists(conn, "diagnostic_events"):
+        return []
+    rows = conn.execute(
+        """
+        SELECT turn, event_type, payload_json
+        FROM diagnostic_events
+        WHERE run_id = ? AND task_id = ?
+        ORDER BY event_index
+        """,
+        (run_id, task_id),
+    ).fetchall()
+    events: list[dict[str, object]] = []
+    for row in rows:
+        try:
+            payload = json.loads(str(row["payload_json"]))
+        except json.JSONDecodeError:
+            payload = {"raw": str(row["payload_json"])}
+        events.append(
+            {
+                "turn": _row_value(row, "turn"),
+                "event_type": str(row["event_type"]),
+                "payload": payload,
+            }
+        )
+    return events
 
 
 def _row_value(row: sqlite3.Row, key: str, default=None):
@@ -888,34 +1019,41 @@ def merge_shard_dbs(*, out_path: Path, shard_paths: list[Path], force: bool = Fa
                 if task_id in seen:
                     continue
                 seen.add(task_id)
-                out_db.save_task_result(
-                    run_id,
-                    {
-                        "task_id": task_id,
-                        "passed": bool(r["passed"]),
-                        "attempts_used": int(r["attempts_used"]),
-                        "time_ms": int(r["time_ms"]),
-                        "exit_code": _row_value(r, "exit_code"),
-                        "timed_out": bool(_row_value(r, "timed_out", 0)),
-                        "stdout": _row_value(r, "stdout"),
-                        "stderr": _row_value(r, "stderr"),
-                        "error": _row_value(r, "error"),
-                        "code_sha256": _row_value(r, "code_sha256"),
-                        "terminal_reason": _row_value(r, "terminal_reason"),
-                        "turns_to_first_edit": _row_value(r, "turns_to_first_edit"),
-                        "turns_to_first_verification": _row_value(r, "turns_to_first_verification"),
-                        "zero_edit": bool(_row_value(r, "zero_edit", 1)),
-                        "zero_verification": bool(_row_value(r, "zero_verification", 1)),
-                        "verification_succeeded": bool(_row_value(r, "verification_succeeded", 0)),
-                        "prompt_snapshot": _row_value(r, "prompt_snapshot"),
-                        "prompt_tokens": _row_value(r, "prompt_tokens"),
-                        "completion_tokens": _row_value(r, "completion_tokens"),
-                        "total_tokens": _row_value(r, "total_tokens"),
-                        "provider": _row_value(r, "provider"),
-                        "response_model": _row_value(r, "response_model"),
-                        "submission_json": _row_value(r, "submission_json"),
-                    },
+                result = {
+                    "task_id": task_id,
+                    "passed": bool(r["passed"]),
+                    "attempts_used": int(r["attempts_used"]),
+                    "time_ms": int(r["time_ms"]),
+                    "exit_code": _row_value(r, "exit_code"),
+                    "timed_out": bool(_row_value(r, "timed_out", 0)),
+                    "stdout": _row_value(r, "stdout"),
+                    "stderr": _row_value(r, "stderr"),
+                    "error": _row_value(r, "error"),
+                    "code_sha256": _row_value(r, "code_sha256"),
+                    "terminal_reason": _row_value(r, "terminal_reason"),
+                    "turns_to_first_edit": _row_value(r, "turns_to_first_edit"),
+                    "turns_to_first_verification": _row_value(
+                        r, "turns_to_first_verification"
+                    ),
+                    "zero_edit": bool(_row_value(r, "zero_edit", 1)),
+                    "zero_verification": bool(_row_value(r, "zero_verification", 1)),
+                    "verification_succeeded": bool(
+                        _row_value(r, "verification_succeeded", 0)
+                    ),
+                    "prompt_snapshot": _row_value(r, "prompt_snapshot"),
+                    "prompt_tokens": _row_value(r, "prompt_tokens"),
+                    "completion_tokens": _row_value(r, "completion_tokens"),
+                    "total_tokens": _row_value(r, "total_tokens"),
+                    "provider": _row_value(r, "provider"),
+                    "response_model": _row_value(r, "response_model"),
+                    "submission_json": _row_value(r, "submission_json"),
+                }
+                diagnostic_events = _diagnostic_events_for_task(
+                    conn, int(r["run_id"]), task_id
                 )
+                if diagnostic_events:
+                    result["diagnostic_events"] = diagnostic_events
+                out_db.save_task_result(run_id, result)
                 written += 1
         finally:
             conn.close()
@@ -971,6 +1109,7 @@ def export_csv(
     out_dir.mkdir(parents=True, exist_ok=True)
     runs_csv = out_dir / f"{prefix}.runs.csv"
     tasks_csv = out_dir / f"{prefix}.task_results.csv"
+    diagnostic_csv = out_dir / f"{prefix}.diagnostic_events.csv"
 
     runs_fields = [
         "source_db",
@@ -1022,6 +1161,7 @@ def export_csv(
 
     run_rows = 0
     task_rows = 0
+    diagnostic_rows = 0
 
     with (
         runs_csv.open("w", newline="", encoding="utf-8") as rf,
@@ -1131,10 +1271,69 @@ def export_csv(
             finally:
                 conn.close()
 
-    return {
+    diagnostic_fields = [
+        "source_db",
+        "run_id",
+        "task_id",
+        "event_index",
+        "turn",
+        "event_type",
+        "payload_json",
+    ]
+    diagnostic_handle = None
+    try:
+        diagnostic_writer = None
+        for db_path in db_paths:
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                if not _sqlite_table_exists(conn, "diagnostic_events"):
+                    continue
+                events = conn.execute(
+                    """
+                    SELECT run_id, task_id, event_index, turn, event_type, payload_json
+                    FROM diagnostic_events
+                    ORDER BY run_id, task_id, event_index
+                    """
+                ).fetchall()
+                if not events:
+                    continue
+                if diagnostic_handle is None:
+                    diagnostic_handle = diagnostic_csv.open(
+                        "w", newline="", encoding="utf-8"
+                    )
+                    diagnostic_writer = csv.DictWriter(
+                        diagnostic_handle, fieldnames=diagnostic_fields
+                    )
+                    diagnostic_writer.writeheader()
+                assert diagnostic_writer is not None
+                for event in events:
+                    diagnostic_writer.writerow(
+                        {
+                            "source_db": str(db_path),
+                            "run_id": int(event["run_id"]),
+                            "task_id": str(event["task_id"]),
+                            "event_index": int(event["event_index"]),
+                            "turn": _row_value(event, "turn"),
+                            "event_type": str(event["event_type"]),
+                            "payload_json": str(event["payload_json"]),
+                        }
+                    )
+                    diagnostic_rows += 1
+            finally:
+                conn.close()
+    finally:
+        if diagnostic_handle is not None:
+            diagnostic_handle.close()
+
+    report = {
         "dbs": len(db_paths),
         "runs": run_rows,
         "task_results": task_rows,
+        "diagnostic_events": diagnostic_rows,
         "runs_csv": runs_csv,
         "task_results_csv": tasks_csv,
     }
+    if diagnostic_rows:
+        report["diagnostic_events_csv"] = diagnostic_csv
+    return report

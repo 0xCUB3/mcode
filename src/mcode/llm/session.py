@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 from contextlib import contextmanager
@@ -44,9 +45,10 @@ class SolveResult:
     generation_latency_ms: int | None = None
     validation_passed_count: int | None = None
     validation_failed_count: int | None = None
+    diagnostic_events: list[dict[str, object]] | None = None
 
     def as_metrics_dict(self) -> dict[str, object]:
-        return {
+        metrics: dict[str, object] = {
             "terminal_reason": self.terminal_reason,
             "turns_to_first_edit": self.turns_to_first_edit,
             "turns_to_first_verification": self.turns_to_first_verification,
@@ -63,6 +65,9 @@ class SolveResult:
             "validation_passed_count": self.validation_passed_count,
             "validation_failed_count": self.validation_failed_count,
         }
+        if self.diagnostic_events is not None:
+            metrics["diagnostic_events"] = self.diagnostic_events
+        return metrics
 
 
 def _resolve_launch_endpoint(model_id: str) -> str | None:
@@ -134,6 +139,8 @@ class McodeSolverPowerup:
         )
 
         patch = get_git_diff(repo_root)
+        raw_patch = patch
+        collector.note_event("patch_stats", {"stage": "raw", **_patch_stats(raw_patch)})
         if (
             patch
             and _has_verification_tool(verification_policy)
@@ -141,6 +148,23 @@ class McodeSolverPowerup:
         ):
             patch = ""
             terminal_reason = "unverified_diff_discarded"
+        collector.note_event(
+            "patch_stats",
+            {
+                "stage": "final",
+                "discarded_unverified_diff": bool(raw_patch and not patch),
+                **_patch_stats(patch),
+            },
+        )
+        collector.note_event(
+            "terminal",
+            {
+                "terminal_reason": terminal_reason,
+                "verification_succeeded": collector.verification_succeeded,
+                "turns_to_first_edit": collector.turns_to_first_edit,
+                "turns_to_first_verification": collector.turns_to_first_verification,
+            },
+        )
 
         return SolveResult(
             patch=patch,
@@ -160,6 +184,9 @@ class McodeSolverPowerup:
             generation_latency_ms=_none_if_zero(collector.generation_latency_ms),
             validation_passed_count=collector.validation_passed_count,
             validation_failed_count=collector.validation_failed_count,
+            diagnostic_events=(
+                list(collector.diagnostic_events) if collector.diagnostic_enabled else None
+            ),
         )
 
 
@@ -173,6 +200,7 @@ class LLMSession:
     sampling_strategy: str = "none"
     sampling_budget: int | None = None
     selection_attempts: int = 1
+    diagnostic_traces: bool = False
     _m: object | None = field(default=None, repr=False)
     _last_result: SolveResult | None = field(default=None, repr=False)
 
@@ -356,11 +384,16 @@ class LLMSession:
             select_best_attempt = False
         sampling_budget = self.sampling_budget or max(1, n_samples)
         enable_hooks = hooks_available()
+        if self.diagnostic_traces and not enable_hooks:
+            raise RuntimeError(
+                "Diagnostic traces require Mellea hooks. Install the observability extra with "
+                '`uv sync --extra observability` and retry.'
+            )
         with repo_snapshot(repo_root, enabled=outer_attempts > 1) as snapshot_dir:
             for index in range(outer_attempts):
                 if index and snapshot_dir is not None:
                     restore_repo_snapshot(repo_root, snapshot_dir)
-                collector = SolveTraceCollector()
+                collector = SolveTraceCollector(diagnostic_enabled=self.diagnostic_traces)
                 runtime_plugins = [SolveTracePlugin(collector)] if enable_hooks else None
                 with self._start_session(plugins=runtime_plugins) as session:
                     result = asyncio.run(
@@ -491,6 +524,31 @@ def _coerce_submission(value: Any) -> PatchSubmission | None:
         except json.JSONDecodeError:
             value = {"summary": text, "tests_ran": []}
     return PatchSubmission.model_validate(value)
+
+
+def _patch_stats(patch: str) -> dict[str, object]:
+    touched_files: list[str] = []
+    added = 0
+    deleted = 0
+    for line in patch.splitlines():
+        if line.startswith("diff --git "):
+            parts = line.split()
+            if len(parts) >= 4:
+                touched_files.append(parts[3][2:] if parts[3].startswith("b/") else parts[3])
+            continue
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("+"):
+            added += 1
+        elif line.startswith("-"):
+            deleted += 1
+    return {
+        "touched_files": sorted(set(touched_files)),
+        "added_lines": added,
+        "deleted_lines": deleted,
+        "byte_count": len(patch.encode("utf-8", errors="ignore")),
+        "sha256": hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest(),
+    }
 
 
 def _none_if_zero(value: int | None) -> int | None:

@@ -75,6 +75,57 @@ def test_solve_trace_plugin_collects_generation_tool_and_validation_data():
     assert collector.validation_failed_count == 1
 
 
+def test_solve_trace_plugin_records_sanitized_diagnostic_events():
+    collector = SolveTraceCollector(diagnostic_enabled=True)
+    plugin = SolveTracePlugin(collector)
+    collector.note_turn(2)
+
+    asyncio.run(
+        plugin.generation_post_call(
+            SimpleNamespace(
+                prompt=[{"role": "user", "content": "secret prompt"}],
+                latency_ms=10,
+                model_output=SimpleNamespace(
+                    usage={"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+                    provider="openai",
+                    model="test-model",
+                    tool_calls={
+                        "edit": SimpleNamespace(
+                            name="edit",
+                            args={"path": "foo.py", "old_str": "a", "new_str": "b"},
+                        )
+                    },
+                ),
+            ),
+            {},
+        )
+    )
+    asyncio.run(
+        plugin.tool_post_invoke(
+            SimpleNamespace(
+                model_tool_call=SimpleNamespace(
+                    name="edit",
+                    args={"path": "foo.py", "old_str": "a", "new_str": "b"},
+                ),
+                tool_output="$ edit foo.py\nAPPLIED\nok",
+                execution_time_ms=7,
+                success=True,
+                error=None,
+            ),
+            {},
+        )
+    )
+
+    event_types = [event["event_type"] for event in collector.diagnostic_events]
+    assert event_types == ["turn_start", "generation", "tool_result", "edit_result"]
+    generation = collector.diagnostic_events[1]["payload"]
+    assert generation["tool_calls"][0]["args"]["old_str"] == "[redacted]"
+    edit_result = collector.diagnostic_events[-1]["payload"]
+    assert edit_result["path"] == "foo.py"
+    assert edit_result["status"] == "APPLIED"
+    assert "old_str" not in edit_result
+
+
 def test_run_react_loop_returns_structured_submission(monkeypatch):
     outputs = iter(
         [

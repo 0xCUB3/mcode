@@ -662,3 +662,121 @@ def test_export_csv_includes_generation_fields(tmp_path: Path) -> None:
     assert row["total_tokens"] == "18"
     assert row["submission_json"] == '{"summary":"ok"}'
     assert row["prompt_snapshot"] == "prompt body"
+
+
+
+def test_results_db_persists_merges_and_exports_diagnostic_events(tmp_path: Path) -> None:
+    db_a = tmp_path / "a.db"
+    merged_db = tmp_path / "merged.db"
+
+    with ResultsDB(db_a) as rdb:
+        run_id = rdb.start_run(
+            "swebench-lite",
+            {
+                "backend_name": "openai",
+                "model_id": "test-model",
+                "loop_budget": 1,
+                "timeout_s": 60,
+                "diagnostic_traces": True,
+            },
+        )
+        rdb.save_task_result(
+            run_id,
+            {
+                "task_id": "task-1",
+                "passed": False,
+                "attempts_used": 1,
+                "time_ms": 100,
+                "exit_code": 1,
+                "timed_out": False,
+                "stdout": "",
+                "stderr": "",
+                "error": "failed",
+                "code_sha256": "abc",
+                "diagnostic_events": [
+                    {
+                        "turn": 1,
+                        "event_type": "turn_start",
+                        "payload": {"turn": 1},
+                    },
+                    {
+                        "turn": None,
+                        "event_type": "terminal",
+                        "payload": {"official_eval_passed": False},
+                    },
+                ],
+            },
+        )
+
+    with ResultsDB(merged_db) as merged:
+        merged.merge_from([db_a])
+        row = merged.conn.execute(
+            """
+            SELECT de.run_id, de.task_id, de.event_index, de.event_type, de.payload_json
+            FROM diagnostic_events de
+            JOIN runs r ON r.id = de.run_id
+            ORDER BY de.event_index
+            """
+        ).fetchone()
+        assert row is not None
+        assert int(row["run_id"]) == 1
+        assert row["task_id"] == "task-1"
+        assert row["event_type"] == "turn_start"
+        assert json.loads(row["payload_json"]) == {"turn": 1}
+
+    out = export_csv(inputs=[merged_db], out_dir=tmp_path / "csv")
+    assert out["diagnostic_events"] == 2
+    with Path(out["diagnostic_events_csv"]).open(newline="", encoding="utf-8") as f:
+        rows = list(DictReader(f))
+    assert [row["event_type"] for row in rows] == ["turn_start", "terminal"]
+
+
+def test_merge_shard_dbs_preserves_diagnostic_events(tmp_path: Path) -> None:
+    shard = tmp_path / "results-shard-0.db"
+    merged = tmp_path / "merged.db"
+
+    with ResultsDB(shard) as rdb:
+        run_id = rdb.start_run(
+            "swebench-lite",
+            {
+                "backend_name": "openai",
+                "model_id": "test-model",
+                "loop_budget": 1,
+                "timeout_s": 60,
+                "task_shard_count": 1,
+                "task_shard_index": 0,
+                "diagnostic_traces": True,
+            },
+        )
+        rdb.save_task_result(
+            run_id,
+            {
+                "task_id": "task-1",
+                "passed": True,
+                "attempts_used": 1,
+                "time_ms": 100,
+                "exit_code": 0,
+                "timed_out": False,
+                "stdout": "",
+                "stderr": "",
+                "error": None,
+                "code_sha256": "abc",
+                "diagnostic_events": [
+                    {
+                        "turn": 1,
+                        "event_type": "generation",
+                        "payload": {"tool_call_count": 0},
+                    }
+                ],
+            },
+        )
+
+    merge_shard_dbs(out_path=merged, shard_paths=[shard], force=True)
+
+    with ResultsDB(merged) as rdb:
+        count = rdb.conn.execute("SELECT COUNT(*) FROM diagnostic_events").fetchone()[0]
+        payload = rdb.conn.execute(
+            "SELECT payload_json FROM diagnostic_events"
+        ).fetchone()[0]
+    assert count == 1
+    assert json.loads(payload) == {"tool_call_count": 0}

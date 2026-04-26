@@ -526,3 +526,55 @@ def test_run_task_records_infra_failure_after_docker_retry(tmp_path):
     assert result["attempts_used"] == 2
     assert result["terminal_reason"] == "infra_failure"
     assert result["error"] == "DockerUnavailableError: socket timed out"
+
+
+
+def test_solve_result_carries_diagnostic_events_only_when_enabled(tmp_path, monkeypatch):
+    _init_repo(tmp_path)
+    session = LLMSession(
+        model_id="test",
+        backend_name="openai",
+        loop_budget=4,
+        diagnostic_traces=True,
+    )
+    captured: dict[str, object] = {}
+
+    async def fake_solve_patch(**kwargs):
+        collector = kwargs["collector"]
+        captured["diagnostic_enabled"] = collector.diagnostic_enabled
+        collector.note_event("turn_start", {"turn": 1}, turn=1)
+        return SolveResult(
+            patch="",
+            terminal_reason="budget_exhausted",
+            diagnostic_events=list(collector.diagnostic_events),
+        )
+
+    monkeypatch.setattr("mcode.llm.session.hooks_available", lambda: True)
+    monkeypatch.setattr(
+        session,
+        "_start_session",
+        lambda **kwargs: _session_context(
+            SimpleNamespace(backend=object(), solve_patch=fake_solve_patch)
+        ),
+    )
+    monkeypatch.setattr("mcode.agent.coding_agent.build_repo_map", lambda *args, **kwargs: "")
+    monkeypatch.setattr(
+        "mcode.agent.coding_agent.build_candidate_files",
+        lambda *args, **kwargs: "",
+    )
+
+    session.generate_patch(
+        repo="test/repo",
+        problem_statement="Fix the bug",
+        repo_root=str(tmp_path),
+        test_cmds={"test_cmds": ["python -c pass"]},
+    )
+
+    assert captured["diagnostic_enabled"] is True
+    assert session.last_solve_result is not None
+    assert session.last_solve_result["diagnostic_events"] == [
+        {"turn": 1, "event_type": "turn_start", "payload": {"turn": 1}}
+    ]
+
+    disabled_result = SolveResult().as_metrics_dict()
+    assert "diagnostic_events" not in disabled_result

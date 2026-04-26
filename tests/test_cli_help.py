@@ -48,6 +48,7 @@ def test_cli_bench_swebench_help() -> None:
     assert "selection_attempts" in option_names
     assert "on" in option_names
     assert "fetch_db" in option_names
+    assert "diagnostic_traces" in option_names
 
 
 def test_cli_report_help() -> None:
@@ -63,6 +64,7 @@ def test_cli_bench_swebench_live_help() -> None:
     assert "selection_attempts" in option_names
     assert "on" in option_names
     assert "fetch_db" in option_names
+    assert "diagnostic_traces" in option_names
 
 
 def test_cli_bench_aider_polyglot_help() -> None:
@@ -84,6 +86,7 @@ def test_cli_bench_smoke_help() -> None:
     option_names = _command_option_names("bench", "smoke")
     assert "shards" in option_names
 
+    assert "diagnostic_traces" in option_names
 
 def test_cli_compare_help() -> None:
     _invoke_help("compare", "--help")

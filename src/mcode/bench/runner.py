@@ -54,6 +54,7 @@ class BenchConfig:
     sampling_strategy: str = "none"
     sampling_budget: int | None = None
     selection_attempts: int = 1
+    diagnostic_traces: bool = False
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,7 @@ class BenchmarkRunner:
             sampling_strategy=self.config.sampling_strategy,
             sampling_budget=self.config.sampling_budget,
             selection_attempts=self.config.selection_attempts,
+            diagnostic_traces=self.config.diagnostic_traces,
         )
 
     def run_benchmark(
@@ -538,6 +540,8 @@ class BenchmarkRunner:
                     attempts_used=attempts_used,
                 )
 
+        if scaffold_result is not None:
+            _append_terminal_diagnostic(scaffold_result, eval_detail)
         sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest() if patch else None
         return {
             "task_id": task_id,
@@ -614,6 +618,33 @@ def _evaluate_lite_patch(
         stdout=_truncate(run.test_output),
         stderr=json.dumps(inst_report, sort_keys=True),
         error=None if run.resolved else "Not resolved",
+    )
+
+
+def _append_terminal_diagnostic(
+    scaffold_result: dict[str, object],
+    eval_detail: _TaskEvaluation | None,
+ ) -> None:
+    events = scaffold_result.get("diagnostic_events")
+    if not isinstance(events, list):
+        return
+    events.append(
+        {
+            "turn": None,
+            "event_type": "terminal",
+            "payload": {
+                "terminal_reason": scaffold_result.get("terminal_reason"),
+                "verification_succeeded": scaffold_result.get("verification_succeeded"),
+                "turns_to_first_edit": scaffold_result.get("turns_to_first_edit"),
+                "turns_to_first_verification": scaffold_result.get(
+                    "turns_to_first_verification"
+                ),
+                "official_eval_passed": eval_detail.passed if eval_detail is not None else None,
+                "official_eval_timed_out": (
+                    eval_detail.timed_out if eval_detail is not None else None
+                ),
+            },
+        }
     )
 
 
