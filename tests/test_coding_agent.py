@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -68,6 +70,125 @@ def test_build_verification_policy_normalizes_commands():
     assert policy.test_cmds == ["pytest -q tests/test_bug.py"]
     assert 'test_cmd="default"' in policy.prompt_block
     assert "not pass `run_tests default`" in policy.prompt_block
+
+
+def _init_git_repo(path: Path) -> None:
+    env = {
+        "GIT_AUTHOR_NAME": "Test",
+        "GIT_AUTHOR_EMAIL": "test@example.com",
+        "GIT_COMMITTER_NAME": "Test",
+        "GIT_COMMITTER_EMAIL": "test@example.com",
+    }
+    subprocess.run(["git", "init"], cwd=path, capture_output=True, check=True)
+    subprocess.run(["git", "add", "."], cwd=path, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "init"],
+        cwd=path,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+
+
+def test_run_tests_tool_infers_default_from_changed_test_file(
+    tmp_path: Path,
+) -> None:
+    test_file = tmp_path / "tests" / "test_bug.py"
+    test_file.parent.mkdir()
+    test_file.write_text("def test_old():\n    assert True\n")
+    _init_git_repo(tmp_path)
+    test_file.write_text("def test_new():\n    assert True\n")
+    seen: list[str] = []
+
+    def command_fn(command: str) -> str:
+        seen.append(command)
+        return format_tool_result(command, "PASSED", "ok")
+
+    policy = build_verification_policy(command_fn=command_fn)
+    tool = build_run_tests_tool(repo_root=str(tmp_path), verification_policy=policy)
+
+    assert tool is not None
+    result = tool.run("default")
+
+    assert seen == ["python -m pytest -q tests/test_bug.py"]
+    assert "PASSED" in result
+
+
+def test_run_tests_tool_infers_default_from_changed_source_test_file(
+    tmp_path: Path,
+) -> None:
+    source_file = tmp_path / "pkg" / "mod.py"
+    test_file = tmp_path / "pkg" / "tests" / "test_mod.py"
+    test_file.parent.mkdir(parents=True)
+    source_file.write_text("VALUE = 1\n")
+    test_file.write_text("def test_mod():\n    assert True\n")
+    _init_git_repo(tmp_path)
+    source_file.write_text("VALUE = 2\n")
+    seen: list[str] = []
+
+    def command_fn(command: str) -> str:
+        seen.append(command)
+        return format_tool_result(command, "PASSED", "ok")
+
+    policy = build_verification_policy(command_fn=command_fn)
+    tool = build_run_tests_tool(repo_root=str(tmp_path), verification_policy=policy)
+
+    assert tool is not None
+    result = tool.run("default")
+
+    assert seen == ["python -m pytest -q pkg/tests/test_mod.py"]
+    assert "PASSED" in result
+
+
+def test_run_tests_tool_infers_default_from_changed_source_test_dir(
+    tmp_path: Path,
+) -> None:
+    source_file = tmp_path / "pkg" / "core.py"
+    test_file = tmp_path / "pkg" / "tests" / "test_sampled.py"
+    test_file.parent.mkdir(parents=True)
+    source_file.write_text("VALUE = 1\n")
+    test_file.write_text("def test_sampled():\n    assert True\n")
+    _init_git_repo(tmp_path)
+    source_file.write_text("VALUE = 2\n")
+    seen: list[str] = []
+
+    def command_fn(command: str) -> str:
+        seen.append(command)
+        return format_tool_result(command, "PASSED", "ok")
+
+    policy = build_verification_policy(command_fn=command_fn)
+    tool = build_run_tests_tool(repo_root=str(tmp_path), verification_policy=policy)
+
+    assert tool is not None
+    result = tool.run("default")
+
+    assert seen == ["python -m pytest -q pkg/tests"]
+    assert "PASSED" in result
+
+
+def test_run_tests_tool_skips_default_when_no_tests_can_be_inferred(
+    tmp_path: Path,
+) -> None:
+    source_file = tmp_path / "pkg" / "core.py"
+    source_file.parent.mkdir()
+    source_file.write_text("VALUE = 1\n")
+    _init_git_repo(tmp_path)
+    source_file.write_text("VALUE = 2\n")
+    seen: list[str] = []
+
+    def command_fn(command: str) -> str:
+        seen.append(command)
+        return format_tool_result(command, "PASSED", "ok")
+
+    policy = build_verification_policy(command_fn=command_fn)
+    tool = build_run_tests_tool(repo_root=str(tmp_path), verification_policy=policy)
+
+    assert tool is not None
+    result = tool.run("default")
+
+    assert seen == []
+    assert "SKIPPED" in result
+    assert "No test commands available" in result
 
 
 def test_build_run_tests_tool_uses_command_fn_for_default_commands(tmp_path):

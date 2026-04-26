@@ -3,6 +3,8 @@ from __future__ import annotations
 import html
 import json
 import re
+import shlex
+import subprocess
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
@@ -201,7 +203,10 @@ def build_run_tests_tool(
                 return _record(result)
             return _record(format_tool_result(test_cmd, "COMPLETED", result))
 
-        commands = test_cmds if test_cmd.strip().lower() == "default" else [test_cmd]
+        if test_cmd.strip().lower() == "default":
+            commands = test_cmds or _infer_default_test_commands(repo_root)
+        else:
+            commands = [test_cmd]
         outputs: list[str] = []
         for command in commands:
             if not command.strip():
@@ -239,6 +244,138 @@ def build_run_tests_tool(
         tool_call=_run_tests,
         as_json_tool=_patch_run_tests_schema(tool.as_json_tool),
     )
+
+
+def _infer_default_test_commands(repo_root: str) -> list[str]:
+    root = Path(repo_root)
+    changed_paths = _changed_python_paths(root)
+    if not changed_paths:
+        return []
+
+    test_files: list[Path] = []
+    test_dirs: list[Path] = []
+    for path in changed_paths:
+        if _is_python_test_path(path):
+            test_files.append(path)
+            continue
+        candidates = [
+            candidate
+            for candidate in _test_file_candidates_for_source(root, path)
+            if candidate.is_file()
+        ]
+        test_files.extend(candidates)
+        if not candidates:
+            test_dirs.extend(_test_dir_candidates_for_source(root, path))
+
+    commands: list[str] = []
+    selected_files = _dedupe_paths(path for path in test_files if path.is_file())
+    if selected_files:
+        commands.append(_pytest_command(selected_files[:8], root=root))
+        return commands
+
+    selected_dirs = _dedupe_paths(path for path in test_dirs if path.is_dir())
+    if selected_dirs:
+        commands.append(_pytest_command(selected_dirs[:2], root=root))
+    return commands
+
+
+def _changed_python_paths(root: Path) -> list[Path]:
+    try:
+        result = subprocess.run(
+            ["git", "status", "--short", "--untracked-files=all"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+
+    paths: list[Path] = []
+    for line in result.stdout.splitlines():
+        if len(line) < 4:
+            continue
+        status = line[:2]
+        if status == "??":
+            raw_path = line[3:]
+        else:
+            if "D" in status:
+                continue
+            raw_path = line[3:]
+        if " -> " in raw_path:
+            raw_path = raw_path.rsplit(" -> ", 1)[1]
+        path = (root / raw_path).resolve()
+        try:
+            path.relative_to(root.resolve())
+        except ValueError:
+            continue
+        if path.suffix == ".py" and path.is_file():
+            paths.append(path)
+    return _dedupe_paths(paths)
+
+
+def _is_python_test_path(path: Path) -> bool:
+    parts = set(path.parts)
+    return (
+        path.suffix == ".py"
+        and (path.name.startswith("test_") or path.name.endswith("_test.py") or "tests" in parts)
+    )
+
+
+def _test_file_candidates_for_source(root: Path, source_path: Path) -> list[Path]:
+    stem = source_path.stem
+    candidates: list[Path] = []
+    for test_dir in _test_dir_candidates_for_source(root, source_path):
+        candidates.extend((
+            test_dir / f"test_{stem}.py",
+            test_dir / f"{stem}_test.py",
+        ))
+    return _dedupe_paths(candidates)
+
+
+def _test_dir_candidates_for_source(root: Path, source_path: Path) -> list[Path]:
+    candidates: list[Path] = []
+    for base in [source_path.parent, *source_path.parents]:
+        if base == root.parent:
+            break
+        for name in ("tests", "test"):
+            candidate = base / name
+            if candidate.is_dir():
+                candidates.append(candidate)
+    top_level_tests = root / "tests"
+    if top_level_tests.is_dir():
+        rel_parts = source_path.relative_to(root).parts[:-1]
+        if rel_parts:
+            candidates.append(top_level_tests.joinpath(*rel_parts))
+        candidates.append(top_level_tests)
+    return _dedupe_paths(candidates)
+
+
+def _dedupe_paths(paths) -> list[Path]:
+    seen: set[Path] = set()
+    deduped: list[Path] = []
+    for path in paths:
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        deduped.append(path)
+    return deduped
+
+
+def _pytest_command(paths: list[Path], *, root: Path) -> str:
+    parts = [shlex.quote(_display_path(path, root)) for path in paths]
+    return "python -m pytest -q " + " ".join(parts)
+
+
+def _display_path(path: Path, root: Path) -> str:
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return path.as_posix()
 
 
 def _patch_run_tests_schema(schema: object) -> object:
