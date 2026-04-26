@@ -196,7 +196,7 @@ cleanup() {{
     kill "$PODMAN_PID" 2>/dev/null || true
     wait "$PODMAN_PID" 2>/dev/null || true
   fi
-  rm -rf "$XDG_RUNTIME_DIR"
+  podman unshare rm -rf "$XDG_RUNTIME_DIR" 2>/dev/null || rm -rf "$XDG_RUNTIME_DIR" || true
 }}
 trap cleanup EXIT
 podman \\

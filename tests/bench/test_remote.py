@@ -80,7 +80,7 @@ def test_run_bench_on_bluevela_uses_tmp_for_podman_storage(tmp_path, monkeypatch
     assert 'CONTAINERS_CONF="$XDG_RUNTIME_DIR/containers.conf"' in launch_cmd
     assert "keyring=false" in launch_cmd
     assert "export CONTAINERS_CONF" in launch_cmd
-    assert 'rm -rf "$XDG_RUNTIME_DIR"' in launch_cmd
+    assert 'podman unshare rm -rf "$XDG_RUNTIME_DIR"' in launch_cmd
     assert "trap cleanup EXIT" in launch_cmd
     assert "/u/skula/mcode-shared" not in launch_cmd
 
