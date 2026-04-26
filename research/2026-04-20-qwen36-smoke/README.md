@@ -108,6 +108,46 @@ uv run mcode bench swebench-lite \
   --db experiments/results/ab-qwen36-multiturn-20-2-20260422.db
 ```
 
+April 25 fixed-budget selection follow-up:
+```bash
+MCODE_CONTEXT_WINDOW=32768 \
+MCODE_MAX_NEW_TOKENS=4096 \
+MCODE_REACT_TIMEOUT=2400 \
+uv run mcode bench swebench-lite \
+  --model Qwen/Qwen3.6-35B-A3B \
+  --backend openai \
+  --dataset princeton-nlp/SWE-bench_Verified \
+  --task-ids src/mcode/bench/fixtures/smoke-16.txt \
+  --loop-budget 20 \
+  --sampling multiturn \
+  --sampling-budget 2 \
+  --timeout 300 \
+  --mem-limit 8g \
+  --pids-limit 512 \
+  --on bluevela \
+  --shards 4 \
+  --db research/2026-04-25-swebench-verified-qwen36-research/smoke16-current-20-2-keyring-shards4.db
+
+MCODE_CONTEXT_WINDOW=32768 \
+MCODE_MAX_NEW_TOKENS=4096 \
+MCODE_REACT_TIMEOUT=2400 \
+uv run mcode bench swebench-lite \
+  --model Qwen/Qwen3.6-35B-A3B \
+  --backend openai \
+  --dataset princeton-nlp/SWE-bench_Verified \
+  --task-ids src/mcode/bench/fixtures/smoke-16.txt \
+  --loop-budget 20 \
+  --sampling multiturn \
+  --sampling-budget 2 \
+  --selection-attempts 3 \
+  --timeout 300 \
+  --mem-limit 8g \
+  --pids-limit 512 \
+  --on bluevela \
+  --shards 4 \
+  --db research/2026-04-25-swebench-verified-qwen36-research/smoke16-selection3-20-2-shards4.db
+```
+
 ## Results
 
 | Run | Passed | Zero edit | Zero verification | Submitted | Budget exhausted | Unverified diff discarded | Wrong patch |
@@ -116,13 +156,16 @@ uv run mcode bench swebench-lite \
 | Multiturn `15-2` | 4/16 | 7 | 6 | 4 | 7 | 3 | 2 |
 | Multiturn `15-3` | 5/16 | 6 | 5 | 5 | 7 | 2 | 2 |
 | Multiturn `20-2` | 8/16 | 4 | 2 | 8 | 4 | 2 | 2 |
+| April 25 clean control `20-2` | 7/16 | 5 | 1 | 7 | 5 | 1 | 3 |
+| April 25 `20-2`, `--selection-attempts 3` | 9/16 | 3 | 1 | 9 | 3 | 1 | 3 |
 
-Submitted tasks for the best run, `20-2`:
+Submitted tasks for the best run, April 25 `20-2` with `--selection-attempts 3`:
 
 - `astropy__astropy-12907`
 - `astropy__astropy-13236`
 - `astropy__astropy-13453`
 - `astropy__astropy-13579`
+- `astropy__astropy-14096`
 - `astropy__astropy-14309`
 - `scikit-learn__scikit-learn-13328`
 - `sphinx-doc__sphinx-8120`
@@ -138,7 +181,7 @@ That means Qwen3.6 does seem capable of beating the old Qwen3.5 baseline, but on
 
 The most important change in the failure mix is not just the pass count. `20-2` cut `zero_edit` from `7` to `4` and `zero_verification` from `6` to `2` relative to the `15-2` multiturn run. That says the bigger win is better conversion from searching into real edit-and-verify loops, not just luck on final patches.
 
-This is only one valid `20-2` run, so I would not call `8/16` the stable expectation yet. But it is enough to justify iterating on Qwen3.6 instead of writing it off.
+This is only one valid `20-2` run, so I would not call `8/16` the stable expectation yet. The April 25 rerun from the then-current clean path landed at `7/16`, and fixed-budget selection with three independent full-budget attempts moved that to `9/16`. That is a real benchmark-valid improvement because the selector only sees patch/verification/submission signals before official evaluation, but it is not the kind of improvement we actually want to lean on. It spends roughly three solve trajectories per task, plus the existing multiturn sampling overhead. The next target should be better quality at similar total inference, or a deliberate redistribution of the same budget across turns, repair depth, context, or model profile. Treat `--selection-attempts 3` as an upper-bound probe for variance, not as the preferred long-term solution.
 
 ## Files
 
@@ -150,3 +193,5 @@ Included in this entry:
 - `research/2026-04-20-qwen36-smoke/multiturn-15-2/ab-qwen36-multiturn-15-2-20260422.db`
 - `research/2026-04-20-qwen36-smoke/multiturn-15-3/ab-qwen36-multiturn-15-3-20260422.db`
 - `research/2026-04-20-qwen36-smoke/multiturn-20-2/ab-qwen36-multiturn-20-2-20260422.db`
+- `research/2026-04-20-qwen36-smoke/current-control-20-2/smoke16-current-20-2-keyring-shards4.db`
+- `research/2026-04-20-qwen36-smoke/selection-attempts-3/smoke16-selection3-20-2-shards4.db`
