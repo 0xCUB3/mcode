@@ -26,6 +26,7 @@ _FORWARDED_ENV_VARS = (
     "MCODE_REACT_TIMEOUT",
     "MCODE_HARNESS_EXPERIMENTS",
 )
+_SHARDED_INFRA_EXIT_CODE = 86
 
 
 def _resolve_endpoint(model: str, *, cfg: launch_config.LaunchConfig) -> str:
@@ -185,50 +186,84 @@ WORKSPACE_TMP="$XDG_RUNTIME_DIR/tmp"
 GRAPHROOT="$XDG_RUNTIME_DIR/graphroot"
 RUNROOT="$XDG_RUNTIME_DIR/runroot"
 CONTAINERS_CONF="$XDG_RUNTIME_DIR/containers.conf"
-mkdir -p "$WORKSPACE_TMP" "$GRAPHROOT" "$RUNROOT"
-printf '[containers]\nkeyring=false\n' > "$CONTAINERS_CONF"
-export CONTAINERS_CONF
-export TMPDIR="$WORKSPACE_TMP"
 SOCK="$XDG_RUNTIME_DIR/podman.sock"
-rm -f "$SOCK"
-cleanup() {{
+export MCODE_PODMAN_LOCK_DIR="$XDG_RUNTIME_DIR"
+
+prepare_runtime() {{
+  mkdir -p "$WORKSPACE_TMP" "$GRAPHROOT" "$RUNROOT"
+  printf '[containers]\nkeyring=false\n' > "$CONTAINERS_CONF"
+  export CONTAINERS_CONF
+  export TMPDIR="$WORKSPACE_TMP"
+  rm -f "$SOCK"
+}}
+
+stop_podman() {{
   if [ -n "${{PODMAN_PID:-}}" ]; then
     kill "$PODMAN_PID" 2>/dev/null || true
     wait "$PODMAN_PID" 2>/dev/null || true
+    PODMAN_PID=""
   fi
+}}
+
+reset_podman_runtime() {{
+  stop_podman
+  podman unshare rm -rf "$XDG_RUNTIME_DIR" 2>/dev/null || rm -rf "$XDG_RUNTIME_DIR" || true
+  prepare_runtime
+}}
+
+start_podman() {{
+  prepare_runtime
+  podman \\
+    --cgroup-manager=cgroupfs --storage-driver=overlay \\
+    --root "$GRAPHROOT" --runroot "$RUNROOT" \\
+    --storage-opt ignore_chown_errors=true \\
+    system service --time=0 "unix://$SOCK" \\
+    >{shlex.quote(svc_log)} 2>&1 &
+  PODMAN_PID=$!
+  svc_ready=0
+  for _ in $(seq 1 30); do
+    if curl -s --unix-socket "$SOCK" http://localhost/version >/dev/null 2>&1; then
+      svc_ready=1
+      break
+    fi
+    sleep 1
+  done
+  if [ "$svc_ready" != "1" ]; then
+    echo "✗ podman socket did not come up at $SOCK" >&2
+    tail -n 40 {shlex.quote(svc_log)} >&2 || true
+    return 97
+  fi
+}}
+
+cleanup() {{
+  stop_podman
   podman unshare rm -rf "$XDG_RUNTIME_DIR" 2>/dev/null || rm -rf "$XDG_RUNTIME_DIR" || true
 }}
 trap cleanup EXIT
-podman \\
-  --cgroup-manager=cgroupfs --storage-driver=overlay \\
-  --root "$GRAPHROOT" --runroot "$RUNROOT" \\
-  --storage-opt ignore_chown_errors=true \\
-  system service --time=0 "unix://$SOCK" \\
-  >{shlex.quote(svc_log)} 2>&1 &
-PODMAN_PID=$!
-svc_ready=0
-for _ in $(seq 1 30); do
-  if curl -s --unix-socket "$SOCK" http://localhost/version >/dev/null 2>&1; then
-    svc_ready=1
-    break
-  fi
-  sleep 1
-done
-if [ "$svc_ready" != "1" ]; then
-  echo "✗ podman socket did not come up at $SOCK" >&2
-  tail -n 40 {shlex.quote(svc_log)} >&2 || true
-  echo 97 > {shlex.quote(exit_sentinel)}
-  exit 97
-fi
+
+start_podman || {{ rc=97; echo "$rc" > {shlex.quote(exit_sentinel)}; exit "$rc"; }}
 export DOCKER_HOST="unix://$SOCK"
 export OPENAI_BASE_URL={shlex.quote(endpoint)}
 export OPENAI_API_KEY={shlex.quote(api_key)}
 {forwarded_exports}\
 {remote_benchmark_setup}
-set +e
-{bench_cmd}
-rc=$?
-set -e
+infra_retries=0
+max_infra_retries=1
+while true; do
+  set +e
+  {bench_cmd}
+  rc=$?
+  set -e
+  if [ "$rc" = "{_SHARDED_INFRA_EXIT_CODE}" ] && [ "$infra_retries" -lt "$max_infra_retries" ]; then
+    infra_retries=$((infra_retries + 1))
+    echo "retryable podman infra failure, resetting runtime ($infra_retries/$max_infra_retries)" >&2
+    reset_podman_runtime
+    start_podman || {{ rc=97; break; }}
+    export DOCKER_HOST="unix://$SOCK"
+    continue
+  fi
+  break
+done
 echo "$rc" > {shlex.quote(exit_sentinel)}
 exit $rc
 """.strip()

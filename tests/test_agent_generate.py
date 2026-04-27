@@ -529,6 +529,49 @@ def test_run_task_records_infra_failure_after_docker_retry(tmp_path):
 
 
 
+def test_swebench_image_preflight_stops_before_model_loop(tmp_path, monkeypatch):
+    task = SimpleNamespace(
+        raw_instance={"instance_id": "matplotlib__matplotlib-23476"},
+        instance_id="matplotlib__matplotlib-23476",
+    )
+    generated = {"called": False}
+
+    class FakeSandbox:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def prepare_images(self, instances):
+            assert instances == [task.raw_instance]
+            raise RuntimeError("unpacking failed: Chown error detected")
+
+    monkeypatch.setattr(
+        "mcode.bench.swebench_lite.load_swebench_lite",
+        lambda *args, **kwargs: [task],
+    )
+    monkeypatch.setattr("mcode.execution.swebench.SWEbenchSandbox", FakeSandbox)
+
+    runner = BenchmarkRunner(
+        config=BenchConfig(model_id="test-model", backend_name="ollama"),
+        results_db=ResultsDB(tmp_path / "results.db"),
+    )
+    runner.llm.check_available = lambda: None  # type: ignore[method-assign]
+
+    def fail_if_called(*args, **kwargs):
+        generated["called"] = True
+        raise AssertionError("model loop should not run after preflight failure")
+
+    runner._generate_task_patch = fail_if_called  # type: ignore[method-assign]
+
+    try:
+        runner.run_benchmark("swebench-lite")
+    except RuntimeError as exc:
+        assert "unpacking failed" in str(exc)
+    else:
+        raise AssertionError("preflight failure should propagate")
+
+    assert generated["called"] is False
+
+
 def test_solve_result_carries_diagnostic_events_only_when_enabled(tmp_path, monkeypatch):
     _init_repo(tmp_path)
     session = LLMSession(

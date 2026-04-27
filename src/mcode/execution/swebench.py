@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import platform
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -47,21 +49,59 @@ def _copy_to_container_safe(container: object, content: str, dest: str) -> None:
     container.put_archive(os.path.dirname(dest) or "/", buf)
 
 
-def _ensure_image(client: object, name: str) -> None:
-    """Pull *name* if not already present, tolerating podman quirks."""
-    import docker
+_RETRYABLE_PODMAN_IMAGE_PATTERNS = (
+    "writing blob",
+    "adding layer",
+    "unpacking failed",
+    "chown error detected",
+    "insufficient uids or gids",
+    "podman system migrate",
+    "disk i/o error",
+    "database is locked",
+    "podman socket did not come up",
+    "no such container",
+)
 
-    fq = _fq_image(name)
+
+class RetryablePodmanImageError(RuntimeError):
+    pass
+
+
+def _is_retryable_podman_image_error(exc_or_text: object) -> bool:
+    if isinstance(exc_or_text, BaseException) and is_docker_unavailable_error(exc_or_text):
+        return True
+    text = str(exc_or_text).lower()
+    return any(pattern in text for pattern in _RETRYABLE_PODMAN_IMAGE_PATTERNS)
+
+
+@contextmanager
+def _podman_image_pull_lock():
+    import fcntl
+
+    lock_dir = Path(os.environ.get("MCODE_PODMAN_LOCK_DIR") or tempfile.gettempdir())
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    with (lock_dir / "mcode-podman-images.lock").open("w", encoding="utf-8") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _image_present(client: object, name: str, fq: str, docker_module: object) -> bool:
     try:
         client.images.get(name)
-        return
-    except docker.errors.ImageNotFound:
+        return True
+    except docker_module.errors.ImageNotFound:
         pass
     try:
         client.images.get(fq)
-        return
-    except docker.errors.ImageNotFound:
-        pass
+        return True
+    except docker_module.errors.ImageNotFound:
+        return False
+
+
+def _pull_image_once(client: object, fq: str) -> None:
     # Use low-level API; high-level .pull() does a post-pull images.get()
     # that fails on podman due to name normalization differences.
     for line in client.api.pull(fq, stream=True, decode=True):
@@ -69,14 +109,42 @@ def _ensure_image(client: object, name: str) -> None:
             raise RuntimeError(line["error"])
 
 
-def _remote_image_runtime_error_message(image_key: str) -> str:
-    return (
-        "Could not access the container runtime while checking or pulling the "
-        f"SWE-bench prebuilt image {image_key!r}. "
-        "The podman/Docker socket timed out or was unavailable.\n"
-        "Retry the run. If this persists on Blue Vela, inspect the podman "
-        "system service logs."
-    )
+def _ensure_image(client: object, name: str) -> None:
+    """Pull *name* if not already present, serializing rootless podman unpack."""
+    import docker
+
+    fq = _fq_image(name)
+    if _image_present(client, name, fq, docker):
+        return
+
+    attempts_raw = os.environ.get("MCODE_PODMAN_PULL_ATTEMPTS", "2")
+    delay_raw = os.environ.get("MCODE_PODMAN_PULL_RETRY_DELAY", "2")
+    try:
+        attempts = max(1, int(attempts_raw))
+    except ValueError:
+        raise ValueError(f"MCODE_PODMAN_PULL_ATTEMPTS must be an int (got {attempts_raw!r})")
+    try:
+        delay = max(0.0, float(delay_raw))
+    except ValueError:
+        raise ValueError(f"MCODE_PODMAN_PULL_RETRY_DELAY must be a float (got {delay_raw!r})")
+
+    with _podman_image_pull_lock():
+        if _image_present(client, name, fq, docker):
+            return
+        last_error: BaseException | None = None
+        for attempt in range(attempts):
+            try:
+                _pull_image_once(client, fq)
+                return
+            except Exception as exc:
+                if not _is_retryable_podman_image_error(exc):
+                    raise
+                last_error = exc
+                if attempt + 1 < attempts and delay > 0:
+                    time.sleep(delay)
+        raise RetryablePodmanImageError(
+            f"Retryable podman image pull failed for {fq}: {last_error}"
+        ) from last_error
 
 
 def _truncate_command_output(output: str, *, max_chars: int = 10_000) -> str:
@@ -231,9 +299,6 @@ class SWEbenchSandbox:
         except Exception as e:  # pragma: no cover
             raise RuntimeError(self._missing_extra_message()) from e
 
-        if self.namespace is not None:
-            return
-
         test_specs = [
             make_test_spec(
                 inst,
@@ -245,6 +310,13 @@ class SWEbenchSandbox:
             )
             for inst in instances
         ]
+
+        if self.namespace is not None:
+            client = self._get_client()
+            image_keys = sorted({spec.instance_image_key for spec in test_specs})
+            for image_key in image_keys:
+                _ensure_image(client, image_key)
+            return
 
         client = self._get_client()
         try:
@@ -441,10 +513,9 @@ class SWEbenchSandbox:
             try:
                 _ensure_image(client, test_spec.instance_image_key)
             except Exception as e:  # pragma: no cover
-                if is_docker_unavailable_error(e):
-                    raise RuntimeError(
-                        _remote_image_runtime_error_message(test_spec.instance_image_key)
-                    ) from e
+                reraise_docker_unavailable(e, scope="SWE-bench Lite image pull")
+                if _is_retryable_podman_image_error(e):
+                    raise
                 if test_spec.arch == "arm64":
                     alt_spec = make_test_spec(
                         instance,

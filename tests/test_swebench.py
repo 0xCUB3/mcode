@@ -10,10 +10,12 @@ import pytest
 import mcode.execution.sandbox as sandbox_module
 from mcode.execution.sandbox import DockerUnavailableError, is_docker_unavailable_error
 from mcode.execution.swebench import (
+    RetryablePodmanImageError,
     SWEbenchSandbox,
     _build_agent_setup_script,
     _build_agent_shell_command,
-    _remote_image_runtime_error_message,
+    _ensure_image,
+    _is_retryable_podman_image_error,
 )
 
 
@@ -133,12 +135,53 @@ def test_is_docker_unavailable_error_matches_podman_socket_timeouts():
     assert is_docker_unavailable_error(exc) is True
 
 
-def test_remote_image_runtime_error_message_mentions_container_runtime():
-    message = _remote_image_runtime_error_message("swebench/example:latest")
+def test_retryable_podman_image_error_matches_observed_unpack_failure():
+    err = (
+        "writing blob: adding layer with blob "
+        "sha256:abc: unpacking failed: Chown error detected. "
+        "potentially insufficient UIDs or GIDs available in user namespace"
+    )
 
-    assert "container runtime" in message
-    assert "swebench/example:latest" in message
-    assert "podman/Docker socket timed out or was unavailable" in message
+    assert _is_retryable_podman_image_error(err) is True
+
+
+def test_ensure_image_retries_retryable_pull_failure(tmp_path, monkeypatch):
+    class ImageNotFound(Exception):
+        pass
+
+    class FakeImages:
+        def get(self, name):
+            raise ImageNotFound(name)
+
+    class FakeApi:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def pull(self, fq, *, stream, decode):
+            assert fq == "docker.io/swebench/example:latest"
+            assert stream is True
+            assert decode is True
+            self.calls += 1
+            yield {"error": "unpacking failed: Chown error detected"}
+
+    class FakeClient:
+        images = FakeImages()
+
+        def __init__(self) -> None:
+            self.api = FakeApi()
+
+    fake_docker = types.SimpleNamespace(
+        errors=types.SimpleNamespace(ImageNotFound=ImageNotFound)
+    )
+    monkeypatch.setitem(sys.modules, "docker", fake_docker)
+    monkeypatch.setenv("MCODE_PODMAN_LOCK_DIR", str(tmp_path))
+    monkeypatch.setenv("MCODE_PODMAN_PULL_RETRY_DELAY", "0")
+
+    client = FakeClient()
+    with pytest.raises(RetryablePodmanImageError):
+        _ensure_image(client, "swebench/example:latest")
+
+    assert client.api.calls == 2
 
 
 def test_repo_context_disables_network_for_source_container(monkeypatch):

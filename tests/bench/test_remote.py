@@ -82,6 +82,10 @@ def test_run_bench_on_bluevela_uses_tmp_for_podman_storage(tmp_path, monkeypatch
     assert "export CONTAINERS_CONF" in launch_cmd
     assert 'podman unshare rm -rf "$XDG_RUNTIME_DIR"' in launch_cmd
     assert "trap cleanup EXIT" in launch_cmd
+    assert 'export MCODE_PODMAN_LOCK_DIR="$XDG_RUNTIME_DIR"' in launch_cmd
+    assert "max_infra_retries=1" in launch_cmd
+    assert 'if [ "$rc" = "86" ]' in launch_cmd
+    assert "resetting runtime" in launch_cmd
     assert "/u/skula/mcode-shared" not in launch_cmd
 
 

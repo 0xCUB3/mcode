@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from glob import glob
 from pathlib import Path
@@ -1600,6 +1603,91 @@ def _merge_into_results_db(*, db: Path, shard_paths: list[Path]) -> RunSummary:
     return _latest_run_summary(db)
 
 
+SHARDED_INFRA_EXIT_CODE = 86
+_SHARD_INFRA_POLL_SECONDS = 20.0
+_INFRA_ERROR_PATTERNS = (
+    "writing blob",
+    "adding layer",
+    "unpacking failed",
+    "chown error detected",
+    "insufficient uids or gids",
+    "podman system migrate",
+    "disk i/o error",
+    "database is locked",
+    "podman socket did not come up",
+    "no such container",
+)
+
+
+@dataclass(frozen=True)
+class _InfraFailure:
+    shard_db: Path
+    task_id: str
+    reason: str
+    detail: str | None
+
+
+def _is_retryable_infra_exception(exc: object) -> bool:
+    try:
+        from mcode.execution.swebench import _is_retryable_podman_image_error
+
+        return _is_retryable_podman_image_error(exc)
+    except Exception:
+        text = str(exc).lower()
+        return any(pattern in text for pattern in _INFRA_ERROR_PATTERNS)
+
+
+def _detect_infra_failures(shard_paths: list[Path]) -> list[_InfraFailure]:
+    failures: list[_InfraFailure] = []
+    for shard_db in shard_paths:
+        if not shard_db.exists():
+            continue
+        try:
+            conn = sqlite3.connect(f"file:{shard_db}?mode=ro", uri=True, timeout=1)
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT task_id, terminal_reason, error
+                    FROM task_results
+                    WHERE terminal_reason = 'infra_failure'
+                       OR error IS NOT NULL
+                    """
+                ).fetchall()
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            continue
+        for row in rows:
+            reason = str(row["terminal_reason"] or "")
+            detail = row["error"]
+            detail_text = str(detail or "").lower()
+            if reason == "infra_failure" or any(
+                pattern in detail_text for pattern in _INFRA_ERROR_PATTERNS
+            ):
+                failures.append(
+                    _InfraFailure(
+                        shard_db=shard_db,
+                        task_id=str(row["task_id"]),
+                        reason=reason or "infra_error",
+                        detail=detail,
+                    )
+                )
+    return failures
+
+
+def _stop_running_shards(
+    procs: list[tuple[int, subprocess.Popen[str], Path, Path, threading.Thread]],
+) -> None:
+    for _, proc, _, _, _ in procs:
+        if proc.poll() is None:
+            proc.terminate()
+    for _, proc, _, _, thread in procs:
+        if proc.poll() is None:
+            proc.wait()
+        thread.join()
+
+
 def _stream_shard_output(
     *,
     proc: subprocess.Popen[str],
@@ -1693,22 +1781,51 @@ def _run_sharded_benchmark(
             )
             procs.append((shard_index, proc, shard_db, shard_log, thread))
 
-        for shard_index, proc, shard_db, shard_log, thread in procs:
-            rc = proc.wait()
-            thread.join()
-            if rc == 0:
-                shard_paths.append(shard_db)
-                typer.echo(f"✓ shard {shard_index + 1}/{shards} finished", err=True)
-                continue
-            failed.append((shard_index, rc, shard_log))
-            typer.echo(
-                f"✗ shard {shard_index + 1}/{shards} failed exit={rc} log={shard_log}",
-                err=True,
-            )
+        remaining = {shard_index for shard_index, *_ in procs}
+        while remaining:
+            infra_failures = _detect_infra_failures([shard_db for _, _, shard_db, _, _ in procs])
+            if infra_failures:
+                for failure in infra_failures:
+                    typer.echo(
+                        "✗ infra failure detected "
+                        f"task={failure.task_id} db={failure.shard_db} "
+                        f"reason={failure.reason}: {failure.detail or ''}",
+                        err=True,
+                    )
+                _stop_running_shards(procs)
+                raise typer.Exit(SHARDED_INFRA_EXIT_CODE)
+
+            made_progress = False
+            for shard_index, proc, shard_db, shard_log, thread in procs:
+                if shard_index not in remaining:
+                    continue
+                rc = proc.poll()
+                if rc is None:
+                    continue
+                thread.join()
+                remaining.remove(shard_index)
+                made_progress = True
+                if rc == 0:
+                    shard_paths.append(shard_db)
+                    typer.echo(f"✓ shard {shard_index + 1}/{shards} finished", err=True)
+                    continue
+                if rc == SHARDED_INFRA_EXIT_CODE:
+                    typer.echo(
+                        f"✗ shard {shard_index + 1}/{shards} hit retryable infra "
+                        f"exit={rc} log={shard_log}",
+                        err=True,
+                    )
+                    _stop_running_shards(procs)
+                    raise typer.Exit(SHARDED_INFRA_EXIT_CODE)
+                failed.append((shard_index, rc, shard_log))
+                typer.echo(
+                    f"✗ shard {shard_index + 1}/{shards} failed exit={rc} log={shard_log}",
+                    err=True,
+                )
+            if remaining and not made_progress:
+                time.sleep(_SHARD_INFRA_POLL_SECONDS)
     except KeyboardInterrupt:
-        for _, proc, _, _, _ in procs:
-            if proc.poll() is None:
-                proc.terminate()
+        _stop_running_shards(procs)
         raise
 
     if failed:
@@ -1745,7 +1862,13 @@ def _run_single_benchmark(
 ) -> None:
     parsed_task_ids = _parse_task_ids(task_ids)
     runner = BenchmarkRunner(config=config, results_db=ResultsDB(db))
-    summary = runner.run_benchmark(benchmark, limit=limit, task_ids=parsed_task_ids)
+    try:
+        summary = runner.run_benchmark(benchmark, limit=limit, task_ids=parsed_task_ids)
+    except Exception as e:
+        if benchmark.startswith("swebench") and _is_retryable_infra_exception(e):
+            typer.echo(f"✗ retryable infra failure before task loop: {e}", err=True)
+            raise typer.Exit(SHARDED_INFRA_EXIT_CODE) from e
+        raise
     _print_run_summary(
         summary=summary,
         benchmark=benchmark,
