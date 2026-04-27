@@ -128,23 +128,25 @@ def _ensure_image(client: object, name: str) -> None:
     except ValueError:
         raise ValueError(f"MCODE_PODMAN_PULL_RETRY_DELAY must be a float (got {delay_raw!r})")
 
+    from mcode.util.retry import with_backoff
+
     with _podman_image_pull_lock():
         if _image_present(client, name, fq, docker):
             return
-        last_error: BaseException | None = None
-        for attempt in range(attempts):
-            try:
-                _pull_image_once(client, fq)
-                return
-            except Exception as exc:
-                if not _is_retryable_podman_image_error(exc):
-                    raise
-                last_error = exc
-                if attempt + 1 < attempts and delay > 0:
-                    time.sleep(delay)
-        raise RetryablePodmanImageError(
-            f"Retryable podman image pull failed for {fq}: {last_error}"
-        ) from last_error
+        try:
+            with_backoff(
+                lambda: _pull_image_once(client, fq),
+                is_retryable=_is_retryable_podman_image_error,
+                max_attempts=attempts,
+                base_sleep_s=delay if delay > 0 else 0.001,
+                max_sleep_s=max(delay, 30.0),
+            )
+        except Exception as last_error:
+            if _is_retryable_podman_image_error(last_error):
+                raise RetryablePodmanImageError(
+                    f"Retryable podman image pull failed for {fq}: {last_error}"
+                ) from last_error
+            raise
 
 
 def _truncate_command_output(output: str, *, max_chars: int = 10_000) -> str:

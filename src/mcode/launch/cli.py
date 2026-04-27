@@ -159,53 +159,18 @@ def cmd_status(
     raw: bool = typer.Option(False, "--raw", help="include internal LSF state"),
 ) -> None:
     """List currently-known servers and runs."""
+    from mcode.launch.formatting import format_status_json, format_status_lines
+
     s = state.load()
     if json_mode:
-        payload = {
-            "servers": [
-                {
-                    "id": srv.id,
-                    "target": srv.target.value,
-                    "endpoint": srv.endpoint,
-                    "model": srv.model,
-                    "status": srv.status,
-                    "job_id": srv.job_id,
-                    **({"lsf_state": srv.metadata.get("lsf_state")} if raw else {}),
-                }
-                for srv in s.servers
-            ],
-            "runs": [
-                {
-                    "id": r.id,
-                    "target": r.target.value,
-                    "status": r.status.value,
-                    "benchmark": r.benchmark,
-                    "server_id": r.server_id,
-                    "shards": len(r.shard_job_ids) or len(r.shard_pids),
-                }
-                for r in s.runs
-            ],
-        }
-        print(json.dumps(payload, indent=2))
+        print(json.dumps(format_status_json(s, raw=raw), indent=2))
         return
-
-    if not s.servers and not s.runs:
+    lines = format_status_lines(s)
+    if not lines:
         print("no servers or runs recorded")
         return
-    if s.servers:
-        print("servers:")
-        for srv in s.servers:
-            marker = {"healthy": "✓", "pending": "·", "failed": "✗", "stopped": "—"}.get(
-                srv.status, "?"
-            )
-            print(
-                f"  {marker} {srv.id}  [{srv.target.value}]  {srv.model}"
-                f"  {srv.endpoint or '(no endpoint yet)'}  ({srv.status})"
-            )
-    if s.runs:
-        print("runs:")
-        for r in s.runs:
-            print(f"  - {r.id}  [{r.target.value}]  {r.benchmark}  ({r.status.value})")
+    for line in lines:
+        print(line)
 
 
 # ---------------------------------------------------------------------------
@@ -458,204 +423,23 @@ def cmd_sync(
     Respects `.gitignore` via `--filter=:- .gitignore`. Use `--dry-run` to
     preview the file list before transferring.
     """
-    import subprocess
+    from mcode.launch.sync import SyncSpec, run_sync
 
-    if target != "bluevela":
+    spec = SyncSpec(target=target, dry_run=dry_run, src=src, bootstrap=bootstrap)
+
+    def block():
+        return run_sync(spec)
+
+    result = _run(block)
+    if result.rc != 0:
         _print_error(
             LaunchError(
-                what=f"sync only supports target=bluevela (got {target!r})",
-                why="local targets don't need a remote push",
-                next="use `rsync` directly or skip sync",
-            )
-        )
-        raise typer.Exit(1)
-
-    cfg = _run(config_mod.load)
-    bv = cfg.bluevela
-    if not bv.login or not bv.workspace_root:
-        _print_error(
-            LaunchError(
-                what="bluevela config incomplete for sync",
-                why="need [bluevela].login and [bluevela].workspace_root",
-                next="run `mcode launch doctor bluevela --init`",
-            )
-        )
-        raise typer.Exit(1)
-
-    # Default source: repo root detected via git. Codex review fix: fail
-    # closed if we can't detect a repo root. Falling back to cwd is
-    # dangerous with --delete — a user running sync from the wrong dir
-    # could mirror that dir to the remote and wipe the real workspace.
-    if src is None:
-        r = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if r.returncode != 0 or not r.stdout.strip():
-            _print_error(
-                LaunchError(
-                    what="cannot determine source repo",
-                    why="not inside a git repo (git rev-parse --show-toplevel failed)",
-                    next="pass --src /path/to/repo explicitly",
-                )
-            )
-            raise typer.Exit(1)
-        src = Path(r.stdout.strip())
-
-    if not src.is_dir():
-        _print_error(
-            LaunchError(
-                what=f"source {src} is not a directory",
-                why="",
-                next="pass --src /path/to/repo",
-            )
-        )
-        raise typer.Exit(1)
-
-    # Codex review fix: refuse --delete unless the remote destination has
-    # our marker file confirming it's a launcher-managed workspace. Missing
-    # marker = user either misconfigured workspace_root to a broader dir,
-    # or never ran sync before. In both cases, bail and ask them to `touch`
-    # the marker explicitly rather than risk wiping unrelated remote data.
-    marker = ".mcode-launch-workspace"
-    ssh_opts = [
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "ConnectTimeout=10",
-        "-o",
-        "ServerAliveInterval=15",
-        "-o",
-        "ServerAliveCountMax=3",
-        "-o",
-        "StrictHostKeyChecking=accept-new",
-    ]
-    # Probe returns three pieces: marker presence, directory emptiness, and
-    # a count of entries (so we can report something helpful on error).
-    # Codex verify-pass fix: marker missing + non-empty remote = we don't
-    # know who owns those files. Refuse rather than risk `rsync --delete`
-    # nuking them. Only --bootstrap overrides.
-    probe_cmd = (
-        f"mkdir -p {bv.workspace_root} && "
-        f"if test -f {bv.workspace_root}/{marker}; then echo marker; "
-        f'elif [ -z "$(ls -A {bv.workspace_root} 2>/dev/null)" ]; then echo empty; '
-        f"else echo populated; fi"
-    )
-    probe = subprocess.run(
-        ["ssh", *ssh_opts, bv.login, probe_cmd],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if probe.returncode != 0:
-        _print_error(
-            LaunchError(
-                what="ssh to remote failed during sync preflight",
-                why=(probe.stderr or "").strip()[:200],
-                next="check VPN + ssh keys; try `mcode launch doctor bluevela`",
-            )
-        )
-        raise typer.Exit(1)
-
-    remote_state = probe.stdout.strip()
-    if remote_state == "marker":
-        pass  # launcher-owned workspace; --delete is safe
-    elif remote_state == "empty":
-        # First sync into an empty dir — safe; create marker for future runs.
-        r = subprocess.run(
-            ["ssh", *ssh_opts, bv.login, f"touch {bv.workspace_root}/{marker}"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if r.returncode != 0:
-            _print_error(
-                LaunchError(
-                    what="failed to create workspace marker",
-                    why=(r.stderr or "").strip()[:200],
-                    next=f"check write permissions on {bv.workspace_root}",
-                )
-            )
-            raise typer.Exit(1)
-        print(f"note: created marker {bv.workspace_root}/{marker}")
-    elif remote_state == "populated" and bootstrap:
-        print(f"⚠ --bootstrap: treating populated {bv.workspace_root} as owned")
-        subprocess.run(
-            ["ssh", *ssh_opts, bv.login, f"touch {bv.workspace_root}/{marker}"],
-            check=False,
-        )
-    elif remote_state == "populated":
-        _print_error(
-            LaunchError(
-                what=f"{bv.workspace_root} is non-empty and has no launcher marker",
-                why=(
-                    f"refusing to `rsync --delete` into a directory we don't own. "
-                    f"marker {marker} is missing and the dir has files"
-                ),
-                next=(
-                    f"either (a) pass --bootstrap to claim the dir (destructive!), "
-                    f"or (b) `ssh {bv.login} touch {bv.workspace_root}/{marker}` "
-                    f"if you manually verified it's safe, or (c) point "
-                    f"[bluevela].workspace_root at a fresh path"
-                ),
-            )
-        )
-        raise typer.Exit(1)
-    else:
-        _print_error(
-            LaunchError(
-                what=f"unexpected remote state probe result: {remote_state!r}",
-                why="ssh returned something other than marker/empty/populated",
-                next="inspect the remote filesystem manually",
-            )
-        )
-        raise typer.Exit(1)
-
-    dest = f"{bv.login}:{bv.workspace_root}/"
-    gitignore = src / ".gitignore"
-    # Codex review fix: rsync must go over SSH with the same safety options
-    # SshClient uses — no interactive prompts, fast failure on transport.
-    ssh_cmd = "ssh " + " ".join(ssh_opts)
-    argv = [
-        "rsync",
-        "-az",
-        "-e",
-        ssh_cmd,
-        "--delete",
-        "--stats",
-        "-v",
-        "--exclude=.git/",
-        "--exclude=.venv/",
-        "--exclude=__pycache__/",
-        "--exclude=.pytest_cache/",
-        "--exclude=.ruff_cache/",
-        "--exclude=node_modules/",
-        # Remote-only dirs that the launcher writes and sync must never wipe.
-        "--exclude=bench-runs/",
-        "--exclude=runs/",
-        "--exclude=benchmarks/",
-        f"--exclude={marker}",  # never delete our own safety marker
-    ]
-    if gitignore.exists():
-        argv.append("--filter=:- .gitignore")
-    if dry_run:
-        argv.append("--dry-run")
-    argv += [str(src) + "/", dest]
-
-    print(f"{'preview' if dry_run else 'sync'}: {src} → {dest}")
-    print(f"  {' '.join(argv)}")
-    r = subprocess.run(argv)
-    if r.returncode != 0:
-        _print_error(
-            LaunchError(
-                what=f"rsync exited {r.returncode}",
+                what=f"rsync exited {result.rc}",
                 why="",
                 next="check SSH reachability, quotas, and paths",
             )
         )
-        raise typer.Exit(r.returncode)
+        raise typer.Exit(result.rc)
 
 
 if __name__ == "__main__":

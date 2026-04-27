@@ -35,8 +35,10 @@ import re
 import shlex
 import time
 import uuid
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from mcode.launch import config as config_mod
 from mcode.launch import state
@@ -74,6 +76,30 @@ _DEFAULT_VLLM_PORT = 8321
 
 _SCRIPTS_DIR = Path(__file__).parent / "scripts"
 _RESOURCES_DIR = Path(__file__).parent / "resources"
+
+_MAX_SSH_FAILS = 5  # consecutive transport errors before we give up on a phase
+
+
+def _absorb_ssh_blip(streak: int, exc: TransportError, *, phase: str) -> int:
+    """Update SSH-fail streak after a TransportError during a polling loop.
+
+    Returns the new streak count (caller stores it). Sleeps with exponential
+    backoff bounded at 30s. Raises LaunchError when the streak exceeds
+    `_MAX_SSH_FAILS` so the caller can stop polling immediately.
+
+    Used by the queued and starting phases of `launch()` — both polled
+    `_bjobs_state` / `_remote_host_file` against the cluster login and used
+    to duplicate this exact streak/sleep/raise pattern inline.
+    """
+    streak += 1
+    if streak >= _MAX_SSH_FAILS:
+        raise LaunchError(
+            what=f"lost SSH during {phase}",
+            why=f"{_MAX_SSH_FAILS} consecutive ssh failures: {exc}",
+            next=_hint_for(str(exc)),
+        ) from exc
+    time.sleep(min(2**streak, 30))
+    return streak
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +345,29 @@ def _pick_queue(ssh: SshClient, cfg: BluevelaConfig) -> str:
 # ---------------------------------------------------------------------------
 # public API
 # ---------------------------------------------------------------------------
+@dataclass
+class _LaunchContext:
+    """Shared state passed between the four phase functions of `launch()`.
+
+    Mutable. Each phase reads what's been populated by earlier phases and
+    writes its own outputs. Defaults to the values produced by `_phase_submit`
+    so the queued/starting phases can rely on them as non-None.
+    """
+
+    spec: LaunchSpec
+    reporter: Reporter
+    ssh: SshClient
+    cfg: LaunchConfig
+    state_path: Path | None
+    run_id: str
+    run_dir: str
+    local_log: Path
+    queue_chosen: str | None = None
+    job_id: str = ""
+    env_payload: dict[str, Any] = field(default_factory=dict)
+    host: str | None = None
+
+
 def launch(
     spec: LaunchSpec,
     reporter: Reporter,
@@ -345,37 +394,69 @@ def launch(
     bv = cfg.bluevela
 
     run_id = f"bv-{uuid.uuid4().hex[:8]}"
-    run_dir = _shared_path(bv, "runs", run_id)
-    local_log = Path(f"/tmp/mcode-bluevela-{run_id}.log")
-
+    ctx = _LaunchContext(
+        spec=spec,
+        reporter=reporter,
+        ssh=ssh,
+        cfg=cfg,
+        state_path=state_path,
+        run_id=run_id,
+        run_dir=_shared_path(bv, "runs", run_id),
+        local_log=Path(f"/tmp/mcode-bluevela-{run_id}.log"),
+    )
     reporter.add_phases(PHASES)
 
-    # --- submit phase ------------------------------------------------------
-    queue_chosen: str | None = None
+    # `_tear_down` is registered BEFORE `_phase_submit` runs so it covers the
+    # full window from bsub accept through ready: if `_parse_job_id`,
+    # `_require_safe`, `state.update`, or any later phase raises after bsub
+    # has succeeded, the orphan LSF job still gets bkill'd. The job-id check
+    # makes the cleanup a no-op when bsub never accepted.
+    def _tear_down() -> None:
+        if not ctx.job_id:
+            return
+        try:
+            ssh.run(f"bkill {_q(ctx.job_id)} >/dev/null 2>&1 || true", timeout=15)
+        except Exception:
+            pass
+
+    try:
+        _phase_submit(ctx)
+        _phase_queued(ctx)
+        _phase_starting(ctx)
+        return _phase_ready(ctx)
+    except BaseException:
+        _tear_down()
+        raise
+
+
+def _phase_submit(ctx: _LaunchContext) -> None:
+    """Pick a queue, upload script + env.json, bsub. On success ctx.job_id and
+    ctx.queue_chosen are set, and a pending ServerRecord is persisted so the
+    caller can bkill the job if a later phase fails."""
+    bv = ctx.cfg.bluevela
 
     def submit_feed() -> str:
         return f"validating queues: {', '.join(bv.queue_order)}"
 
-    reporter.start("submit", feed=submit_feed)
+    ctx.reporter.start("submit", feed=submit_feed)
     try:
-        queue = _pick_queue(ssh, bv)
-        queue_chosen = queue
+        queue = _pick_queue(ctx.ssh, bv)
+        ctx.queue_chosen = queue
     except TransportError as e:
-        reporter.finish(PhaseStatus.FAILED, detail=str(e))
+        ctx.reporter.finish(PhaseStatus.FAILED, detail=str(e))
         raise LaunchError(
             what="cannot reach Blue Vela",
             why=str(e),
             next=_hint_for(str(e)),
         ) from e
 
-    # Validate everything that will be interpolated into remote shell
-    # commands before we touch the cluster. This is defense-in-depth on top of
-    # shlex.quote — a malicious config never reaches the command line.
+    # Defense in depth: validate everything we'll interpolate into remote
+    # shell commands before we touch the cluster.
     _require_safe("queue", queue, _SAFE_IDENT_RE)
     _require_safe("group", bv.group, _SAFE_IDENT_RE)
     _require_safe("gpu_mode", bv.gpu_mode, _SAFE_IDENT_RE)
-    _require_safe("run_dir", run_dir, _SAFE_POSIX_PATH_RE)
-    tp = spec.profile.tensor_parallel
+    _require_safe("run_dir", ctx.run_dir, _SAFE_POSIX_PATH_RE)
+    tp = ctx.spec.profile.tensor_parallel
     if not isinstance(tp, int) or tp <= 0 or tp > 32:
         raise LaunchError(
             what=f"profile.tensor_parallel out of range: {tp!r}",
@@ -383,220 +464,195 @@ def launch(
             next="fix the profile in launch/profiles.py",
         )
 
-    # Upload env.json and the vLLM script.
-    env_payload = build_env_json(spec, bv, run_dir=run_dir)
+    env_payload = build_env_json(ctx.spec, bv, run_dir=ctx.run_dir)
     env_payload["QUEUE"] = queue
+    ctx.env_payload = env_payload
 
-    staging = Path(f"/tmp/mcode-bv-stage-{run_id}")
+    staging = Path(f"/tmp/mcode-bv-stage-{ctx.run_id}")
     staging.mkdir(parents=True, exist_ok=True)
     (staging / "env.json").write_text(json.dumps(env_payload, indent=2))
 
-    # Upload the script and env.json into run_dir (created by remote mkdir).
-    ssh.run(f"mkdir -p {_q(run_dir)}", timeout=30)
-    ssh.upload(_SCRIPTS_DIR / "bluevela_vllm.sh", f"{run_dir}/vllm.sh", timeout=60)
-    ssh.upload(staging / "env.json", f"{run_dir}/env.json", timeout=60)
-    # Copy the chat template up on first use.
-    if spec.profile.chat_template:
-        tmpl = _RESOURCES_DIR / spec.profile.chat_template
+    ctx.ssh.run(f"mkdir -p {_q(ctx.run_dir)}", timeout=30)
+    ctx.ssh.upload(_SCRIPTS_DIR / "bluevela_vllm.sh", f"{ctx.run_dir}/vllm.sh", timeout=60)
+    ctx.ssh.upload(staging / "env.json", f"{ctx.run_dir}/env.json", timeout=60)
+    if ctx.spec.profile.chat_template:
+        tmpl = _RESOURCES_DIR / ctx.spec.profile.chat_template
         if not tmpl.exists():
             raise LaunchError(
-                what=f"chat template {spec.profile.chat_template!r} missing locally",
+                what=f"chat template {ctx.spec.profile.chat_template!r} missing locally",
                 why=f"expected at {tmpl}",
                 next="add the template to src/mcode/launch/resources/ and retry",
             )
         remote_tmpl = _shared_path(bv, "templates")
         _require_safe("templates_dir", remote_tmpl, _SAFE_POSIX_PATH_RE)
-        ssh.run(f"mkdir -p {_q(remote_tmpl)}", timeout=30)
-        ssh.upload(tmpl, f"{remote_tmpl}/{spec.profile.chat_template}", timeout=60)
+        ctx.ssh.run(f"mkdir -p {_q(remote_tmpl)}", timeout=30)
+        ctx.ssh.upload(tmpl, f"{remote_tmpl}/{ctx.spec.profile.chat_template}", timeout=60)
 
     bsub_cmd = (
         f"bsub -G {_q(bv.group)} -q {_q(queue)} "
-        f"-J {_q(f'mcode-vllm-{run_id}')} -n 1 -R {_q('span[hosts=1]')} "
+        f"-J {_q(f'mcode-vllm-{ctx.run_id}')} -n 1 -R {_q('span[hosts=1]')} "
         f"-gpu {_q(f'num={tp}:mode={bv.gpu_mode}')} "
-        f"-o {_q(f'{run_dir}/vllm.log')} -e {_q(f'{run_dir}/vllm.log')} "
-        f"bash {_q(f'{run_dir}/vllm.sh')}"
+        f"-o {_q(f'{ctx.run_dir}/vllm.log')} -e {_q(f'{ctx.run_dir}/vllm.log')} "
+        f"bash {_q(f'{ctx.run_dir}/vllm.sh')}"
     )
-    r = ssh.run(bsub_cmd, timeout=60)
+    r = ctx.ssh.run(bsub_cmd, timeout=60)
     if not r.ok:
-        reporter.finish(PhaseStatus.FAILED, detail=(r.stderr or "bsub failed").strip()[:80])
+        ctx.reporter.finish(PhaseStatus.FAILED, detail=(r.stderr or "bsub failed").strip()[:80])
         raise LaunchError(
             what="bsub rejected the submission",
             why=(r.stderr or r.stdout).strip()[:400],
             next=_hint_for(r.stderr or r.stdout),
-            logs=str(local_log),
+            logs=str(ctx.local_log),
         )
-    job_id = _parse_job_id(r.stdout + r.stderr)
-    _require_safe("job_id", job_id, _SAFE_DIGITS_RE)
-    reporter.finish(PhaseStatus.DONE, detail=f"job {job_id} in queue {queue}")
+    # Set ctx.job_id BEFORE _require_safe so the outer _tear_down has a valid
+    # bkill target if the safety check itself rejects the parsed id.
+    ctx.job_id = _parse_job_id(r.stdout + r.stderr)
+    _require_safe("job_id", ctx.job_id, _SAFE_DIGITS_RE)
+    ctx.reporter.finish(PhaseStatus.DONE, detail=f"job {ctx.job_id} in queue {queue}")
 
-    # Codex fix: persist a pending ServerRecord IMMEDIATELY after bsub accept.
-    # If any later step fails, the caller still has a handle to bkill the job.
-    pending_server = ServerRecord(
-        id=f"server-{run_id}",
+    # Persist a pending ServerRecord immediately so the caller can find this
+    # job for bkill purposes if any later phase fails.
+    pending = ServerRecord(
+        id=f"server-{ctx.run_id}",
         target=Target.BLUEVELA,
         endpoint="",
-        model=spec.model,
-        config_hash=_config_hash(spec),
-        job_id=job_id,
-        log_path=f"{run_dir}/vllm.log",
+        model=ctx.spec.model,
+        config_hash=_config_hash(ctx.spec),
+        job_id=ctx.job_id,
+        log_path=f"{ctx.run_dir}/vllm.log",
         started_at=_now_iso(),
         status="pending",
         metadata={
             "queue": queue,
             "group": bv.group,
-            "run_dir": run_dir,
+            "run_dir": ctx.run_dir,
             "login": bv.login,
         },
     )
-    state.update(state_path, lambda s: s.upsert_server(pending_server))
+    state.update(ctx.state_path, lambda s: s.upsert_server(pending))
 
-    # Any exception from here on must bkill the accepted job, otherwise we
-    # orphan a long-running GPU job with no way for the user to discover it.
-    def _tear_down() -> None:
+
+def _phase_queued(ctx: _LaunchContext) -> None:
+    """Poll bjobs until LSF transitions to RUN. Terminal LSF states
+    (DONE/EXIT/PSUSP/USUSP) before the endpoint exists are treated as fatal
+    so we surface them in seconds, not the full host_file deadline."""
+    bv = ctx.cfg.bluevela
+
+    def queued_feed() -> str:
         try:
-            ssh.run(f"bkill {_q(job_id)} >/dev/null 2>&1 || true", timeout=15)
-        except Exception:
-            pass
+            stat = _bjobs_state(ctx.ssh, ctx.job_id)
+        except TransportError as e:
+            raise TransportError(str(e)) from e
+        return f"LSF state: {stat or '?'}"
 
-    try:
-        # --- queued phase --------------------------------------------------
-        def queued_feed() -> str:
-            try:
-                stat = _bjobs_state(ssh, job_id)
-            except TransportError as e:
-                raise TransportError(str(e)) from e
-            return f"LSF state: {stat or '?'}"
+    ctx.reporter.start("queued", feed=queued_feed, mode="slow")
+    host_deadline = time.monotonic() + _HOST_FILE_DEADLINE_S
+    ssh_fail_streak = 0
+    while True:
+        try:
+            stat = _bjobs_state(ctx.ssh, ctx.job_id)
+            ssh_fail_streak = 0
+        except TransportError as e:
+            ssh_fail_streak = _absorb_ssh_blip(ssh_fail_streak, e, phase="queue wait")
+            continue
+        if stat is None or stat.upper() == "RUN":
+            break
+        if stat.upper() in ("DONE", "EXIT", "PSUSP", "USUSP"):
+            tail = _remote_log_tail(ctx.ssh, ctx.run_dir)
+            ctx.reporter.finish(PhaseStatus.FAILED, detail=f"LSF {stat}")
+            raise LaunchError(
+                what=f"LSF job reached {stat} before running",
+                why=tail or f"bjobs state: {stat}",
+                next=_hint_for(tail or stat),
+                logs=f"ssh {bv.login} tail -n 50 {ctx.run_dir}/vllm.log",
+            )
+        if time.monotonic() > host_deadline:
+            ctx.reporter.finish(PhaseStatus.FAILED, detail="queued too long")
+            raise LaunchError(
+                what=f"LSF job stayed in {stat} past {_HOST_FILE_DEADLINE_S}s",
+                why="queue backlog",
+                next="try a different queue (edit [bluevela].queue_order) or retry later",
+            )
+        time.sleep(_HEALTH_POLL_SLOW_S)
+    ctx.reporter.finish(PhaseStatus.DONE, detail=f"job {ctx.job_id} running")
 
-        reporter.start("queued", feed=queued_feed, mode="slow")
-        host_deadline = time.monotonic() + _HOST_FILE_DEADLINE_S
-        ssh_fail_streak = 0
-        _MAX_SSH_FAILS = 5
-        while True:
-            try:
-                stat = _bjobs_state(ssh, job_id)
-                ssh_fail_streak = 0
-            except TransportError as e:
-                ssh_fail_streak += 1
-                if ssh_fail_streak >= _MAX_SSH_FAILS:
-                    raise LaunchError(
-                        what="lost SSH during queue wait",
-                        why=f"{_MAX_SSH_FAILS} consecutive ssh failures: {e}",
-                        next=_hint_for(str(e)),
-                    ) from e
-                time.sleep(min(2**ssh_fail_streak, 30))
-                continue
-            if stat is None or stat.upper() == "RUN":
-                break
-            # Codex pre-merge-review fix: DONE before the endpoint is even
-            # ready means the job exited cleanly without ever serving.
-            # Previously we fell through to the starting loop which would
-            # then wait the full 40 min deadline for an endpoint that
-            # never appears. Treat DONE-before-ready as terminal.
-            if stat.upper() in ("DONE", "EXIT", "PSUSP", "USUSP"):
-                tail = _remote_log_tail(ssh, run_dir)
-                reporter.finish(PhaseStatus.FAILED, detail=f"LSF {stat}")
-                raise LaunchError(
-                    what=f"LSF job reached {stat} before running",
-                    why=tail or f"bjobs state: {stat}",
-                    next=_hint_for(tail or stat),
-                    logs=f"ssh {bv.login} tail -n 50 {run_dir}/vllm.log",
-                )
-            if time.monotonic() > host_deadline:
-                reporter.finish(PhaseStatus.FAILED, detail="queued too long")
-                raise LaunchError(
-                    what=f"LSF job stayed in {stat} past {_HOST_FILE_DEADLINE_S}s",
-                    why="queue backlog",
-                    next="try a different queue (edit [bluevela].queue_order) or retry later",
-                )
-            time.sleep(_HEALTH_POLL_SLOW_S)
-        reporter.finish(PhaseStatus.DONE, detail=f"job {job_id} running")
 
-        # --- starting phase ------------------------------------------------
-        def starting_feed() -> str:
-            tail = _remote_log_tail(ssh, run_dir, lines=1)
-            host_inner = _remote_host_file(ssh, run_dir)
-            where = f"host {host_inner}" if host_inner else "waiting for host file"
-            return f"{where} · {tail}" if tail else where
+def _phase_starting(ctx: _LaunchContext) -> None:
+    """Poll the host file and HTTP /v1/models until the endpoint is healthy
+    or the LSF job exits. ctx.host is populated on success."""
+    bv = ctx.cfg.bluevela
 
-        reporter.start("starting", feed=starting_feed, mode="slow")
-        deadline = time.monotonic() + _STARTUP_ABSOLUTE_DEADLINE_S
-        host: str | None = None
-        starting_fail_streak = 0
-        while True:
-            try:
-                host = _remote_host_file(ssh, run_dir)
-                if host:
-                    ok, status = _http_health(ssh, host, _DEFAULT_VLLM_PORT)
-                    if ok:
-                        break
-                starting_fail_streak = 0
-            except TransportError as e:
-                starting_fail_streak += 1
-                if starting_fail_streak >= _MAX_SSH_FAILS:
-                    raise LaunchError(
-                        what="lost SSH during startup",
-                        why=f"{_MAX_SSH_FAILS} consecutive ssh failures: {e}",
-                        next=_hint_for(str(e)),
-                    ) from e
-                time.sleep(min(2**starting_fail_streak, 30))
-                continue
-            # Codex pre-merge-review fix: also treat DONE as terminal-before-
-            # ready. A job that exited cleanly without becoming healthy has
-            # failed from our perspective and we should surface it immediately
-            # instead of waiting the 40 min deadline.
-            if _bjobs_state(ssh, job_id) in (None, "EXIT", "DONE"):
-                tail = _remote_log_tail(ssh, run_dir)
-                reporter.finish(PhaseStatus.FAILED, detail="job exited early")
-                raise LaunchError(
-                    what="vLLM job exited before endpoint became healthy",
-                    why=tail or "LSF reports EXIT",
-                    next=_hint_for(tail),
-                    logs=f"ssh {bv.login} tail -n 100 {run_dir}/vllm.log",
-                )
-            if time.monotonic() > deadline:
-                reporter.finish(PhaseStatus.FAILED, detail="startup deadline exceeded")
-                raise LaunchError(
-                    what=f"server did not become ready within {_STARTUP_ABSOLUTE_DEADLINE_S}s",
-                    why=_remote_log_tail(ssh, run_dir) or "no progress",
-                    next=(
-                        "check log for OOM / chat-template / parser issues; "
-                        "reduce max_model_len or TP in the profile"
-                    ),
-                    logs=f"ssh {bv.login} tail -n 200 {run_dir}/vllm.log",
-                )
-            time.sleep(_HEALTH_POLL_SLOW_S)
-        reporter.finish(PhaseStatus.DONE, detail=f"host {host}")
+    def starting_feed() -> str:
+        tail = _remote_log_tail(ctx.ssh, ctx.run_dir, lines=1)
+        host_inner = _remote_host_file(ctx.ssh, ctx.run_dir)
+        where = f"host {host_inner}" if host_inner else "waiting for host file"
+        return f"{where} · {tail}" if tail else where
 
-        # --- ready phase ---------------------------------------------------
-        reporter.start("ready")
-        endpoint = f"http://{host}:{_DEFAULT_VLLM_PORT}/v1"
-        server = ServerRecord(
-            id=f"server-{run_id}",
-            target=Target.BLUEVELA,
-            endpoint=endpoint,
-            model=spec.model,
-            config_hash=_config_hash(spec),
-            job_id=job_id,
-            log_path=f"{run_dir}/vllm.log",
-            started_at=_now_iso(),
-            status="healthy",
-            metadata={
-                "queue": queue_chosen,
-                "group": bv.group,
-                "run_dir": run_dir,
-                "login": bv.login,
-                "env_json": env_payload,
-            },
-        )
-        state.update(state_path, lambda s: s.upsert_server(server))
-        reporter.finish(PhaseStatus.DONE, detail=endpoint)
-        return server
-    except BaseException:
-        # Codex fix: any failure after bsub accept must bkill the orphan job.
-        # We keep the pending state record so `mcode launch status` still
-        # shows the attempt, but the job itself is no longer consuming GPUs.
-        _tear_down()
-        raise
+    ctx.reporter.start("starting", feed=starting_feed, mode="slow")
+    deadline = time.monotonic() + _STARTUP_ABSOLUTE_DEADLINE_S
+    starting_fail_streak = 0
+    while True:
+        try:
+            host = _remote_host_file(ctx.ssh, ctx.run_dir)
+            if host:
+                ok, _status = _http_health(ctx.ssh, host, _DEFAULT_VLLM_PORT)
+                if ok:
+                    ctx.host = host
+                    break
+            starting_fail_streak = 0
+        except TransportError as e:
+            starting_fail_streak = _absorb_ssh_blip(starting_fail_streak, e, phase="startup")
+            continue
+        if _bjobs_state(ctx.ssh, ctx.job_id) in (None, "EXIT", "DONE"):
+            tail = _remote_log_tail(ctx.ssh, ctx.run_dir)
+            ctx.reporter.finish(PhaseStatus.FAILED, detail="job exited early")
+            raise LaunchError(
+                what="vLLM job exited before endpoint became healthy",
+                why=tail or "LSF reports EXIT",
+                next=_hint_for(tail),
+                logs=f"ssh {bv.login} tail -n 100 {ctx.run_dir}/vllm.log",
+            )
+        if time.monotonic() > deadline:
+            ctx.reporter.finish(PhaseStatus.FAILED, detail="startup deadline exceeded")
+            raise LaunchError(
+                what=f"server did not become ready within {_STARTUP_ABSOLUTE_DEADLINE_S}s",
+                why=_remote_log_tail(ctx.ssh, ctx.run_dir) or "no progress",
+                next=(
+                    "check log for OOM / chat-template / parser issues; "
+                    "reduce max_model_len or TP in the profile"
+                ),
+                logs=f"ssh {bv.login} tail -n 200 {ctx.run_dir}/vllm.log",
+            )
+        time.sleep(_HEALTH_POLL_SLOW_S)
+    ctx.reporter.finish(PhaseStatus.DONE, detail=f"host {ctx.host}")
+
+
+def _phase_ready(ctx: _LaunchContext) -> ServerRecord:
+    """Construct and persist the final healthy ServerRecord, return it."""
+    bv = ctx.cfg.bluevela
+    ctx.reporter.start("ready")
+    endpoint = f"http://{ctx.host}:{_DEFAULT_VLLM_PORT}/v1"
+    server = ServerRecord(
+        id=f"server-{ctx.run_id}",
+        target=Target.BLUEVELA,
+        endpoint=endpoint,
+        model=ctx.spec.model,
+        config_hash=_config_hash(ctx.spec),
+        job_id=ctx.job_id,
+        log_path=f"{ctx.run_dir}/vllm.log",
+        started_at=_now_iso(),
+        status="healthy",
+        metadata={
+            "queue": ctx.queue_chosen,
+            "group": bv.group,
+            "run_dir": ctx.run_dir,
+            "login": bv.login,
+            "env_json": ctx.env_payload,
+        },
+    )
+    state.update(ctx.state_path, lambda s: s.upsert_server(server))
+    ctx.reporter.finish(PhaseStatus.DONE, detail=endpoint)
+    return server
 
 
 def _remote_host_file(ssh: SshClient, run_dir: str) -> str | None:
