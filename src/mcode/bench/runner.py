@@ -9,12 +9,11 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from rich.progress import Progress
-
 from mcode.bench.results import ResultsDB, RunSummary
 from mcode.execution.sandbox import DockerUnavailableError
 from mcode.llm.session import LLMSession
 from mcode.mellea_compat import requirements_available, sampling_available
+from mcode.ui.task_reporter import choose as choose_task_reporter
 
 
 def _default_cache_dir() -> Path:
@@ -151,15 +150,16 @@ class BenchmarkRunner:
 
         passed = 0
         total = 0
-        with Progress() as progress:
-            t = progress.add_task("[bold]Running swebench-lite[/bold]", total=len(tasks))
+        with choose_task_reporter() as reporter:
+            reporter.total(len(tasks))
             for task in tasks:
                 total += 1
                 result = self._run_swebench_task(task, swe_sandbox=swe_sandbox, run_id=run_id)
                 if result["passed"]:
                     passed += 1
                 self.results_db.save_task_result(run_id, result)
-                progress.advance(t, 1)
+                detail = f"{task.instance_id} {'ok' if result['passed'] else 'fail'}"
+                reporter.advance(detail=detail)
 
         return RunSummary(run_id=run_id, total=total, passed=passed)
 
@@ -196,8 +196,8 @@ class BenchmarkRunner:
 
         passed = 0
         total = 0
-        with Progress() as progress:
-            t = progress.add_task("[bold]Running swebench-live[/bold]", total=len(tasks))
+        with choose_task_reporter() as reporter:
+            reporter.total(len(tasks))
             for task in tasks:
                 total += 1
                 result = self._run_swebench_live_task(
@@ -210,7 +210,8 @@ class BenchmarkRunner:
                 self.results_db.save_task_result(run_id, result)
                 if not os.environ.get("MCODE_KEEP_IMAGES"):
                     live_sandbox.remove_image(task)
-                progress.advance(t, 1)
+                detail = f"{task.instance_id} {'ok' if result['passed'] else 'fail'}"
+                reporter.advance(detail=detail)
 
         return RunSummary(run_id=run_id, total=total, passed=passed)
 
@@ -244,15 +245,16 @@ class BenchmarkRunner:
 
         passed = 0
         total = 0
-        with Progress() as progress:
-            t = progress.add_task("[bold]Running aider-polyglot[/bold]", total=len(tasks))
+        with choose_task_reporter() as reporter:
+            reporter.total(len(tasks))
             for task in tasks:
                 total += 1
                 result = self._run_aider_polyglot_task(task)
                 if result["passed"]:
                     passed += 1
                 self.results_db.save_task_result(run_id, result)
-                progress.advance(t, 1)
+                detail = f"{task.task_id} {'ok' if result['passed'] else 'fail'}"
+                reporter.advance(detail=detail)
 
         return RunSummary(run_id=run_id, total=total, passed=passed)
 

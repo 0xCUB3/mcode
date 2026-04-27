@@ -29,6 +29,7 @@ from mcode.bench.results import (
 from mcode.bench.runner import BenchConfig, BenchmarkRunner
 from mcode.ui.console import configure_logging as _configure_logging
 from mcode.ui.console import console
+from mcode.ui.flags import JsonFlag
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 bench_app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -1681,9 +1682,9 @@ def _stop_running_shards(
 def _stream_shard_output(
     *,
     proc: subprocess.Popen[str],
-    prefix: str,
+    shard_index: int,
     log_path: Path,
-    echo_lock: threading.Lock,
+    dashboard,
 ) -> threading.Thread:
     def _worker() -> None:
         with log_path.open("w", encoding="utf-8") as handle:
@@ -1695,8 +1696,7 @@ def _stream_shard_output(
                 text = line.rstrip()
                 if not text:
                     continue
-                with echo_lock:
-                    typer.echo(f"[{prefix}] {text}")
+                dashboard.post("shard_stdout", shard=shard_index, line=text)
 
     thread = threading.Thread(target=_worker, daemon=True)
     thread.start()
@@ -1714,20 +1714,17 @@ def _run_sharded_benchmark(
     model: str,
     loop_budget: int,
     timeout_s: int,
+    json_mode: bool = False,
 ) -> None:
     from mcode.bench import runstate
     from mcode.launch.models import RunStatus, Target
+    from mcode.ui.dashboard import open_dashboard
 
     run_dir = db.parent / f"{db.stem}-shards" / datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
-    typer.echo(
-        f"▶ sharded run command={command} shards={shards} out={db} artifacts={run_dir}",
-        err=True,
-    )
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
-    echo_lock = threading.Lock()
     procs: list[tuple[int, subprocess.Popen[str], Path, Path, threading.Thread]] = []
     failed: list[tuple[int, int, Path]] = []
     shard_paths: list[Path] = []
@@ -1737,117 +1734,135 @@ def _run_sharded_benchmark(
     # only as a "where am I executing" hint. Backend lives in metadata.
     runstate.open_run(run_id=run_id, benchmark=benchmark, target=Target.LOCAL_VLLM, db_path=db)
     runstate.patch_run(run_id=run_id, progress={"current": 0, "total": 0})
-    # The whole bench body runs under one try/finally so any unexpected raise
-    # (subprocess.Popen, _merge_into_results_db, _print_run_summary, network
-    # blips) closes the RunRecord rather than leaving a stale RUNNING entry.
     final_status: RunStatus = RunStatus.FAILED
     cancel_reason: str | None = None
     try:
-        try:
-            for shard_index in range(shards):
-                shard_db = run_dir / f"{db.stem}-shard-{shard_index}.db"
-                shard_log = run_dir / f"{db.stem}-shard-{shard_index}.log"
-                argv = [
-                    sys.executable,
-                    "-u",
-                    "-m",
-                    "mcode",
-                    "bench",
-                    command,
-                    *base_argv,
-                    "--db",
-                    str(shard_db),
-                    "--shard-count",
-                    str(shards),
-                    "--shard-index",
-                    str(shard_index),
-                ]
-                typer.echo(
-                    f"▶ shard {shard_index + 1}/{shards} db={shard_db} log={shard_log}",
-                    err=True,
-                )
-                proc = subprocess.Popen(
-                    argv,
-                    cwd=str(Path.cwd()),
-                    env=env,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    bufsize=1,
-                )
-                thread = _stream_shard_output(
-                    proc=proc,
-                    prefix=f"shard {shard_index}",
-                    log_path=shard_log,
-                    echo_lock=echo_lock,
-                )
-                procs.append((shard_index, proc, shard_db, shard_log, thread))
+        with open_dashboard(
+            json_mode=json_mode,
+            total_shards=shards,
+            benchmark=benchmark,
+            model=model,
+        ) as dashboard:
+            dashboard.post(
+                "info",
+                text=(
+                    f"▶ sharded run command={command} shards={shards} out={db} artifacts={run_dir}"
+                ),
+            )
+            try:
+                for shard_index in range(shards):
+                    shard_db = run_dir / f"{db.stem}-shard-{shard_index}.db"
+                    shard_log = run_dir / f"{db.stem}-shard-{shard_index}.log"
+                    argv = [
+                        sys.executable,
+                        "-u",
+                        "-m",
+                        "mcode",
+                        "bench",
+                        command,
+                        *base_argv,
+                        "--db",
+                        str(shard_db),
+                        "--shard-count",
+                        str(shards),
+                        "--shard-index",
+                        str(shard_index),
+                    ]
+                    dashboard.post(
+                        "shard_start",
+                        shard=shard_index,
+                        db=str(shard_db),
+                        log=str(shard_log),
+                    )
+                    proc = subprocess.Popen(
+                        argv,
+                        cwd=str(Path.cwd()),
+                        env=env,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        bufsize=1,
+                    )
+                    thread = _stream_shard_output(
+                        proc=proc,
+                        shard_index=shard_index,
+                        log_path=shard_log,
+                        dashboard=dashboard,
+                    )
+                    procs.append((shard_index, proc, shard_db, shard_log, thread))
 
-            runstate.patch_run(run_id=run_id, shard_pids=[p.pid for _, p, *_ in procs])
+                runstate.patch_run(run_id=run_id, shard_pids=[p.pid for _, p, *_ in procs])
 
-            remaining = {shard_index for shard_index, *_ in procs}
-            while remaining:
-                infra_failures = _detect_infra_failures(
-                    [shard_db for _, _, shard_db, _, _ in procs]
-                )
-                if infra_failures:
-                    for failure in infra_failures:
-                        typer.echo(
-                            "✗ infra failure detected "
-                            f"task={failure.task_id} db={failure.shard_db} "
-                            f"reason={failure.reason}: {failure.detail or ''}",
-                            err=True,
-                        )
-                    _stop_running_shards(procs)
-                    raise typer.Exit(SHARDED_INFRA_EXIT_CODE)
-
-                made_progress = False
-                for shard_index, proc, shard_db, shard_log, thread in procs:
-                    if shard_index not in remaining:
-                        continue
-                    rc = proc.poll()
-                    if rc is None:
-                        continue
-                    thread.join()
-                    remaining.remove(shard_index)
-                    made_progress = True
-                    if rc == 0:
-                        shard_paths.append(shard_db)
-                        typer.echo(f"✓ shard {shard_index + 1}/{shards} finished", err=True)
-                        continue
-                    if rc == SHARDED_INFRA_EXIT_CODE:
-                        typer.echo(
-                            f"✗ shard {shard_index + 1}/{shards} hit retryable infra "
-                            f"exit={rc} log={shard_log}",
-                            err=True,
-                        )
+                remaining = {shard_index for shard_index, *_ in procs}
+                while remaining:
+                    infra_failures = _detect_infra_failures(
+                        [shard_db for _, _, shard_db, _, _ in procs]
+                    )
+                    if infra_failures:
+                        for failure in infra_failures:
+                            dashboard.post(
+                                "infra_failure",
+                                task_id=failure.task_id,
+                                db=str(failure.shard_db),
+                                reason=failure.reason,
+                                detail=failure.detail or "",
+                            )
                         _stop_running_shards(procs)
                         raise typer.Exit(SHARDED_INFRA_EXIT_CODE)
-                    failed.append((shard_index, rc, shard_log))
-                    typer.echo(
-                        f"✗ shard {shard_index + 1}/{shards} failed exit={rc} log={shard_log}",
-                        err=True,
+
+                    made_progress = False
+                    for shard_index, proc, shard_db, shard_log, thread in procs:
+                        if shard_index not in remaining:
+                            continue
+                        rc = proc.poll()
+                        if rc is None:
+                            continue
+                        thread.join()
+                        remaining.remove(shard_index)
+                        made_progress = True
+                        if rc == 0:
+                            shard_paths.append(shard_db)
+                            dashboard.post("shard_done", shard=shard_index)
+                            continue
+                        if rc == SHARDED_INFRA_EXIT_CODE:
+                            dashboard.post(
+                                "shard_infra",
+                                shard=shard_index,
+                                rc=rc,
+                                log=str(shard_log),
+                            )
+                            _stop_running_shards(procs)
+                            raise typer.Exit(SHARDED_INFRA_EXIT_CODE)
+                        failed.append((shard_index, rc, shard_log))
+                        dashboard.post(
+                            "shard_failed",
+                            shard=shard_index,
+                            rc=rc,
+                            log=str(shard_log),
+                        )
+                    if remaining and not made_progress:
+                        time.sleep(_SHARD_INFRA_POLL_SECONDS)
+            except KeyboardInterrupt:
+                _stop_running_shards(procs)
+                final_status = RunStatus.STOPPED
+                cancel_reason = "interrupt"
+                raise
+
+            if failed:
+                for shard_index, rc, shard_log in failed:
+                    dashboard.post(
+                        "info",
+                        text=f"failed shard={shard_index} exit={rc} log={shard_log}",
                     )
-                if remaining and not made_progress:
-                    time.sleep(_SHARD_INFRA_POLL_SECONDS)
-        except KeyboardInterrupt:
-            _stop_running_shards(procs)
-            final_status = RunStatus.STOPPED
-            cancel_reason = "interrupt"
-            raise
+                raise typer.Exit(1)
 
-        if failed:
-            for shard_index, rc, shard_log in failed:
-                typer.echo(
-                    f"failed shard={shard_index} exit={rc} log={shard_log}",
-                    err=True,
-                )
-            raise typer.Exit(1)
-
-        summary = _merge_into_results_db(db=db, shard_paths=shard_paths)
-        typer.echo(f"✓ merged shards into {db}", err=True)
+            summary = _merge_into_results_db(db=db, shard_paths=shard_paths)
+            dashboard.post("merged", db=str(db))
+            final_status = RunStatus.DONE
+        # _print_run_summary lives outside the dashboard so its Rich Table
+        # renders cleanly to stdout/console after the Live region releases.
         _print_run_summary(
             summary=summary,
             benchmark=benchmark,
@@ -1856,7 +1871,6 @@ def _run_sharded_benchmark(
             loop_budget=loop_budget,
             timeout_s=timeout_s,
         )
-        final_status = RunStatus.DONE
     finally:
         # Best-effort close so partial state doesn't permanently mark the run
         # RUNNING. Wrapped so a second Ctrl+C during teardown cannot prevent
@@ -2183,6 +2197,7 @@ def bench_swebench_live(
             help="Persist compact benchmark diagnostic trace events",
         ),
     ] = False,
+    json_mode: JsonFlag = False,
 ) -> None:
     """Run Microsoft SWE-bench-Live benchmark."""
 
@@ -2217,6 +2232,8 @@ def bench_swebench_live(
         _append_option(argv, "--shards", shards)
         _append_option(argv, "--shard-count", shard_count)
         _append_option(argv, "--shard-index", shard_index)
+        if json_mode:
+            argv.append("--json")
         _run_bluevela_benchmark(
             command="swebench-live",
             argv=argv,
@@ -2255,6 +2272,7 @@ def bench_swebench_live(
             model=model,
             loop_budget=loop_budget,
             timeout_s=timeout_s,
+            json_mode=json_mode,
         )
         return
     if shard_count and shard_count > 1 and db == DEFAULT_DB_PATH:
@@ -2406,6 +2424,7 @@ def bench_swebench_lite(
             help="Persist compact benchmark diagnostic trace events",
         ),
     ] = False,
+    json_mode: JsonFlag = False,
 ) -> None:
     shards, shard_count, shard_index = _validate_shard_options(
         shards=shards,
@@ -2443,6 +2462,8 @@ def bench_swebench_lite(
         _append_option(argv, "--shards", shards)
         _append_option(argv, "--shard-count", shard_count)
         _append_option(argv, "--shard-index", shard_index)
+        if json_mode:
+            argv.append("--json")
         _run_bluevela_benchmark(
             command="swebench-lite",
             argv=argv,
@@ -2486,6 +2507,7 @@ def bench_swebench_lite(
             model=model,
             loop_budget=loop_budget,
             timeout_s=timeout_s,
+            json_mode=json_mode,
         )
         return
     if shard_count and shard_count > 1 and db == DEFAULT_DB_PATH:
@@ -2602,6 +2624,7 @@ def bench_aider_polyglot(
         bool,
         typer.Option("--fetch-db/--no-fetch-db", help="Rsync DB back when --on bluevela"),
     ] = True,
+    json_mode: JsonFlag = False,
 ) -> None:
     """Run the Aider Polyglot benchmark through mcode's harness."""
 
@@ -2644,6 +2667,8 @@ def bench_aider_polyglot(
         _append_option(argv, "--shards", shards)
         _append_option(argv, "--shard-count", shard_count)
         _append_option(argv, "--shard-index", shard_index)
+        if json_mode:
+            argv.append("--json")
         _run_bluevela_benchmark(
             command="aider-polyglot",
             argv=argv,
@@ -2678,6 +2703,7 @@ def bench_aider_polyglot(
             model=model,
             loop_budget=loop_budget + (0 if no_retry else retry_loop_budget),
             timeout_s=300,
+            json_mode=json_mode,
         )
         return
     if shard_count and shard_count > 1 and db == Path("experiments/results/aider-polyglot.db"):
@@ -2751,6 +2777,7 @@ def bench_smoke(
             help="Persist compact benchmark diagnostic trace events",
         ),
     ] = False,
+    json_mode: JsonFlag = False,
 ) -> None:
     """16-task SWE-bench Verified diagnostic slice (astropy smoke + 6 projects).
 
@@ -2779,6 +2806,8 @@ def bench_smoke(
         _append_option(argv, "--shards", shards)
         _append_option(argv, "--shard-count", shard_count)
         _append_option(argv, "--shard-index", shard_index)
+        if json_mode:
+            argv.append("--json")
         _run_bluevela_benchmark(
             command="smoke",
             argv=argv,
@@ -2815,4 +2844,5 @@ def bench_smoke(
             task_ids=str(task_ids_file),
             dataset="princeton-nlp/SWE-bench_Verified",
             diagnostic_traces=diagnostic_traces,
+            json_mode=json_mode,
         )
