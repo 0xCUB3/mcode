@@ -7,7 +7,7 @@ def test_command_docs_cover_sampling_and_compare() -> None:
     command_docs = Path("docs/COMMANDS.md").read_text()
     assert "uv run mcode bench swebench-lite" in command_docs
     assert "--shards" in command_docs
-    assert "--sampling {none,rejection,repair,sofai}" in command_docs
+    assert "--sampling {none,rejection,repair,multiturn,sofai}" in command_docs
     assert "uv run mcode compare" in command_docs
 
 

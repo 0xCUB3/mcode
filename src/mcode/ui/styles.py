@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import os
 import sys
-from enum import Enum
+from enum import StrEnum
 
 
-class Symbol(str, Enum):
+class Symbol(StrEnum):
     SUCCESS = "✓"
     FAIL = "✗"
     PENDING = "·"
