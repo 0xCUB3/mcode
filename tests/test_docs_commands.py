@@ -12,12 +12,30 @@ def test_command_docs_cover_sampling_and_compare() -> None:
 
 
 def test_readmes_match_command_contract() -> None:
+    """The README is intentionally a high-level pointer to docs/. Detailed
+    flag documentation lives in docs/local.md, docs/bluevela.md, and
+    docs/COMMANDS.md, so we assert against those instead."""
     root_readme = Path("README.md").read_text()
+    local_doc = Path("docs/local.md").read_text()
+    bluevela_doc = Path("docs/bluevela.md").read_text()
+    commands_doc = Path("docs/COMMANDS.md").read_text()
     bluevela_readme = Path("deploy/bluevela/README.md").read_text()
 
-    assert "--shards" in root_readme
-    assert "--sampling" in root_readme
-    assert "uv run mcode compare" in root_readme
-    assert "MELLEA_TRACE_APPLICATION" in root_readme
+    # Root README points at the right places.
+    assert "docs/local.md" in root_readme
+    assert "docs/bluevela.md" in root_readme
+    assert "docs/COMMANDS.md" in root_readme
+
+    # Local + Blue Vela docs cover the canonical flags.
+    assert "--shards" in local_doc
+    assert "--sampling" in local_doc
+    assert "--shards" in bluevela_doc
+    assert "--sampling" in bluevela_doc
+
+    # Reference doc covers compare and observability env vars.
+    assert "uv run mcode compare" in commands_doc
+    assert "MELLEA_TRACE_APPLICATION" in commands_doc
+
+    # Legacy Blue Vela shell scripts still match their pinned shape.
     assert "--sampling rejection --n-samples 3" in bluevela_readme
     assert "--shards 4" in bluevela_readme
