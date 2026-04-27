@@ -6,13 +6,14 @@ mCode is an agentic coding benchmark harness built on [Mellea](https://mellea.ai
 
 Best mCode harness results to date, on Blue Vela with Qwen3.6-35B-A3B served via vLLM:
 
-|Benchmark|Baseline|mCode|Δ|
+|Benchmark|Bare model|Base Mellea|mCode|
 |-|-|-|-|
-|SWE-bench Verified (271 tasks, partial run)|–|**169/271 = 62.4%**|new|
-|Aider Polyglot (225 tasks, full run)|103/225 = 45.8%|**190/225 = 84.4%**|+87 solves|
-|SWE-bench Verified, 16-task smoke slice|4/16 = 25.0%|**9/16 = 56.3%**|+5 solves|
+|SWE-bench Verified|0.3%|37.4%|**62.4%** *|
+|Aider Polyglot (225 tasks)|16%|45.8% (103/225)|**84.4%** (190/225)|
 
-Baseline = single-pass run without selection / multiturn / control-loop fixes. mCode = full harness with selection, multiturn sampling, workspace-context discovery, generic control-loop nudges, and the verification policy. Source data and per-language breakdowns live under [`research/`](research/).
+Bare model = the LLM with no agentic harness. Base Mellea = upstream Mellea ReACT loop without the mCode additions. mCode = full harness with selection, multiturn sampling, workspace-context discovery, generic control-loop nudges, and the verification policy.
+
+\* SWE-bench Verified mCode result is from a partial run (169/271) interrupted by Blue Vela podman infra failures; the full 500-task rerun is in flight. Source data and per-language breakdowns live under [`research/`](research/).
 
 ## Install
 
