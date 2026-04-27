@@ -223,7 +223,7 @@ async def run_react_loop(
     strategy_for_requirements: Callable[[list[object]], object | None],
     harness_experiments: tuple[str, ...] = (),
     hooks_enabled: bool = False,
- ) -> tuple[object | None, str]:
+) -> tuple[object | None, str]:
     from mellea.core.utils import FancyLogger
     from mellea.stdlib import functional as mfuncs
     from mellea.stdlib.components.chat import Message
@@ -233,7 +233,7 @@ async def run_react_loop(
         ReactThought,
     )
     from mellea.stdlib.context import ChatContext
-    
+
     from mcode.llm.harness_experiments import (
         FINALIZER_SUCCESS_GUARD_V1,
         MELLEA_LOOP_DETECT_V1,
@@ -277,9 +277,7 @@ async def run_react_loop(
                         Message(
                             role="user",
                             content=(
-                                force_message
-                                if loop_signal == "force_switch"
-                                else nudge_message
+                                force_message if loop_signal == "force_switch" else nudge_message
                             ),
                         )
                     )
@@ -296,7 +294,7 @@ async def run_react_loop(
                         role="user",
                         content=(
                             "You changed files but have not verified the patch. "
-                            "Call run_tests with test_cmd=\"default\" now, then fix failures "
+                            'Call run_tests with test_cmd="default" now, then fix failures '
                             "before final_answer."
                         ),
                     )
@@ -389,7 +387,7 @@ async def run_react_loop(
                             role="user",
                             content=(
                                 "Do not call final_answer yet. Run run_tests with "
-                                "test_cmd=\"default\" or fix the failing tests first. "
+                                'test_cmd="default" or fix the failing tests first. '
                                 + " ".join(blocked_finalizers)
                             ),
                         )
@@ -404,8 +402,7 @@ async def run_react_loop(
                             role="user",
                             content=(
                                 "Some tool calls were malformed and were skipped. "
-                                "Retry them with all required arguments. "
-                                + " ".join(invalid_calls)
+                                "Retry them with all required arguments. " + " ".join(invalid_calls)
                             ),
                         )
                     )
@@ -827,7 +824,7 @@ def _should_autofill_finalizer(
     missing_args: list[str],
     *,
     collector: SolveTraceCollector,
- ) -> bool:
+) -> bool:
     return (
         tool_name == "final_answer"
         and missing_args == ["answer"]

@@ -22,7 +22,6 @@ class VerificationPolicy:
     prompt_block: str
 
 
-
 @dataclass
 class VerificationProgress:
     edit_revision: int = 0
@@ -77,7 +76,7 @@ def build_verification_prompt(test_cmds: list[str]) -> str:
         return (
             "\n\nVerification:\n"
             "Use `run_tests` before `final_answer`. Start by calling `run_tests` with "
-            f"`test_cmd=\"default\"` to execute the task checks ({formatted}{more}). "
+            f'`test_cmd="default"` to execute the task checks ({formatted}{more}). '
             "Do not pass `run_tests default` as the argument value and do not join commands "
             "with `&&`; use `default` for the declared command sequence. Keep the "
             "`final_answer` text short."
@@ -85,7 +84,7 @@ def build_verification_prompt(test_cmds: list[str]) -> str:
     return (
         "\n\nVerification:\n"
         "Use `run_tests` before `final_answer`. Pass only the command text in `test_cmd`; "
-        "use `test_cmd=\"default\"` when a default verifier exists. Keep the `final_answer` "
+        'use `test_cmd="default"` when a default verifier exists. Keep the `final_answer` '
         "text short."
     )
 

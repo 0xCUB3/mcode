@@ -53,9 +53,7 @@ class PreparedPolyglotTask:
         ).strip()
 
     def build_retry_prompt(self, test_output: str) -> str:
-        stub_line = (
-            f"The stub file is at {self.stub_paths[0]}." if self.stub_paths else ""
-        )
+        stub_line = f"The stub file is at {self.stub_paths[0]}." if self.stub_paths else ""
         return (
             f"The tests for '{self.task.exercise}' failed. Here is the test output:\n\n"
             f"```\n{test_output[:2000]}\n```\n\n"
@@ -143,7 +141,7 @@ def prepare_task(
     task: AiderPolyglotTask,
     *,
     benchmark_root: str | Path | None = None,
- ) -> PreparedPolyglotTask:
+) -> PreparedPolyglotTask:
     root = ensure_benchmark_root(benchmark_root)
     descriptors = _build_language_descriptors(root)
     descriptor = descriptors[task.language]
@@ -176,7 +174,7 @@ def run_command_sequence(
     commands: tuple[str, ...],
     *,
     timeout_s: int,
- ) -> CommandOutcome:
+) -> CommandOutcome:
     outputs: list[str] = []
     last_exit_code: int | None = None
     for command in commands:
@@ -265,16 +263,9 @@ def _prepare_python(src: Path, work: Path) -> tuple[list[str], list[str]]:
     stubs = sorted(
         str(p)
         for p in work.iterdir()
-        if p.is_file()
-        and p.suffix == ".py"
-        and "_test" not in p.name
-        and p.name != "__init__.py"
+        if p.is_file() and p.suffix == ".py" and "_test" not in p.name and p.name != "__init__.py"
     )
-    tests = sorted(
-        str(p)
-        for p in work.iterdir()
-        if p.is_file() and p.name.endswith("_test.py")
-    )
+    tests = sorted(str(p) for p in work.iterdir() if p.is_file() and p.name.endswith("_test.py"))
     return stubs, tests
 
 
@@ -288,11 +279,7 @@ def _prepare_go(src: Path, work: Path) -> tuple[list[str], list[str]]:
         and not p.name.endswith("_test.go")
         and p.name != "go.mod"
     )
-    tests = sorted(
-        str(p)
-        for p in work.iterdir()
-        if p.name.endswith("_test.go")
-    )
+    tests = sorted(str(p) for p in work.iterdir() if p.name.endswith("_test.go"))
     return stubs, tests
 
 
@@ -364,9 +351,7 @@ def _build_language_descriptors(root: Path) -> dict[str, _LanguageDescriptor]:
         "python": _LanguageDescriptor(
             practice_dir=root / "python" / "exercises" / "practice",
             prepare=_prepare_python,
-            test_commands=(
-                "python -m pytest *_test.py -v --tb=short -q",
-            ),
+            test_commands=("python -m pytest *_test.py -v --tb=short -q",),
             timeout_s=60,
         ),
         "go": _LanguageDescriptor(
@@ -394,8 +379,7 @@ def _build_language_descriptors(root: Path) -> dict[str, _LanguageDescriptor]:
             practice_dir=root / "cpp" / "exercises" / "practice",
             prepare=_prepare_cpp,
             test_commands=(
-                "cmake -S . -B build "
-                "-DCMAKE_CXX_FLAGS=-DEXERCISM_RUN_ALL_TESTS",
+                "cmake -S . -B build -DCMAKE_CXX_FLAGS=-DEXERCISM_RUN_ALL_TESTS",
                 "cmake --build build",
             ),
             timeout_s=240,

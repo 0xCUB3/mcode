@@ -387,7 +387,7 @@ class LLMSession:
         if self.diagnostic_traces and not enable_hooks:
             raise RuntimeError(
                 "Diagnostic traces require Mellea hooks. Install the observability extra with "
-                '`uv sync --extra observability` and retry.'
+                "`uv sync --extra observability` and retry."
             )
         with repo_snapshot(repo_root, enabled=outer_attempts > 1) as snapshot_dir:
             for index in range(outer_attempts):

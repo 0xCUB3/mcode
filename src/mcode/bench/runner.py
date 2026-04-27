@@ -258,14 +258,14 @@ class BenchmarkRunner:
 
     def _run_aider_polyglot_task(self, task) -> dict[str, object]:
         from pathlib import Path
-        
+
         from mcode.bench.aider_polyglot import (
             cleanup_prepared_task,
             prepare_task,
             run_test_commands,
         )
         from mcode.llm.repo_state import get_git_diff, restore_repo_snapshot
-        
+
         start = time.time()
         prepared = None
         first_metrics: dict[str, object] | None = None
@@ -280,7 +280,7 @@ class BenchmarkRunner:
                 raise RuntimeError(
                     f"benchmark task {task.task_id} is missing stubs or tests after preparation"
                 )
-            
+
             first_metrics, first_pass_snapshot = self._run_aider_polyglot_attempt(
                 task=task,
                 prepared=prepared,
@@ -295,7 +295,7 @@ class BenchmarkRunner:
                 )
                 evaluation = run_test_commands(prepared)
             attempts_used = 1
-            
+
             if not evaluation.passed and self.config.aider_polyglot_retry:
                 final_metrics, final_pass_snapshot = self._run_aider_polyglot_attempt(
                     task=task,
@@ -313,7 +313,7 @@ class BenchmarkRunner:
                 attempts_used = 2
             else:
                 final_metrics = first_metrics
-            
+
             terminal_reason = None
             if evaluation.passed:
                 terminal_reason = "submitted"
@@ -325,9 +325,7 @@ class BenchmarkRunner:
             )
             diff = get_git_diff(str(prepared.work_dir))
             sha = (
-                hashlib.sha256(diff.encode("utf-8", errors="ignore")).hexdigest()
-                if diff
-                else None
+                hashlib.sha256(diff.encode("utf-8", errors="ignore")).hexdigest() if diff else None
             )
             return {
                 "task_id": task.task_id,
@@ -356,7 +354,7 @@ class BenchmarkRunner:
                     snapshot.cleanup()
             if prepared is not None:
                 cleanup_prepared_task(prepared)
-    
+
     def _run_aider_polyglot_attempt(
         self,
         *,
@@ -367,14 +365,14 @@ class BenchmarkRunner:
     ) -> tuple[dict[str, object] | None, object | None]:
         import shutil
         from tempfile import TemporaryDirectory
-        
+
         from mcode.agent.tooling import format_tool_result
         from mcode.bench.aider_polyglot import run_command_sequence, run_single_command
-        
+
         llm = self._build_llm(loop_budget=loop_budget)
         pass_snapshot = None
         allowed_commands = tuple(prepared.test_commands)
-        
+
         def _capture_passing_state() -> None:
             nonlocal pass_snapshot
             if pass_snapshot is not None:
@@ -387,7 +385,7 @@ class BenchmarkRunner:
                 ignore=shutil.ignore_patterns(".git"),
                 symlinks=True,
             )
-        
+
         allowed_commands = _allowed_polyglot_test_commands(prepared)
 
         def test_fn(test_cmd: str = "default") -> str:
@@ -418,13 +416,9 @@ class BenchmarkRunner:
                 )
             if outcome.passed:
                 _capture_passing_state()
-            status = (
-                "PASSED"
-                if outcome.passed
-                else ("TIMEOUT" if outcome.timed_out else "FAILED")
-            )
+            status = "PASSED" if outcome.passed else ("TIMEOUT" if outcome.timed_out else "FAILED")
             return format_tool_result(label, status, outcome.output)
-        
+
         llm.solve(
             repo=task.repo,
             problem_statement=prompt,
@@ -435,6 +429,7 @@ class BenchmarkRunner:
             visible_repo_root=str(prepared.work_dir),
         )
         return _generation_result(llm), pass_snapshot
+
     def _generate_task_patch(
         self,
         task,
@@ -624,7 +619,7 @@ def _evaluate_lite_patch(
 def _append_terminal_diagnostic(
     scaffold_result: dict[str, object],
     eval_detail: _TaskEvaluation | None,
- ) -> None:
+) -> None:
     events = scaffold_result.get("diagnostic_events")
     if not isinstance(events, list):
         return
@@ -636,9 +631,7 @@ def _append_terminal_diagnostic(
                 "terminal_reason": scaffold_result.get("terminal_reason"),
                 "verification_succeeded": scaffold_result.get("verification_succeeded"),
                 "turns_to_first_edit": scaffold_result.get("turns_to_first_edit"),
-                "turns_to_first_verification": scaffold_result.get(
-                    "turns_to_first_verification"
-                ),
+                "turns_to_first_verification": scaffold_result.get("turns_to_first_verification"),
                 "official_eval_passed": eval_detail.passed if eval_detail is not None else None,
                 "official_eval_timed_out": (
                     eval_detail.timed_out if eval_detail is not None else None
@@ -676,7 +669,7 @@ def _scaffold_metrics(
     metrics: dict[str, object] | None,
     *,
     terminal_reason: str | None = None,
- ) -> dict[str, object]:
+) -> dict[str, object]:
     out = {
         "terminal_reason": None,
         "turns_to_first_edit": None,
@@ -705,7 +698,7 @@ def _merge_polyglot_metrics(
     second: dict[str, object] | None,
     first_loop_budget: int,
     terminal_reason: str | None = None,
- ) -> dict[str, object]:
+) -> dict[str, object]:
     merged = _scaffold_metrics(first)
     if second is None:
         if terminal_reason is not None:
@@ -727,8 +720,7 @@ def _merge_polyglot_metrics(
         merged.get("zero_edit", True) and second_metrics.get("zero_edit", True)
     )
     merged["zero_verification"] = bool(
-        merged.get("zero_verification", True)
-        and second_metrics.get("zero_verification", True)
+        merged.get("zero_verification", True) and second_metrics.get("zero_verification", True)
     )
     merged["verification_succeeded"] = bool(
         merged.get("verification_succeeded", False)

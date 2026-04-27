@@ -62,6 +62,7 @@ class _FakePopen:
 
         self.stdout = io.StringIO(f"shard {shard_index}/{shard_count}\n")
         self.returncode = 0
+        self.pid = 100000 + shard_index
 
     def wait(self) -> int:
         return self.returncode
@@ -232,6 +233,7 @@ class _InfraFakePopen:
         self.stdout = io.StringIO("")
         self.returncode: int | None = None
         self.terminated = False
+        self.pid = 200000 + shard_index
         self.instances.append(self)
 
     def wait(self) -> int:

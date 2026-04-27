@@ -268,53 +268,146 @@ echo "$rc" > {shlex.quote(exit_sentinel)}
 exit $rc
 """.strip()
 
-    # Use a detached run + streaming tail so we can show progress without
-    # holding a single multi-hour ssh session.
-    launch_cmd = (
-        f"nohup bash -lc {shlex.quote(remote_script)} > {shlex.quote(remote_log)} 2>&1 & echo $!"
+    # Open a RunRecord so `mcode bench list` / `mcode bench cancel` can find
+    # this run. PID is filled in below once the launch_cmd completes. Wrapped
+    # in try/finally so any unexpected exception (parse failure, SSH I/O,
+    # download error) closes the run rather than leaving it RUNNING forever.
+    benchmark_name = bench_argv[0] if bench_argv else "unknown"
+    _upsert_run(
+        run_id=run_id,
+        benchmark=benchmark_name,
+        status=launch_state.RunStatus.RUNNING,
+        remote={"login": bv.login, "run_dir": remote_dir},
+        db_path=str(local_db),
+        started_at=time.time(),
     )
-    r = ssh.run(launch_cmd, timeout=30)
-    if not r.ok:
-        raise RemoteBenchError(f"failed to launch remote bench: {r.stderr.strip()}")
-    pid = r.stdout.strip().splitlines()[-1]
-    print(f"▶ remote bench started: pid={pid} host={bv.login} log={remote_log}")
-
-    # Stream remote log until the pid exits.
+    final_status: launch_state.RunStatus = launch_state.RunStatus.FAILED
+    cancel_reason: str | None = None
+    exit_code = 1
     try:
-        _stream_remote_log(ssh, remote_log, pid=pid)
-    except KeyboardInterrupt:
-        print("\n⚠ interrupted; remote job still running. Check with:")
-        print(f"  ssh {bv.login} 'tail -f {remote_log}'")
-        return 130
+        # Use a detached run + streaming tail so we can show progress without
+        # holding a single multi-hour ssh session.
+        launch_cmd = (
+            # `setsid` makes the bash process a new session leader so its
+            # child processes inherit the same group. Wave 4 `mcode bench
+            # cancel` then uses `kill -TERM -<pid>` to terminate the whole
+            # tree. Without setsid the captured PID is not a process-group
+            # leader and the negative-pid kill targets the wrong group.
+            f"nohup setsid bash -lc {shlex.quote(remote_script)}"
+            f" > {shlex.quote(remote_log)} 2>&1 & echo $!"
+        )
+        r = ssh.run(launch_cmd, timeout=30)
+        if not r.ok:
+            raise RemoteBenchError(f"failed to launch remote bench: {r.stderr.strip()}")
+        pid = r.stdout.strip().splitlines()[-1]
+        _upsert_run(
+            run_id=run_id,
+            remote={"login": bv.login, "run_dir": remote_dir, "pid": pid},
+            log_paths=[remote_log],
+        )
+        print(f"▶ remote bench started: pid={pid} host={bv.login} log={remote_log}")
 
-    # Trust the sentinel, not the DB size.
-    sentinel_r = ssh.run(
-        f"cat {shlex.quote(exit_sentinel)} 2>/dev/null || echo 99",
-        timeout=30,
-    )
-    try:
-        exit_code = int((sentinel_r.stdout.strip() or "99").splitlines()[-1])
-    except ValueError:
-        exit_code = 99
-    if exit_code == 99:
-        print("✗ remote bench did not write an exit sentinel (likely killed)")
+        try:
+            _stream_remote_log(ssh, remote_log, pid=pid)
+        except KeyboardInterrupt:
+            final_status = launch_state.RunStatus.STOPPED
+            cancel_reason = "interrupt"
+            print("\n⚠ interrupted; remote job still running. Check with:")
+            print(f"  ssh {bv.login} 'tail -f {remote_log}'")
+            return 130
 
-    # Fetch DB whenever it exists — non-zero exit can still have useful rows
-    # for debugging. Caller can inspect terminal_reason counts.
-    if fetch_db:
-        size_r = ssh.run(
-            f"test -f {shlex.quote(remote_db)} && stat -c %s {shlex.quote(remote_db)} || echo 0",
+        # Trust the sentinel, not the DB size.
+        sentinel_r = ssh.run(
+            f"cat {shlex.quote(exit_sentinel)} 2>/dev/null || echo 99",
             timeout=30,
         )
-        size = int((size_r.stdout.strip() or "0").splitlines()[-1])
-        if size > 0:
-            local_db.parent.mkdir(parents=True, exist_ok=True)
-            ssh.download(remote_db, local_db, timeout=120)
-            print(f"✓ fetched DB: {local_db} ({size} bytes)")
-        else:
-            print("⚠ remote DB is empty; nothing to fetch")
+        try:
+            exit_code = int((sentinel_r.stdout.strip() or "99").splitlines()[-1])
+        except ValueError:
+            exit_code = 99
+        if exit_code == 99:
+            print("✗ remote bench did not write an exit sentinel (likely killed)")
 
-    return exit_code
+        # Fetch DB whenever it exists — non-zero exit can still have useful
+        # rows for debugging. Caller can inspect terminal_reason counts.
+        if fetch_db:
+            qdb = shlex.quote(remote_db)
+            size_r = ssh.run(
+                f"test -f {qdb} && stat -c %s {qdb} || echo 0",
+                timeout=30,
+            )
+            size = int((size_r.stdout.strip() or "0").splitlines()[-1])
+            if size > 0:
+                local_db.parent.mkdir(parents=True, exist_ok=True)
+                ssh.download(remote_db, local_db, timeout=120)
+                print(f"✓ fetched DB: {local_db} ({size} bytes)")
+            else:
+                print("⚠ remote DB is empty; nothing to fetch")
+
+        final_status = (
+            launch_state.RunStatus.DONE if exit_code == 0 else launch_state.RunStatus.FAILED
+        )
+        return exit_code
+    finally:
+        try:
+            patch: dict = {
+                "run_id": run_id,
+                "status": final_status,
+                "ended_at": time.time(),
+            }
+            if cancel_reason is not None:
+                patch["metadata"] = {"cancel_reason": cancel_reason}
+            _upsert_run(**patch)
+        except Exception:
+            pass
+
+
+def _upsert_run(
+    *,
+    run_id: str,
+    benchmark: str | None = None,
+    status: launch_state.RunStatus | None = None,
+    remote: dict | None = None,
+    db_path: str | None = None,
+    log_paths: list[str] | None = None,
+    started_at: float | None = None,
+    ended_at: float | None = None,
+    metadata: dict | None = None,
+) -> None:
+    """Create-or-update a RunRecord under fcntl lock.
+
+    Patches only the fields supplied; leaves the rest intact. Used during
+    Blue Vela bench runs so `mcode bench list` and `mcode bench cancel` (Wave
+    4) have something to find.
+    """
+
+    def _mutator(s: launch_state.State) -> None:
+        existing = s.run(run_id)
+        if existing is None:
+            existing = launch_state.RunRecord(
+                id=run_id,
+                target=Target.BLUEVELA,
+                benchmark=benchmark or "unknown",
+            )
+        if benchmark is not None:
+            existing.benchmark = benchmark
+        if status is not None:
+            existing.status = status
+        if remote is not None:
+            existing.remote = {**existing.remote, **remote}
+        if db_path is not None:
+            existing.db_path = db_path
+        if log_paths is not None:
+            existing.log_paths = log_paths
+        if started_at is not None:
+            existing.started_at = started_at
+        if ended_at is not None:
+            existing.ended_at = ended_at
+        if metadata is not None:
+            existing.metadata = {**existing.metadata, **metadata}
+        s.upsert_run(existing)
+
+    launch_state.update(None, _mutator)
 
 
 def _stream_remote_log(ssh: SshClient, remote_log: str, *, pid: str) -> None:

@@ -246,13 +246,16 @@ def test_run_react_loop_uses_plain_final_answer_without_format(monkeypatch):
     assert terminal_reason == "submitted"
     assert submission == "done"
 
+
 def test_run_react_loop_uses_finalizer_content_when_other_tools_returned(monkeypatch):
-    outputs = iter([
-        (
-            SimpleNamespace(tool_calls={"edit": object(), "final_answer": object()}),
-            ChatContext(),
-        )
-    ])
+    outputs = iter(
+        [
+            (
+                SimpleNamespace(tool_calls={"edit": object(), "final_answer": object()}),
+                ChatContext(),
+            )
+        ]
+    )
 
     async def fake_aact(*args, **kwargs):
         del args, kwargs
@@ -288,6 +291,7 @@ def test_run_react_loop_uses_finalizer_content_when_other_tools_returned(monkeyp
 
     assert terminal_reason == "submitted"
     assert submission == "done"
+
 
 def test_run_react_loop_adds_loop_detect_nudge(monkeypatch):
     seen_user_messages: list[list[str]] = []
@@ -341,8 +345,7 @@ def test_run_react_loop_adds_loop_detect_nudge(monkeypatch):
     assert submission is None
     assert terminal_reason == "budget_exhausted"
     assert any(
-        "already tried this exact tool call" in message
-        for message in seen_user_messages[-1]
+        "already tried this exact tool call" in message for message in seen_user_messages[-1]
     )
 
 
@@ -413,8 +416,7 @@ def test_run_react_loop_repairs_missing_required_args(monkeypatch):
     assert terminal_reason == "budget_exhausted"
     assert acall_invoked["value"] is False
     assert any(
-        "read_file is missing required args: path" in message
-        for message in seen_user_messages[-1]
+        "read_file is missing required args: path" in message for message in seen_user_messages[-1]
     )
 
 
@@ -633,8 +635,7 @@ def test_run_react_loop_reminds_to_verify_after_edit(monkeypatch):
     assert submission is None
     assert terminal_reason == "budget_exhausted"
     assert any(
-        "Call run_tests with test_cmd=\"default\"" in message
-        for message in seen_user_messages[-1]
+        'Call run_tests with test_cmd="default"' in message for message in seen_user_messages[-1]
     )
 
 

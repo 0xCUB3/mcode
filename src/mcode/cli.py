@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
 from mcode.bench.results import (
@@ -28,27 +27,18 @@ from mcode.bench.results import (
     export_csv as export_csv_results,
 )
 from mcode.bench.runner import BenchConfig, BenchmarkRunner
+from mcode.ui.console import configure_logging as _configure_logging
+from mcode.ui.console import console
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 bench_app = typer.Typer(add_completion=False, no_args_is_help=True)
 deps_app = typer.Typer(add_completion=False, no_args_is_help=True)
-console = Console()
 DEFAULT_DB_PATH = Path("experiments/results/results.db")
 
 
 def _configure_mellea_logging(verbose: bool) -> None:
-    try:
-        import logging
-
-        from mellea.helpers.fancy_logger import FancyLogger
-
-        logger = FancyLogger.get_logger()
-        level = logging.INFO if verbose else logging.WARNING
-        logger.setLevel(level)
-        for h in logger.handlers:
-            h.setLevel(level)
-    except Exception:
-        return
+    """Back-compat shim. Logic now lives in mcode.ui.console.configure_logging."""
+    _configure_logging(verbose=verbose)
 
 
 def _optional_str(v: str) -> str | None:
@@ -1725,6 +1715,9 @@ def _run_sharded_benchmark(
     loop_budget: int,
     timeout_s: int,
 ) -> None:
+    from mcode.bench import runstate
+    from mcode.launch.models import RunStatus, Target
+
     run_dir = db.parent / f"{db.stem}-shards" / datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
     typer.echo(
@@ -1739,113 +1732,139 @@ def _run_sharded_benchmark(
     failed: list[tuple[int, int, Path]] = []
     shard_paths: list[Path] = []
 
+    run_id = runstate.make_run_id(benchmark)
+    # Target is the closest fit, not literal: bench runs use a launch target
+    # only as a "where am I executing" hint. Backend lives in metadata.
+    runstate.open_run(run_id=run_id, benchmark=benchmark, target=Target.LOCAL_VLLM, db_path=db)
+    runstate.patch_run(run_id=run_id, progress={"current": 0, "total": 0})
+    # The whole bench body runs under one try/finally so any unexpected raise
+    # (subprocess.Popen, _merge_into_results_db, _print_run_summary, network
+    # blips) closes the RunRecord rather than leaving a stale RUNNING entry.
+    final_status: RunStatus = RunStatus.FAILED
+    cancel_reason: str | None = None
     try:
-        for shard_index in range(shards):
-            shard_db = run_dir / f"{db.stem}-shard-{shard_index}.db"
-            shard_log = run_dir / f"{db.stem}-shard-{shard_index}.log"
-            argv = [
-                sys.executable,
-                "-u",
-                "-m",
-                "mcode",
-                "bench",
-                command,
-                *base_argv,
-                "--db",
-                str(shard_db),
-                "--shard-count",
-                str(shards),
-                "--shard-index",
-                str(shard_index),
-            ]
-            typer.echo(
-                f"▶ shard {shard_index + 1}/{shards} db={shard_db} log={shard_log}",
-                err=True,
-            )
-            proc = subprocess.Popen(
-                argv,
-                cwd=str(Path.cwd()),
-                env=env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1,
-            )
-            thread = _stream_shard_output(
-                proc=proc,
-                prefix=f"shard {shard_index}",
-                log_path=shard_log,
-                echo_lock=echo_lock,
-            )
-            procs.append((shard_index, proc, shard_db, shard_log, thread))
-
-        remaining = {shard_index for shard_index, *_ in procs}
-        while remaining:
-            infra_failures = _detect_infra_failures([shard_db for _, _, shard_db, _, _ in procs])
-            if infra_failures:
-                for failure in infra_failures:
-                    typer.echo(
-                        "✗ infra failure detected "
-                        f"task={failure.task_id} db={failure.shard_db} "
-                        f"reason={failure.reason}: {failure.detail or ''}",
-                        err=True,
-                    )
-                _stop_running_shards(procs)
-                raise typer.Exit(SHARDED_INFRA_EXIT_CODE)
-
-            made_progress = False
-            for shard_index, proc, shard_db, shard_log, thread in procs:
-                if shard_index not in remaining:
-                    continue
-                rc = proc.poll()
-                if rc is None:
-                    continue
-                thread.join()
-                remaining.remove(shard_index)
-                made_progress = True
-                if rc == 0:
-                    shard_paths.append(shard_db)
-                    typer.echo(f"✓ shard {shard_index + 1}/{shards} finished", err=True)
-                    continue
-                if rc == SHARDED_INFRA_EXIT_CODE:
-                    typer.echo(
-                        f"✗ shard {shard_index + 1}/{shards} hit retryable infra "
-                        f"exit={rc} log={shard_log}",
-                        err=True,
-                    )
-                    _stop_running_shards(procs)
-                    raise typer.Exit(SHARDED_INFRA_EXIT_CODE)
-                failed.append((shard_index, rc, shard_log))
+        try:
+            for shard_index in range(shards):
+                shard_db = run_dir / f"{db.stem}-shard-{shard_index}.db"
+                shard_log = run_dir / f"{db.stem}-shard-{shard_index}.log"
+                argv = [
+                    sys.executable,
+                    "-u",
+                    "-m",
+                    "mcode",
+                    "bench",
+                    command,
+                    *base_argv,
+                    "--db",
+                    str(shard_db),
+                    "--shard-count",
+                    str(shards),
+                    "--shard-index",
+                    str(shard_index),
+                ]
                 typer.echo(
-                    f"✗ shard {shard_index + 1}/{shards} failed exit={rc} log={shard_log}",
+                    f"▶ shard {shard_index + 1}/{shards} db={shard_db} log={shard_log}",
                     err=True,
                 )
-            if remaining and not made_progress:
-                time.sleep(_SHARD_INFRA_POLL_SECONDS)
-    except KeyboardInterrupt:
-        _stop_running_shards(procs)
-        raise
+                proc = subprocess.Popen(
+                    argv,
+                    cwd=str(Path.cwd()),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                )
+                thread = _stream_shard_output(
+                    proc=proc,
+                    prefix=f"shard {shard_index}",
+                    log_path=shard_log,
+                    echo_lock=echo_lock,
+                )
+                procs.append((shard_index, proc, shard_db, shard_log, thread))
 
-    if failed:
-        for shard_index, rc, shard_log in failed:
-            typer.echo(
-                f"failed shard={shard_index} exit={rc} log={shard_log}",
-                err=True,
-            )
-        raise typer.Exit(1)
+            runstate.patch_run(run_id=run_id, shard_pids=[p.pid for _, p, *_ in procs])
 
-    summary = _merge_into_results_db(db=db, shard_paths=shard_paths)
-    typer.echo(f"✓ merged shards into {db}", err=True)
-    _print_run_summary(
-        summary=summary,
-        benchmark=benchmark,
-        backend=backend,
-        model=model,
-        loop_budget=loop_budget,
-        timeout_s=timeout_s,
-    )
+            remaining = {shard_index for shard_index, *_ in procs}
+            while remaining:
+                infra_failures = _detect_infra_failures(
+                    [shard_db for _, _, shard_db, _, _ in procs]
+                )
+                if infra_failures:
+                    for failure in infra_failures:
+                        typer.echo(
+                            "✗ infra failure detected "
+                            f"task={failure.task_id} db={failure.shard_db} "
+                            f"reason={failure.reason}: {failure.detail or ''}",
+                            err=True,
+                        )
+                    _stop_running_shards(procs)
+                    raise typer.Exit(SHARDED_INFRA_EXIT_CODE)
+
+                made_progress = False
+                for shard_index, proc, shard_db, shard_log, thread in procs:
+                    if shard_index not in remaining:
+                        continue
+                    rc = proc.poll()
+                    if rc is None:
+                        continue
+                    thread.join()
+                    remaining.remove(shard_index)
+                    made_progress = True
+                    if rc == 0:
+                        shard_paths.append(shard_db)
+                        typer.echo(f"✓ shard {shard_index + 1}/{shards} finished", err=True)
+                        continue
+                    if rc == SHARDED_INFRA_EXIT_CODE:
+                        typer.echo(
+                            f"✗ shard {shard_index + 1}/{shards} hit retryable infra "
+                            f"exit={rc} log={shard_log}",
+                            err=True,
+                        )
+                        _stop_running_shards(procs)
+                        raise typer.Exit(SHARDED_INFRA_EXIT_CODE)
+                    failed.append((shard_index, rc, shard_log))
+                    typer.echo(
+                        f"✗ shard {shard_index + 1}/{shards} failed exit={rc} log={shard_log}",
+                        err=True,
+                    )
+                if remaining and not made_progress:
+                    time.sleep(_SHARD_INFRA_POLL_SECONDS)
+        except KeyboardInterrupt:
+            _stop_running_shards(procs)
+            final_status = RunStatus.STOPPED
+            cancel_reason = "interrupt"
+            raise
+
+        if failed:
+            for shard_index, rc, shard_log in failed:
+                typer.echo(
+                    f"failed shard={shard_index} exit={rc} log={shard_log}",
+                    err=True,
+                )
+            raise typer.Exit(1)
+
+        summary = _merge_into_results_db(db=db, shard_paths=shard_paths)
+        typer.echo(f"✓ merged shards into {db}", err=True)
+        _print_run_summary(
+            summary=summary,
+            benchmark=benchmark,
+            backend=backend,
+            model=model,
+            loop_budget=loop_budget,
+            timeout_s=timeout_s,
+        )
+        final_status = RunStatus.DONE
+    finally:
+        # Best-effort close so partial state doesn't permanently mark the run
+        # RUNNING. Wrapped so a second Ctrl+C during teardown cannot prevent
+        # the close.
+        try:
+            runstate.close_run(run_id=run_id, status=final_status, cancel_reason=cancel_reason)
+        except Exception:
+            pass
 
 
 def _run_single_benchmark(
@@ -1860,23 +1879,41 @@ def _run_single_benchmark(
     loop_budget: int,
     timeout_s: int,
 ) -> None:
+    from mcode.bench import runstate
+    from mcode.launch.models import RunStatus, Target
+
     parsed_task_ids = _parse_task_ids(task_ids)
     runner = BenchmarkRunner(config=config, results_db=ResultsDB(db))
+    run_id = runstate.make_run_id(benchmark)
+    runstate.open_run(run_id=run_id, benchmark=benchmark, target=Target.LOCAL_VLLM, db_path=db)
+    final_status: RunStatus = RunStatus.FAILED
+    cancel_reason: str | None = None
     try:
-        summary = runner.run_benchmark(benchmark, limit=limit, task_ids=parsed_task_ids)
-    except Exception as e:
-        if benchmark.startswith("swebench") and _is_retryable_infra_exception(e):
-            typer.echo(f"✗ retryable infra failure before task loop: {e}", err=True)
-            raise typer.Exit(SHARDED_INFRA_EXIT_CODE) from e
-        raise
-    _print_run_summary(
-        summary=summary,
-        benchmark=benchmark,
-        backend=backend,
-        model=model,
-        loop_budget=loop_budget,
-        timeout_s=timeout_s,
-    )
+        try:
+            summary = runner.run_benchmark(benchmark, limit=limit, task_ids=parsed_task_ids)
+        except KeyboardInterrupt:
+            final_status = RunStatus.STOPPED
+            cancel_reason = "interrupt"
+            raise
+        except Exception as e:
+            if benchmark.startswith("swebench") and _is_retryable_infra_exception(e):
+                typer.echo(f"✗ retryable infra failure before task loop: {e}", err=True)
+                raise typer.Exit(SHARDED_INFRA_EXIT_CODE) from e
+            raise
+        _print_run_summary(
+            summary=summary,
+            benchmark=benchmark,
+            backend=backend,
+            model=model,
+            loop_budget=loop_budget,
+            timeout_s=timeout_s,
+        )
+        final_status = RunStatus.DONE
+    finally:
+        try:
+            runstate.close_run(run_id=run_id, status=final_status, cancel_reason=cancel_reason)
+        except Exception:
+            pass
 
 
 def _run_bluevela_benchmark(
@@ -2493,6 +2530,7 @@ def bench_swebench_lite(
         timeout_s=timeout_s,
     )
 
+
 @bench_app.command("aider-polyglot")
 def bench_aider_polyglot(
     model: Annotated[str, typer.Option("--model", help="Mellea model id")],
@@ -2568,6 +2606,7 @@ def bench_aider_polyglot(
     """Run the Aider Polyglot benchmark through mcode's harness."""
 
     from mcode.bench.aider_polyglot import default_benchmark_root, supported_languages
+
     shards, shard_count, shard_index = _validate_shard_options(
         shards=shards,
         shard_count=shard_count,

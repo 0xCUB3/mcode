@@ -58,8 +58,6 @@ def test_build_coding_agent_assembles_prompt_and_tools(tmp_path):
     assert assembly.loop_budget == 9
 
 
-
-
 def test_build_verification_policy_normalizes_commands():
     policy = build_verification_policy(
         test_cmds={"verification_cmds": ["pytest -q tests/test_bug.py", ""]},

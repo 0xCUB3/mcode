@@ -277,6 +277,7 @@ def _count_errors(tree) -> int:
         stack.extend(node.children)
     return count
 
+
 # Tree-sitter is too noisy for C-family headers and macro-heavy sources.
 # The compiler-backed benchmark verifier is the reliable syntax boundary there.
 _SYNTAX_GUARD_UNRELIABLE_SUFFIXES = {

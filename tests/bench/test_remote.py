@@ -27,7 +27,7 @@ class _FakeSshClient:
         self.commands.append(cmd)
         if cmd.startswith("mkdir -p "):
             return _FakeResult()
-        if cmd.startswith("nohup bash -lc "):
+        if cmd.startswith("nohup setsid bash -lc"):
             return _FakeResult(stdout="4242\n")
         if cmd.startswith("cat "):
             return _FakeResult(stdout="0\n")
@@ -70,7 +70,7 @@ def test_run_bench_on_bluevela_uses_tmp_for_podman_storage(tmp_path, monkeypatch
     assert exit_code == 0
     ssh = _FakeSshClient.last
     assert ssh is not None
-    launch_cmd = next(cmd for cmd in ssh.commands if cmd.startswith("nohup bash -lc "))
+    launch_cmd = next(cmd for cmd in ssh.commands if cmd.startswith("nohup setsid bash -lc"))
     run_id = "bench-1777000000-abcdef12-Qwen-Qwen3.5-35B-A3B"
 
     assert f"export XDG_RUNTIME_DIR=/tmp/mcode-bench-{run_id}" in launch_cmd
@@ -109,12 +109,11 @@ def test_run_bench_on_bluevela_forwards_context_env(tmp_path, monkeypatch) -> No
 
     ssh = _FakeSshClient.last
     assert ssh is not None
-    launch_cmd = next(cmd for cmd in ssh.commands if cmd.startswith("nohup bash -lc "))
+    launch_cmd = next(cmd for cmd in ssh.commands if cmd.startswith("nohup setsid bash -lc"))
     assert "export MCODE_CONTEXT_WINDOW=262144" in launch_cmd
     assert "export MCODE_MAX_NEW_TOKENS=4096" in launch_cmd
     assert "export MCODE_HARNESS_EXPERIMENTS=mellea_loop_detect_v1" in launch_cmd
     assert "export MCODE_REACT_TIMEOUT=2400" in launch_cmd
-
 
 
 def test_run_bench_on_bluevela_prefers_openai_env_override(tmp_path, monkeypatch) -> None:
@@ -134,10 +133,9 @@ def test_run_bench_on_bluevela_prefers_openai_env_override(tmp_path, monkeypatch
 
     ssh = _FakeSshClient.last
     assert ssh is not None
-    launch_cmd = next(cmd for cmd in ssh.commands if cmd.startswith("nohup bash -lc "))
+    launch_cmd = next(cmd for cmd in ssh.commands if cmd.startswith("nohup setsid bash -lc"))
     assert "export OPENAI_BASE_URL=https://example.test/v1" in launch_cmd
     assert "export OPENAI_API_KEY=secret-key" in launch_cmd
-
 
 
 def test_run_bench_on_bluevela_sets_up_aider_polyglot_root(tmp_path, monkeypatch) -> None:
@@ -162,7 +160,7 @@ def test_run_bench_on_bluevela_sets_up_aider_polyglot_root(tmp_path, monkeypatch
 
     ssh = _FakeSshClient.last
     assert ssh is not None
-    launch_cmd = next(cmd for cmd in ssh.commands if cmd.startswith("nohup bash -lc "))
+    launch_cmd = next(cmd for cmd in ssh.commands if cmd.startswith("nohup setsid bash -lc"))
     remote_root = "/u/skula/mcode-launch/benchmarks/polyglot-benchmark"
     assert "git clone --depth=1 https://github.com/Aider-AI/polyglot-benchmark.git" in launch_cmd
     assert ") 9>/u/skula/mcode-launch/benchmarks/.polyglot-benchmark.lock" in launch_cmd

@@ -170,9 +170,7 @@ def test_ensure_image_retries_retryable_pull_failure(tmp_path, monkeypatch):
         def __init__(self) -> None:
             self.api = FakeApi()
 
-    fake_docker = types.SimpleNamespace(
-        errors=types.SimpleNamespace(ImageNotFound=ImageNotFound)
-    )
+    fake_docker = types.SimpleNamespace(errors=types.SimpleNamespace(ImageNotFound=ImageNotFound))
     monkeypatch.setitem(sys.modules, "docker", fake_docker)
     monkeypatch.setenv("MCODE_PODMAN_LOCK_DIR", str(tmp_path))
     monkeypatch.setenv("MCODE_PODMAN_PULL_RETRY_DELAY", "0")

@@ -88,6 +88,7 @@ def test_cli_bench_smoke_help() -> None:
 
     assert "diagnostic_traces" in option_names
 
+
 def test_cli_compare_help() -> None:
     _invoke_help("compare", "--help")
 

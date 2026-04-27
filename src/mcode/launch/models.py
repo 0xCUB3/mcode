@@ -11,6 +11,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from mcode.ui.errors import MCodeError
+
 
 class Target(StrEnum):
     BLUEVELA = "bluevela"
@@ -104,10 +106,21 @@ class RunRecord:
     created_at: str | None = None
     updated_at: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    # additive bench-run lifecycle fields. Old state files load fine because
+    # _filter_fields drops unknown keys and these all have defaults.
+    started_at: float | None = None
+    ended_at: float | None = None
+    db_path: str | None = None
+    shard_pids: list[int] = field(default_factory=list)
+    remote: dict[str, Any] = field(default_factory=dict)
+    progress: dict[str, int] = field(default_factory=dict)
 
 
-class LaunchError(Exception):
-    """User-facing error with actionable remediation.
+class LaunchError(MCodeError):
+    """User-facing launcher error with actionable remediation.
+
+    Subclass of mcode.ui.errors.MCodeError so the unified print_error
+    formatter handles it. Fields and constructor signature unchanged.
 
     The CLI formats this as:
 
@@ -116,13 +129,6 @@ class LaunchError(Exception):
           next: {next}
           logs: {logs}
     """
-
-    def __init__(self, what: str, why: str = "", next: str = "", logs: str = "") -> None:
-        super().__init__(what)
-        self.what = what
-        self.why = why
-        self.next = next
-        self.logs = logs
 
 
 @dataclass

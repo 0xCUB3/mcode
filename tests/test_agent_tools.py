@@ -31,7 +31,6 @@ def test_diff_after_edits(tmp_path):
     assert "+b = 42" in patch
 
 
-
 def test_run_tests_suppresses_repeat_failed_run_without_edit(tmp_path):
     calls: list[str] = []
 

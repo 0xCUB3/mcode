@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 
 import typer
@@ -40,6 +39,7 @@ from mcode.launch.models import (
     Target,
 )
 from mcode.launch.progress import choose as choose_reporter
+from mcode.ui.errors import print_error as _print_error
 
 app = typer.Typer(
     add_completion=False,
@@ -49,19 +49,9 @@ app = typer.Typer(
 
 
 # ---------------------------------------------------------------------------
-# error formatting
+# error formatting — delegates to mcode.ui.errors so every command in mcode
+# uses one formatter; LaunchError is now a subclass of MCodeError.
 # ---------------------------------------------------------------------------
-def _print_error(e: LaunchError) -> None:
-    out = sys.stderr
-    print(f"\033[31m✗\033[0m {e.what}", file=out)
-    if e.why:
-        print(f"  why:  {e.why}", file=out)
-    if e.next:
-        print(f"  next: {e.next}", file=out)
-    if e.logs:
-        print(f"  logs: {e.logs}", file=out)
-
-
 def _run(block):
     """Call `block()`; format LaunchError; exit 1 on failure. MCODE_DEBUG=1
     short-circuits to raw traceback for dev."""
@@ -191,7 +181,7 @@ def cmd_status(
                     "status": r.status.value,
                     "benchmark": r.benchmark,
                     "server_id": r.server_id,
-                    "shards": len(r.shard_job_ids),
+                    "shards": len(r.shard_job_ids) or len(r.shard_pids),
                 }
                 for r in s.runs
             ],

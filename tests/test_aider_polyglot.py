@@ -73,7 +73,6 @@ def test_prepare_task_strips_meta_and_javascript_skip_markers(tmp_path: Path) ->
         cleanup_prepared_task(prepared)
 
 
-
 def test_run_single_command_replaces_invalid_utf8(tmp_path: Path) -> None:
     result = run_single_command(
         tmp_path,

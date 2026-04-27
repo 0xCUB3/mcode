@@ -1032,14 +1032,10 @@ def merge_shard_dbs(*, out_path: Path, shard_paths: list[Path], force: bool = Fa
                     "code_sha256": _row_value(r, "code_sha256"),
                     "terminal_reason": _row_value(r, "terminal_reason"),
                     "turns_to_first_edit": _row_value(r, "turns_to_first_edit"),
-                    "turns_to_first_verification": _row_value(
-                        r, "turns_to_first_verification"
-                    ),
+                    "turns_to_first_verification": _row_value(r, "turns_to_first_verification"),
                     "zero_edit": bool(_row_value(r, "zero_edit", 1)),
                     "zero_verification": bool(_row_value(r, "zero_verification", 1)),
-                    "verification_succeeded": bool(
-                        _row_value(r, "verification_succeeded", 0)
-                    ),
+                    "verification_succeeded": bool(_row_value(r, "verification_succeeded", 0)),
                     "prompt_snapshot": _row_value(r, "prompt_snapshot"),
                     "prompt_tokens": _row_value(r, "prompt_tokens"),
                     "completion_tokens": _row_value(r, "completion_tokens"),
@@ -1048,9 +1044,7 @@ def merge_shard_dbs(*, out_path: Path, shard_paths: list[Path], force: bool = Fa
                     "response_model": _row_value(r, "response_model"),
                     "submission_json": _row_value(r, "submission_json"),
                 }
-                diagnostic_events = _diagnostic_events_for_task(
-                    conn, int(r["run_id"]), task_id
-                )
+                diagnostic_events = _diagnostic_events_for_task(conn, int(r["run_id"]), task_id)
                 if diagnostic_events:
                     result["diagnostic_events"] = diagnostic_events
                 out_db.save_task_result(run_id, result)
@@ -1299,9 +1293,7 @@ def export_csv(
                 if not events:
                     continue
                 if diagnostic_handle is None:
-                    diagnostic_handle = diagnostic_csv.open(
-                        "w", newline="", encoding="utf-8"
-                    )
+                    diagnostic_handle = diagnostic_csv.open("w", newline="", encoding="utf-8")
                     diagnostic_writer = csv.DictWriter(
                         diagnostic_handle, fieldnames=diagnostic_fields
                     )

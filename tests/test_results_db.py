@@ -664,7 +664,6 @@ def test_export_csv_includes_generation_fields(tmp_path: Path) -> None:
     assert row["prompt_snapshot"] == "prompt body"
 
 
-
 def test_results_db_persists_merges_and_exports_diagnostic_events(tmp_path: Path) -> None:
     db_a = tmp_path / "a.db"
     merged_db = tmp_path / "merged.db"
@@ -775,8 +774,6 @@ def test_merge_shard_dbs_preserves_diagnostic_events(tmp_path: Path) -> None:
 
     with ResultsDB(merged) as rdb:
         count = rdb.conn.execute("SELECT COUNT(*) FROM diagnostic_events").fetchone()[0]
-        payload = rdb.conn.execute(
-            "SELECT payload_json FROM diagnostic_events"
-        ).fetchone()[0]
+        payload = rdb.conn.execute("SELECT payload_json FROM diagnostic_events").fetchone()[0]
     assert count == 1
     assert json.loads(payload) == {"tool_call_count": 0}

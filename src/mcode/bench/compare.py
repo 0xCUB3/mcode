@@ -9,7 +9,7 @@ def compare_run_dirs(
     baseline_dir: str,
     candidate_dir: str,
     task_ids: list[str] | None = None,
- ) -> str:
+) -> str:
     report = compare_runs(baseline_dir, candidate_dir, task_ids=task_ids)
     return format_comparison(report)
 
@@ -68,9 +68,7 @@ def format_comparison(report: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
-def _load_results_from_dir(
-    dir_path: str, task_ids: list[str] | None
- ) -> dict[str, bool]:
+def _load_results_from_dir(dir_path: str, task_ids: list[str] | None) -> dict[str, bool]:
     results: dict[str, bool] = {}
     for db_file in sorted(Path(dir_path).glob("*.db")):
         results.update(_load_results(str(db_file), task_ids))
@@ -81,15 +79,11 @@ def _load_results(db_path: str, task_ids: list[str] | None) -> dict[str, bool]:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        columns = [
-            row[1] for row in conn.execute("PRAGMA table_info(task_results)").fetchall()
-        ]
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(task_results)").fetchall()]
         if not columns:
             return {}
         passed_col = (
-            "passed"
-            if "passed" in columns
-            else "resolved" if "resolved" in columns else None
+            "passed" if "passed" in columns else "resolved" if "resolved" in columns else None
         )
         if passed_col is None:
             return {}
@@ -101,9 +95,7 @@ def _load_results(db_path: str, task_ids: list[str] | None) -> dict[str, bool]:
                 task_ids,
             ).fetchall()
         else:
-            rows = conn.execute(
-                f"SELECT task_id, {passed_col} FROM task_results"
-            ).fetchall()
+            rows = conn.execute(f"SELECT task_id, {passed_col} FROM task_results").fetchall()
         return {row["task_id"]: bool(row[passed_col]) for row in rows}
     finally:
         conn.close()

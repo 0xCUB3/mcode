@@ -528,7 +528,6 @@ def test_run_task_records_infra_failure_after_docker_retry(tmp_path):
     assert result["error"] == "DockerUnavailableError: socket timed out"
 
 
-
 def test_swebench_image_preflight_stops_before_model_loop(tmp_path, monkeypatch):
     task = SimpleNamespace(
         raw_instance={"instance_id": "matplotlib__matplotlib-23476"},

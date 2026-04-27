@@ -9,9 +9,7 @@ def test_collect_workspace_context_includes_authoritative_docs(tmp_path: Path) -
     docs = tmp_path / ".docs"
     docs.mkdir()
     (docs / "instructions.md").write_text(
-        "# Allergies\n\n"
-        "Implement score membership using bit values.\n"
-        "Eggs is 1 and peanuts is 2.\n"
+        "# Allergies\n\nImplement score membership using bit values.\nEggs is 1 and peanuts is 2.\n"
     )
     (tmp_path / "README.md").write_text("# Exercise\n\nUse the existing tests as verifier.\n")
 
