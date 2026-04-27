@@ -179,9 +179,30 @@ def _expand_db_paths(
     return uniq
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        try:
+            from importlib.metadata import PackageNotFoundError, version
+
+            v = version("mcode")
+        except (ImportError, PackageNotFoundError):
+            v = "unknown"
+        print(f"mcode {v}")
+        raise typer.Exit(0)
+
+
 @app.callback()
 def _root(
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show Mellea INFO logs")] = False,
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            help="Print mcode version and exit",
+            callback=_version_callback,
+            is_eager=True,
+        ),
+    ] = False,
 ) -> None:
     """mCode benchmarking harness."""
     _configure_mellea_logging(verbose)
@@ -213,6 +234,96 @@ def deps_sync(
         console.print(f"Using local mellea override at {selection.local_path}")
     else:
         console.print("Using upstream mellea package")
+
+
+@app.command("doctor")
+def doctor_cmd(
+    target: str = typer.Argument(
+        None,
+        help="optional: bluevela | local-vllm | local-ollama. Omit for system-wide checks.",
+    ),
+    deep: bool = typer.Option(False, "--deep"),
+    init: bool = typer.Option(False, "--init", help="bootstrap launch.toml (bluevela only)"),
+    login: str | None = typer.Option(None, "--login", help="user@host for --init"),
+) -> None:
+    """System + launch diagnostics. Subsumes `mcode launch doctor`."""
+    from mcode.doctor import render_check_lines, system_checks
+    from mcode.launch import bluevela, local_ollama, local_vllm
+    from mcode.launch import config as config_mod
+    from mcode.launch.cli import _run as _launch_run
+    from mcode.launch.models import Check as _Check
+    from mcode.ui.errors import MCodeError, print_error
+
+    if init:
+        if target != "bluevela":
+            print_error(
+                MCodeError(
+                    what="--init is only supported for `bluevela`",
+                    why=f"target was {target!r}",
+                    next="local targets don't need probing — edit launch.toml by hand",
+                )
+            )
+            raise typer.Exit(1)
+        if not login:
+            login = typer.prompt("Blue Vela login (user@host)")
+        written = _launch_run(lambda: bluevela.doctor_init(login=login))
+        print(f"wrote {written}")
+        print(f"review with `cat {written}` and re-run `mcode doctor bluevela`")
+        return
+
+    checks: list[_Check] = []
+    if target is None:
+        checks.extend(system_checks())
+        try:
+            cfg = config_mod.load()
+            checks.extend(bluevela.doctor(cfg))
+            checks.extend(local_vllm.doctor(cfg))
+            checks.extend(local_ollama.doctor(cfg))
+        except Exception as e:
+            checks.append(
+                _Check(
+                    name="launch config",
+                    ok=False,
+                    detail=str(e),
+                    next="fix or recreate launch.toml; run `mcode doctor bluevela --init`",
+                )
+            )
+    else:
+        # Validate target BEFORE loading config so an unknown target produces
+        # a clean error instead of surfacing an unrelated TOML parse failure.
+        if target not in ("bluevela", "local-vllm", "local-ollama"):
+            print_error(
+                MCodeError(
+                    what=f"unknown target {target!r}",
+                    why="valid: bluevela, local-vllm, local-ollama",
+                    next="pick one or omit for system-wide checks",
+                )
+            )
+            raise typer.Exit(1)
+        cfg = _launch_run(config_mod.load)
+        if target == "bluevela":
+            checks = bluevela.doctor(cfg)
+        elif target == "local-vllm":
+            checks = local_vllm.doctor(cfg)
+        else:
+            checks = local_ollama.doctor(cfg)
+
+    lines, any_failed = render_check_lines(checks)
+    for line in lines:
+        print(line)
+    if any_failed:
+        raise typer.Exit(1)
+
+
+@app.command("watch")
+def watch_cmd() -> None:
+    """Live dashboard combining `mcode launch status` + `mcode bench list`.
+
+    Refreshes every 2s. Quits cleanly on Ctrl+C. Recovers automatically from
+    transient state-file read failures (partial writes, lock contention)."""
+    from mcode.watch import watch
+
+    raise typer.Exit(watch())
 
 
 @app.command("results")
@@ -2107,6 +2218,35 @@ def _aider_polyglot_cli_args(
     if no_retry:
         argv.append("--no-retry")
     return argv
+
+
+@bench_app.command("list")
+def bench_list(json_mode: JsonFlag = False) -> None:
+    """List historical bench runs from the launch state file."""
+    from mcode.bench.cancel import list_runs
+
+    rc = list_runs(json_mode=json_mode)
+    if rc != 0:
+        raise typer.Exit(rc)
+
+
+@bench_app.command("cancel")
+def bench_cancel(
+    run_id: str = typer.Argument(..., help="run id (from `mcode bench list`)"),
+) -> None:
+    """Cancel a running bench. Terminates shard pids (local) or SSH-kills the
+    remote process group (Blue Vela). In-process single runs are not
+    cancellable from another shell — Ctrl+C in the running terminal."""
+    from mcode.bench.cancel import cancel_run
+    from mcode.ui.errors import handle_errors
+
+    @handle_errors
+    def _do() -> None:
+        rc = cancel_run(run_id)
+        if rc != 0:
+            raise typer.Exit(rc)
+
+    _do()
 
 
 @bench_app.command("swebench-live")

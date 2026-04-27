@@ -211,6 +211,72 @@ def cmd_logs(id: str = typer.Argument(...)) -> None:
 
 
 # ---------------------------------------------------------------------------
+# wait — block until a server is healthy, failed, or times out
+# ---------------------------------------------------------------------------
+@app.command("wait")
+def cmd_wait(
+    id: str = typer.Argument(..., help="server id (from `mcode launch status`)"),
+    timeout: int = typer.Option(600, "--timeout", min=1, help="give up after N seconds"),
+    poll_s: float = typer.Option(2.0, "--poll", min=0.5, help="seconds between polls"),
+    json_mode: bool = typer.Option(False, "--json"),
+) -> None:
+    """Block until <id> reaches a terminal state. Exits 0 on healthy, 1 on
+    failed/stopped, 2 on timeout, 3 on no-such-id."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    last_status = ""
+    while True:
+        # Tolerate transient state-file read failures (concurrent partial
+        # writes, lock contention). Single corrupt read should not crash
+        # a long wait; only deadline expiry does.
+        try:
+            s = state.load()
+        except Exception as e:
+            if time.monotonic() >= deadline:
+                _print_error(
+                    LaunchError(
+                        what="failed to read launch state",
+                        why=str(e),
+                        next="check the state file at $MCODE_LAUNCH_STATE",
+                    )
+                )
+                raise typer.Exit(2) from e
+            time.sleep(poll_s)
+            continue
+        srv = s.server(id)
+        if srv is None:
+            _print_error(
+                LaunchError(
+                    what=f"no server with id {id!r}",
+                    why="",
+                    next="`mcode launch status` to list",
+                )
+            )
+            raise typer.Exit(3)
+        last_status = srv.status
+        if srv.status == "healthy":
+            if json_mode:
+                print(json.dumps({"id": srv.id, "status": srv.status, "endpoint": srv.endpoint}))
+            else:
+                print(f"✓ {srv.id} healthy: {srv.endpoint}")
+            return
+        if srv.status in ("failed", "stopped"):
+            if json_mode:
+                print(json.dumps({"id": srv.id, "status": srv.status}))
+            else:
+                print(f"✗ {srv.id} {srv.status}")
+            raise typer.Exit(1)
+        if time.monotonic() >= deadline:
+            if json_mode:
+                print(json.dumps({"id": id, "status": last_status, "timeout_s": timeout}))
+            else:
+                print(f"⚠ timeout after {timeout}s; last status: {last_status}")
+            raise typer.Exit(2)
+        time.sleep(poll_s)
+
+
+# ---------------------------------------------------------------------------
 # stop
 # ---------------------------------------------------------------------------
 @app.command("stop")
