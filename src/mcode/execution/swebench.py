@@ -60,6 +60,14 @@ _RETRYABLE_PODMAN_IMAGE_PATTERNS = (
     "database is locked",
     "podman socket did not come up",
     "no such container",
+    # Docker Hub upstream timeouts under sharded parallel pulls. Observed when
+    # 4 shards race for the same registry endpoint.
+    "504 gateway time-out",
+    "503 service unavailable",
+    "502 bad gateway",
+    "fetching blob: received unexpected http status",
+    "reading blob",
+    "i/o timeout",
 )
 
 
