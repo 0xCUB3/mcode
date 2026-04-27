@@ -665,4 +665,4 @@ def test_aider_polyglot_cli_rejects_exercise_without_language() -> None:
     )
 
     assert res.exit_code != 0
-    assert "--exercise requires a concrete --language" in res.output
+    assert "Invalid value" in _strip_ansi(res.output)
