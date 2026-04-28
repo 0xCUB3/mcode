@@ -62,7 +62,36 @@ def _remove_path(path: Path) -> None:
         path.unlink(missing_ok=True)
         return
     if path.is_dir():
-        shutil.rmtree(path)
+        _rmtree_with_lustre_retry(path)
+
+
+def _rmtree_with_lustre_retry(path: Path, *, attempts: int = 6) -> None:
+    """Remove a directory tree, retrying on ENOTEMPTY.
+
+    Lustre / GPFS metadata can lag the actual unlink: rmtree walks the tree,
+    deletes contents, then issues rmdir on the parent — but the network FS
+    has not yet synced its dentry cache, and rmdir fails with ENOTEMPTY even
+    though the dir is genuinely empty. A short backoff lets the metadata
+    catch up.
+    """
+    import errno
+    import time
+
+    last: OSError | None = None
+    for i in range(attempts):
+        try:
+            shutil.rmtree(path)
+            return
+        except OSError as e:
+            if e.errno != errno.ENOTEMPTY:
+                raise
+            last = e
+            time.sleep(0.5 * (i + 1))
+    if last is not None:
+        # Final attempt: ignore_errors so we don't crash the task on cleanup.
+        # The path is leaked (cleaned by the bench wrapper's run-dir reaper)
+        # but the task result is preserved.
+        shutil.rmtree(path, ignore_errors=True)
 
 
 def _copy_path(src: Path, dest: Path) -> None:
