@@ -73,7 +73,7 @@ def test_run_bench_on_bluevela_uses_tmp_for_podman_storage(tmp_path, monkeypatch
     launch_cmd = next(cmd for cmd in ssh.commands if cmd.startswith("nohup setsid bash -lc"))
     run_id = "bench-1777000000-abcdef12-Qwen-Qwen3.5-35B-A3B"
 
-    assert f"export XDG_RUNTIME_DIR=/u/skula/mcode-launch/podman-runtime/{run_id}" in launch_cmd
+    assert f"export XDG_RUNTIME_DIR=/u/skula/mcode-shared/podman-runtime/{run_id}" in launch_cmd
     assert 'WORKSPACE_TMP="$XDG_RUNTIME_DIR/tmp"' in launch_cmd
     assert 'GRAPHROOT="$XDG_RUNTIME_DIR/graphroot"' in launch_cmd
     assert 'RUNROOT="$XDG_RUNTIME_DIR/runroot"' in launch_cmd
@@ -86,7 +86,8 @@ def test_run_bench_on_bluevela_uses_tmp_for_podman_storage(tmp_path, monkeypatch
     assert "max_infra_retries=1" in launch_cmd
     assert 'if [ "$rc" = "86" ]' in launch_cmd
     assert "resetting runtime" in launch_cmd
-    assert "/u/skula/mcode-shared" not in launch_cmd
+    # Podman runtime lives under shared_root (not /tmp, not workspace_root).
+    assert f"/u/skula/mcode-shared/podman-runtime/{run_id}" in launch_cmd
 
 
 def test_run_bench_on_bluevela_forwards_context_env(tmp_path, monkeypatch) -> None:

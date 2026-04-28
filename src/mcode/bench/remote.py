@@ -151,10 +151,11 @@ def run_bench_on_bluevela(
     remote_dir = f"{bv.workspace_root}/bench-runs/{run_id}"
     remote_db = f"{remote_dir}/results.db"
     remote_log = f"{remote_dir}/bench.log"
-    # Place podman storage under workspace_root, NOT /tmp. /tmp on login3 is a
-    # small shared fs (150G total, shared across all users) and bench eval
-    # images can easily fill it; workspace_root is on the user's quota.
-    runtime_dir = f"{bv.workspace_root}/podman-runtime/{run_id}"
+    # Podman storage goes under shared_root (NOT /tmp, NOT workspace_root).
+    # /tmp on login3 is small + shared (150G); workspace_root is under the
+    # per-user quota on /u/skula and 100+ swebench eval images at ~7GB each
+    # blow it. shared_root is on /proj/dmfexp which has multi-TB free.
+    runtime_dir = f"{bv.shared_root}/podman-runtime/{run_id}"
     forwarded_env = {name: value for name in _FORWARDED_ENV_VARS if (value := os.environ.get(name))}
     forwarded_exports = "".join(
         f"export {name}={shlex.quote(value)}\n" for name, value in forwarded_env.items()
