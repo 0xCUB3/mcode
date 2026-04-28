@@ -196,6 +196,12 @@ RUNROOT="$XDG_RUNTIME_DIR/runroot"
 CONTAINERS_CONF="$XDG_RUNTIME_DIR/containers.conf"
 SOCK="$XDG_RUNTIME_DIR/podman.sock"
 export MCODE_PODMAN_LOCK_DIR="$XDG_RUNTIME_DIR"
+# Use the user's authenticated docker.io creds if present so we get the
+# higher pull rate limit (~200/6h vs ~100/6h for anonymous on the cluster's
+# shared egress IP). Falls back to anonymous pulls if missing.
+if [ -f "$HOME/.config/containers/auth.json" ]; then
+  export REGISTRY_AUTH_FILE="$HOME/.config/containers/auth.json"
+fi
 
 prepare_runtime() {{
   mkdir -p "$WORKSPACE_TMP" "$GRAPHROOT" "$RUNROOT"
