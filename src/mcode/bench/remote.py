@@ -155,7 +155,11 @@ def run_bench_on_bluevela(
     # /tmp on login3 is small + shared (150G); workspace_root is under the
     # per-user quota on /u/skula and 100+ swebench eval images at ~7GB each
     # blow it. shared_root is on /proj/dmfexp which has multi-TB free.
+    # TMPDIR is split out to workspace_root because /proj/dmfexp is a
+    # distributed FS (Lustre/GPFS) where rmdir of just-written paths races
+    # with metadata sync — kills `mcode-testbed-*` cleanup with ENOTEMPTY.
     runtime_dir = f"{bv.shared_root}/podman-runtime/{run_id}"
+    tmp_dir = f"{bv.workspace_root}/podman-tmp/{run_id}"
     forwarded_env = {name: value for name in _FORWARDED_ENV_VARS if (value := os.environ.get(name))}
     forwarded_exports = "".join(
         f"export {name}={shlex.quote(value)}\n" for name, value in forwarded_env.items()
@@ -186,7 +190,7 @@ set -euo pipefail
 cd {shlex.quote(bv.workspace_root)}
 [ -f {shlex.quote(hf_env)} ] && source {shlex.quote(hf_env)}
 export XDG_RUNTIME_DIR={shlex.quote(runtime_dir)}
-WORKSPACE_TMP="$XDG_RUNTIME_DIR/tmp"
+WORKSPACE_TMP={shlex.quote(tmp_dir)}
 GRAPHROOT="$XDG_RUNTIME_DIR/graphroot"
 RUNROOT="$XDG_RUNTIME_DIR/runroot"
 CONTAINERS_CONF="$XDG_RUNTIME_DIR/containers.conf"
@@ -198,6 +202,7 @@ prepare_runtime() {{
   printf '[containers]\nkeyring=false\n' > "$CONTAINERS_CONF"
   export CONTAINERS_CONF
   export TMPDIR="$WORKSPACE_TMP"
+  rm -rf "$WORKSPACE_TMP"/* 2>/dev/null || true
   rm -f "$SOCK"
 }}
 

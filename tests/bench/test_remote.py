@@ -74,7 +74,7 @@ def test_run_bench_on_bluevela_uses_tmp_for_podman_storage(tmp_path, monkeypatch
     run_id = "bench-1777000000-abcdef12-Qwen-Qwen3.5-35B-A3B"
 
     assert f"export XDG_RUNTIME_DIR=/u/skula/mcode-shared/podman-runtime/{run_id}" in launch_cmd
-    assert 'WORKSPACE_TMP="$XDG_RUNTIME_DIR/tmp"' in launch_cmd
+    assert f"WORKSPACE_TMP=/u/skula/mcode-launch/podman-tmp/{run_id}" in launch_cmd
     assert 'GRAPHROOT="$XDG_RUNTIME_DIR/graphroot"' in launch_cmd
     assert 'RUNROOT="$XDG_RUNTIME_DIR/runroot"' in launch_cmd
     assert 'CONTAINERS_CONF="$XDG_RUNTIME_DIR/containers.conf"' in launch_cmd
