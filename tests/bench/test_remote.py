@@ -73,7 +73,7 @@ def test_run_bench_on_bluevela_uses_tmp_for_podman_storage(tmp_path, monkeypatch
     launch_cmd = next(cmd for cmd in ssh.commands if cmd.startswith("nohup setsid bash -lc"))
     run_id = "bench-1777000000-abcdef12-Qwen-Qwen3.5-35B-A3B"
 
-    assert f"export XDG_RUNTIME_DIR=/tmp/mcode-bench-{run_id}" in launch_cmd
+    assert f"export XDG_RUNTIME_DIR=/u/skula/mcode-launch/podman-runtime/{run_id}" in launch_cmd
     assert 'WORKSPACE_TMP="$XDG_RUNTIME_DIR/tmp"' in launch_cmd
     assert 'GRAPHROOT="$XDG_RUNTIME_DIR/graphroot"' in launch_cmd
     assert 'RUNROOT="$XDG_RUNTIME_DIR/runroot"' in launch_cmd

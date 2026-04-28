@@ -151,7 +151,10 @@ def run_bench_on_bluevela(
     remote_dir = f"{bv.workspace_root}/bench-runs/{run_id}"
     remote_db = f"{remote_dir}/results.db"
     remote_log = f"{remote_dir}/bench.log"
-    runtime_dir = f"/tmp/mcode-bench-{run_id}"
+    # Place podman storage under workspace_root, NOT /tmp. /tmp on login3 is a
+    # small shared fs (150G total, shared across all users) and bench eval
+    # images can easily fill it; workspace_root is on the user's quota.
+    runtime_dir = f"{bv.workspace_root}/podman-runtime/{run_id}"
     forwarded_env = {name: value for name in _FORWARDED_ENV_VARS if (value := os.environ.get(name))}
     forwarded_exports = "".join(
         f"export {name}={shlex.quote(value)}\n" for name, value in forwarded_env.items()
