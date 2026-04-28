@@ -86,7 +86,10 @@ def _is_retryable_podman_image_error(exc_or_text: object) -> bool:
 def _podman_image_pull_lock():
     import fcntl
 
-    lock_dir = Path(os.environ.get("MCODE_PODMAN_LOCK_DIR") or tempfile.gettempdir())
+    lock_dir = Path(
+        os.environ.get("MCODE_PODMAN_LOCK_DIR")
+        or (Path.home() / ".cache" / "mcode" / "podman-lock")
+    )
     lock_dir.mkdir(parents=True, exist_ok=True)
     with (lock_dir / "mcode-podman-images.lock").open("w", encoding="utf-8") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)

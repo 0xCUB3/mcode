@@ -304,10 +304,16 @@ def _validate_queue(
     _require_safe("group", cfg.group, _SAFE_IDENT_RE)
     _require_safe("gpu_mode", cfg.gpu_mode, _SAFE_IDENT_RE)
     tag = f"mcode-qval-{uuid.uuid4().hex[:6]}"
+    # bsub -o needs a writable path on the cluster-shared FS so the validation
+    # job can dump its (tiny) output. /tmp on the login node is small + shared
+    # across all users; route to the per-user workspace_root instead.
+    val_dir = f"{cfg.workspace_root}/.mcode-qval"
+    val_out = f"{val_dir}/{tag}.out"
+    ssh.run(f"mkdir -p {_q(val_dir)}", timeout=15)
     cmd = (
         f"bsub -H -G {_q(cfg.group)} -q {_q(queue)} -J {_q(tag)} -n 1 "
         f"-R {_q('span[hosts=1]')} -gpu {_q(f'num=1:mode={cfg.gpu_mode}')} "
-        f"-W 2 -o /tmp/{_q(tag)}.out bash -c true"
+        f"-W 2 -o {_q(val_out)} bash -c true"
     )
     r = ssh.run(cmd, timeout=timeout)
     if not r.ok:
@@ -394,6 +400,8 @@ def launch(
     bv = cfg.bluevela
 
     run_id = f"bv-{uuid.uuid4().hex[:8]}"
+    cache_dir = Path.home() / ".cache" / "mcode" / "launch"
+    cache_dir.mkdir(parents=True, exist_ok=True)
     ctx = _LaunchContext(
         spec=spec,
         reporter=reporter,
@@ -402,7 +410,7 @@ def launch(
         state_path=state_path,
         run_id=run_id,
         run_dir=_shared_path(bv, "runs", run_id),
-        local_log=Path(f"/tmp/mcode-bluevela-{run_id}.log"),
+        local_log=cache_dir / f"bluevela-{run_id}.log",
     )
     reporter.add_phases(PHASES)
 
@@ -468,7 +476,7 @@ def _phase_submit(ctx: _LaunchContext) -> None:
     env_payload["QUEUE"] = queue
     ctx.env_payload = env_payload
 
-    staging = Path(f"/tmp/mcode-bv-stage-{ctx.run_id}")
+    staging = Path.home() / ".cache" / "mcode" / "launch" / f"stage-{ctx.run_id}"
     staging.mkdir(parents=True, exist_ok=True)
     (staging / "env.json").write_text(json.dumps(env_payload, indent=2))
 

@@ -23,7 +23,7 @@ def _default_cache_dir() -> Path:
     xdg_cache = os.environ.get("XDG_CACHE_HOME")
     if xdg_cache:
         return Path(xdg_cache) / "mcode"
-    return Path("/tmp/mcode-cache")
+    return Path.home() / ".cache" / "mcode"
 
 
 @dataclass(frozen=True)

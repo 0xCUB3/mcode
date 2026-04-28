@@ -50,7 +50,10 @@ HOST_TAG="$(hostname -s)"
 # Node-local per-job graphroot fully isolates each launch. Cost: image
 # re-pull on every run (~5-10 min on this cluster). Benefit: reliability.
 # This matches the smoke-test script's approach.
-export XDG_RUNTIME_DIR="/tmp/podman-run-$(id -u)-${LSB_JOBID:-0}"
+# Compute-node-local scratch under $HOME (NOT /tmp). Memory rule: avoid /tmp
+# anywhere in the code path. ${HOME}/.local/run is per-user and on a writable
+# filesystem visible from the compute node.
+export XDG_RUNTIME_DIR="${HOME}/.local/run/podman-${LSB_JOBID:-0}"
 mkdir -p "$XDG_RUNTIME_DIR"
 GRAPHROOT="${XDG_RUNTIME_DIR}/graphroot"
 RUNROOT="${XDG_RUNTIME_DIR}/runroot"

@@ -110,6 +110,7 @@ def test_bjobs_state_empty_returns_none() -> None:
 def test_validate_queue_accepts_and_cleans_up() -> None:
     ssh = MagicMock()
     ssh.run.side_effect = [
+        _result(stdout=""),  # mkdir -p .mcode-qval
         _result(stdout="Job <555> is submitted to queue <normal>.\n"),
         _result(stdout=""),  # bkill
     ]
@@ -140,9 +141,12 @@ def test_pick_queue_tries_in_order_and_raises_on_all_rejected() -> None:
 
 def test_pick_queue_returns_first_accepted() -> None:
     ssh = MagicMock()
-    # q1 rejected, q2 accepted
+    # q1 rejected, q2 accepted. Each _validate_queue call also issues a
+    # `mkdir -p .mcode-qval` first to stage the bsub output dir.
     ssh.run.side_effect = [
+        _result(stdout=""),  # mkdir for q1
         _result(returncode=255, stderr="closed\n"),
+        _result(stdout=""),  # mkdir for q2
         _result(stdout="Job <10> submitted to queue <q2>.\n"),
         _result(stdout=""),  # bkill
     ]
