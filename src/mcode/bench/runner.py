@@ -44,6 +44,7 @@ class BenchConfig:
     swebench_force_rebuild: bool = False
     swebench_mem_limit: str = "4g"
     swebench_pids_limit: int = 512
+    swebench_cpu_limit: float | None = None
     swebench_dataset: str = "SWE-bench/SWE-bench_Lite"
     aider_polyglot_root: Path | None = None
     aider_polyglot_language: str = "all"
@@ -143,6 +144,7 @@ class BenchmarkRunner:
             max_workers=self.config.swebench_max_workers,
             mem_limit=self.config.swebench_mem_limit,
             pids_limit=self.config.swebench_pids_limit,
+            cpu_limit=self.config.swebench_cpu_limit,
             force_rebuild=self.config.swebench_force_rebuild,
         )
         swe_sandbox.prepare_images([t.raw_instance for t in tasks])
@@ -190,6 +192,7 @@ class BenchmarkRunner:
         live_sandbox = SWEbenchLiveSandbox(
             mem_limit=self.config.swebench_mem_limit,
             pids_limit=self.config.swebench_pids_limit,
+            cpu_limit=self.config.swebench_cpu_limit,
         )
         live_sandbox.prepare_images(tasks)
         run_id = self.results_db.start_run("swebench-live", config)

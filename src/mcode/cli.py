@@ -2075,6 +2075,7 @@ def _swebench_live_cli_args(
     split: str,
     mem_limit: str,
     pids_limit: int,
+    cpu_limit: float | None,
     limit: int | None,
     n_samples: int,
     sampling: str,
@@ -2110,6 +2111,7 @@ def _swebench_live_cli_args(
     if selection_attempts != 1:
         _append_option(argv, "--selection-attempts", selection_attempts)
     _append_option(argv, "--task-ids", task_ids)
+    _append_option(argv, "--cpu-limit", cpu_limit)
     if diagnostic_traces:
         argv.append("--diagnostic-traces")
     return argv
@@ -2130,6 +2132,7 @@ def _swebench_lite_cli_args(
     force_rebuild: bool,
     mem_limit: str,
     pids_limit: int,
+    cpu_limit: float | None,
     limit: int | None,
     n_samples: int,
     sampling: str,
@@ -2174,6 +2177,7 @@ def _swebench_lite_cli_args(
     if selection_attempts != 1:
         _append_option(argv, "--selection-attempts", selection_attempts)
     _append_option(argv, "--task-ids", task_ids)
+    _append_option(argv, "--cpu-limit", cpu_limit)
     if force_rebuild:
         argv.append("--force-rebuild")
     if diagnostic_traces:
@@ -2281,6 +2285,18 @@ def bench_swebench_live(
         int,
         typer.Option("--pids-limit", min=64, help="Eval container process limit"),
     ] = 512,
+    cpu_limit: Annotated[
+        float | None,
+        typer.Option(
+            "--cpu-limit",
+            help=(
+                "Cap each eval container at N cores (cgroup cpu_quota). "
+                "Default: unlimited. Use --on bluevela where login-node admins "
+                "kill processes >100 cores."
+            ),
+            envvar="MCODE_SWEBENCH_CPU_LIMIT",
+        ),
+    ] = None,
     shards: Annotated[
         int | None,
         typer.Option("--shards", min=1, help="Run N shard workers and merge the DB automatically"),
@@ -2361,6 +2377,7 @@ def bench_swebench_live(
             split=split,
             mem_limit=mem_limit,
             pids_limit=pids_limit,
+            cpu_limit=cpu_limit,
             limit=limit,
             n_samples=n_samples,
             sampling=sampling,
@@ -2397,6 +2414,7 @@ def bench_swebench_live(
                 split=split,
                 mem_limit=mem_limit,
                 pids_limit=pids_limit,
+                cpu_limit=cpu_limit,
                 limit=limit,
                 n_samples=n_samples,
                 sampling=sampling,
@@ -2432,6 +2450,7 @@ def bench_swebench_live(
         swebench_split=split,
         swebench_mem_limit=mem_limit,
         swebench_pids_limit=pids_limit,
+        swebench_cpu_limit=cpu_limit,
         task_shard_count=shard_count,
         task_shard_index=shard_index,
         n_samples=n_samples,
@@ -2504,6 +2523,18 @@ def bench_swebench_lite(
         int,
         typer.Option("--pids-limit", min=64, help="Eval container process limit"),
     ] = 512,
+    cpu_limit: Annotated[
+        float | None,
+        typer.Option(
+            "--cpu-limit",
+            help=(
+                "Cap each eval container at N cores (cgroup cpu_quota). "
+                "Default: unlimited. Use --on bluevela where login-node admins "
+                "kill processes >100 cores."
+            ),
+            envvar="MCODE_SWEBENCH_CPU_LIMIT",
+        ),
+    ] = None,
     shards: Annotated[
         int | None,
         typer.Option("--shards", min=1, help="Run N shard workers and merge the DB automatically"),
@@ -2590,6 +2621,7 @@ def bench_swebench_lite(
             force_rebuild=force_rebuild,
             mem_limit=mem_limit,
             pids_limit=pids_limit,
+            cpu_limit=cpu_limit,
             limit=limit,
             n_samples=n_samples,
             sampling=sampling,
@@ -2631,6 +2663,7 @@ def bench_swebench_lite(
                 force_rebuild=force_rebuild,
                 mem_limit=mem_limit,
                 pids_limit=pids_limit,
+                cpu_limit=cpu_limit,
                 limit=limit,
                 n_samples=n_samples,
                 sampling=sampling,
@@ -2671,6 +2704,7 @@ def bench_swebench_lite(
         swebench_force_rebuild=force_rebuild,
         swebench_mem_limit=mem_limit,
         swebench_pids_limit=pids_limit,
+        swebench_cpu_limit=cpu_limit,
         task_shard_count=shard_count,
         task_shard_index=shard_index,
         n_samples=n_samples,
@@ -2917,6 +2951,18 @@ def bench_smoke(
             help="Persist compact benchmark diagnostic trace events",
         ),
     ] = False,
+    cpu_limit: Annotated[
+        float | None,
+        typer.Option(
+            "--cpu-limit",
+            help=(
+                "Cap each eval container at N cores (cgroup cpu_quota). "
+                "Default: unlimited. Use --on bluevela where login-node admins "
+                "kill processes >100 cores."
+            ),
+            envvar="MCODE_SWEBENCH_CPU_LIMIT",
+        ),
+    ] = None,
     json_mode: JsonFlag = False,
 ) -> None:
     """16-task SWE-bench Verified diagnostic slice (astropy smoke + 6 projects).
@@ -2946,6 +2992,7 @@ def bench_smoke(
         _append_option(argv, "--shards", shards)
         _append_option(argv, "--shard-count", shard_count)
         _append_option(argv, "--shard-index", shard_index)
+        _append_option(argv, "--cpu-limit", cpu_limit)
         if json_mode:
             argv.append("--json")
         _run_bluevela_benchmark(
@@ -2975,6 +3022,7 @@ def bench_smoke(
             force_rebuild=False,
             mem_limit=mem_limit,
             pids_limit=512,
+            cpu_limit=cpu_limit,
             shards=shards,
             shard_count=shard_count,
             shard_index=shard_index,

@@ -245,3 +245,88 @@ def test_repo_context_disables_network_for_source_container(monkeypatch):
         pass
 
     assert create_calls[0]["network_disabled"] is True
+    # cpu_limit defaults to None → no cpu_quota / cpu_period kwargs leaked
+    assert "cpu_quota" not in create_calls[1]
+    assert "cpu_period" not in create_calls[1]
+
+
+def test_repo_context_caps_exec_container_cpu_when_cpu_limit_set(monkeypatch):
+    class FakeSourceContainer:
+        def get_archive(self, path):
+            assert path == "/testbed"
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w") as tar:
+                info = tarfile.TarInfo("testbed")
+                info.type = tarfile.DIRTYPE
+                tar.addfile(info)
+            buf.seek(0)
+            return [buf.getvalue()], {}
+
+        def remove(self, force=False):
+            assert force is True
+
+    class FakeExecContainer:
+        def start(self):
+            return None
+
+        def remove(self, force=False):
+            assert force is True
+
+    create_calls: list[dict] = []
+    containers = [FakeSourceContainer(), FakeExecContainer()]
+
+    class FakeContainerManager:
+        def create(self, **kwargs):
+            create_calls.append(kwargs)
+            return containers.pop(0)
+
+    class FakeClient:
+        containers = FakeContainerManager()
+
+    fake_test_spec = types.SimpleNamespace(
+        instance_image_key="docker.io/example/image:latest",
+        platform="linux/amd64",
+        eval_script_list=[],
+    )
+    fake_test_spec_module = types.ModuleType("swebench.harness.test_spec.test_spec")
+    fake_test_spec_module.make_test_spec = lambda *args, **kwargs: fake_test_spec
+    monkeypatch.setitem(sys.modules, "swebench", types.ModuleType("swebench"))
+    monkeypatch.setitem(sys.modules, "swebench.harness", types.ModuleType("swebench.harness"))
+    monkeypatch.setitem(
+        sys.modules,
+        "swebench.harness.test_spec",
+        types.ModuleType("swebench.harness.test_spec"),
+    )
+    monkeypatch.setitem(sys.modules, "swebench.harness.test_spec.test_spec", fake_test_spec_module)
+    monkeypatch.setattr("mcode.execution.swebench._ensure_image", lambda client, name: None)
+    monkeypatch.setattr(
+        "mcode.execution.swebench._exec_agent_command_in_container",
+        lambda *args, **kwargs: ("", 0, False),
+    )
+
+    sandbox = SWEbenchSandbox(cpu_limit=2.0)
+    monkeypatch.setattr(sandbox, "_get_client", lambda: FakeClient())
+
+    with sandbox.repo_context({"instance_id": "astropy__astropy-12907"}):
+        pass
+
+    # exec_container is the second create call. Cap = 2 cores → quota 200_000 / period 100_000.
+    exec_kwargs = create_calls[1]
+    assert exec_kwargs["cpu_period"] == 100_000
+    assert exec_kwargs["cpu_quota"] == 200_000
+
+
+def test_sandbox_cpu_limit_zero_or_negative_treated_as_unlimited():
+    s = SWEbenchSandbox(cpu_limit=0)
+    assert s.cpu_limit is None
+    assert s._cpu_kwargs() == {}
+    s = SWEbenchSandbox(cpu_limit=-1.5)
+    assert s.cpu_limit is None
+    assert s._cpu_kwargs() == {}
+    s = SWEbenchSandbox(cpu_limit=4.0)
+    assert s.cpu_limit == 4.0
+    assert s._cpu_kwargs() == {"cpu_period": 100_000, "cpu_quota": 400_000}
+    # Near-zero positive: quota would round to <1ms, so we return {} rather
+    # than send a half-set HostConfig.
+    s = SWEbenchSandbox(cpu_limit=0.0001)
+    assert s._cpu_kwargs() == {}

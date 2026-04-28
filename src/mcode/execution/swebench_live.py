@@ -76,10 +76,23 @@ class SWEbenchLiveSandbox:
         *,
         mem_limit: str = "4g",
         pids_limit: int = 512,
+        cpu_limit: float | None = None,
     ):
         self.mem_limit = mem_limit
         self.pids_limit = pids_limit
+        self.cpu_limit = cpu_limit if (cpu_limit and cpu_limit > 0) else None
         self._client = None
+
+    def _cpu_kwargs(self) -> dict[str, int]:
+        if self.cpu_limit is None:
+            return {}
+        # Same floor as SWEbenchSandbox: a near-zero cpu_limit would yield
+        # quota=0 (dropped by docker-py) with cpu_period still set, which is
+        # corrupted state. Require ≥1 ms slice (1% of one core).
+        quota = int(self.cpu_limit * 100_000)
+        if quota < 1_000:
+            return {}
+        return {"cpu_period": 100_000, "cpu_quota": quota}
 
     def _get_client(self):
         self._client = ensure_docker_client(
@@ -230,6 +243,7 @@ class SWEbenchLiveSandbox:
                     # grading in evaluate_patch still runs with network off.
                     mem_limit=self.mem_limit,
                     pids_limit=self.pids_limit,
+                    **self._cpu_kwargs(),
                 )
                 exec_container.start()
 
@@ -330,6 +344,7 @@ class SWEbenchLiveSandbox:
                 network_disabled=True,
                 mem_limit=self.mem_limit,
                 pids_limit=self.pids_limit,
+                **self._cpu_kwargs(),
             )
             container.start()
 

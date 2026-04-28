@@ -260,6 +260,7 @@ class SWEbenchSandbox:
         max_workers: int = 4,
         mem_limit: str = "4g",
         pids_limit: int = 512,
+        cpu_limit: float | None = None,
         force_rebuild: bool = False,
         base_image_tag: str = "latest",
         env_image_tag: str = "latest",
@@ -270,11 +271,26 @@ class SWEbenchSandbox:
         self.max_workers = max_workers
         self.mem_limit = mem_limit
         self.pids_limit = pids_limit
+        # cpu_limit caps each podman/docker container's CPU. None / 0 / negative
+        # → no cap (legacy behavior). Avoids login-node admin auto-killer when
+        # rootless containers' in-namespace pytest spikes to >100 cores.
+        self.cpu_limit = cpu_limit if (cpu_limit and cpu_limit > 0) else None
         self.force_rebuild = force_rebuild
         self.base_image_tag = base_image_tag
         self.env_image_tag = env_image_tag
         self.instance_image_tag = instance_image_tag
         self._client = None
+
+    def _cpu_kwargs(self) -> dict[str, int]:
+        if self.cpu_limit is None:
+            return {}
+        # Floor a tiny positive cpu_limit to a valid quota. int(0.0001 * 100_000)
+        # == 0, and docker-py drops the zero quota while keeping cpu_period →
+        # corrupted state. Require ≥1 ms slice (1% of one core).
+        quota = int(self.cpu_limit * 100_000)
+        if quota < 1_000:
+            return {}
+        return {"cpu_period": 100_000, "cpu_quota": quota}
 
     def _get_client(self):
         self._client = ensure_docker_client(self._client, scope="SWE-bench Lite evaluation")
@@ -411,6 +427,7 @@ class SWEbenchSandbox:
                     # hermetic grading in evaluate_patch keeps network off.
                     mem_limit=self.mem_limit,
                     pids_limit=self.pids_limit,
+                    **self._cpu_kwargs(),
                 )
                 exec_container.start()
 
@@ -584,6 +601,7 @@ class SWEbenchSandbox:
                 network_disabled=True,
                 mem_limit=self.mem_limit,
                 pids_limit=self.pids_limit,
+                **self._cpu_kwargs(),
             )
             container.start()
 
