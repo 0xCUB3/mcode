@@ -314,6 +314,13 @@ def test_repo_context_caps_exec_container_cpu_when_cpu_limit_set(monkeypatch):
     exec_kwargs = create_calls[1]
     assert exec_kwargs["cpu_period"] == 100_000
     assert exec_kwargs["cpu_quota"] == 200_000
+    # Library-level OMP/BLAS thread caps must also be set so cgroup-v1
+    # rootless podman silently dropping cpu_quota doesn't unleash 110-thread
+    # pytest spikes.
+    env = exec_kwargs["environment"]
+    assert env["OMP_NUM_THREADS"] == "2"
+    assert env["OPENBLAS_NUM_THREADS"] == "2"
+    assert env["MKL_NUM_THREADS"] == "2"
 
 
 def test_sandbox_cpu_limit_zero_or_negative_treated_as_unlimited():

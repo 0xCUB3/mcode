@@ -292,6 +292,25 @@ class SWEbenchSandbox:
             return {}
         return {"cpu_period": 100_000, "cpu_quota": quota}
 
+    def _thread_env(self) -> dict[str, str]:
+        """OpenMP/BLAS thread caps for the eval container. cpu_quota at the
+        cgroup level is silently no-op'd by rootless podman on cgroup-v1
+        clusters; setting these env vars constrains numpy / scipy / sklearn
+        / OpenMP at the LIBRARY level so a single pytest can no longer fork
+        110 threads and trip login-node admin auto-killers."""
+        if self.cpu_limit is None:
+            return {}
+        n = max(1, int(self.cpu_limit))
+        s = str(n)
+        return {
+            "OMP_NUM_THREADS": s,
+            "OPENBLAS_NUM_THREADS": s,
+            "MKL_NUM_THREADS": s,
+            "NUMEXPR_NUM_THREADS": s,
+            "VECLIB_MAXIMUM_THREADS": s,
+            "BLIS_NUM_THREADS": s,
+        }
+
     def _get_client(self):
         self._client = ensure_docker_client(self._client, scope="SWE-bench Lite evaluation")
         return self._client
@@ -427,6 +446,7 @@ class SWEbenchSandbox:
                     # hermetic grading in evaluate_patch keeps network off.
                     mem_limit=self.mem_limit,
                     pids_limit=self.pids_limit,
+                    environment=self._thread_env(),
                     **self._cpu_kwargs(),
                 )
                 exec_container.start()
@@ -601,6 +621,7 @@ class SWEbenchSandbox:
                 network_disabled=True,
                 mem_limit=self.mem_limit,
                 pids_limit=self.pids_limit,
+                environment=self._thread_env(),
                 **self._cpu_kwargs(),
             )
             container.start()
