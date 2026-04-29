@@ -566,7 +566,7 @@ def _config_label(r: dict) -> str:
         f"budget={r.get('loop_budget', '')}",
         f"timeout={r.get('timeout_s', '')}",
     ]
-    if r.get("strategy") and r["strategy"] != "repair":
+    if r.get("strategy") and r["strategy"] != "none":
         parts.append(f"strategy={r['strategy']}")
     if "runs" in r:
         parts.append(f"runs={r.get('runs')}")
@@ -2316,7 +2316,7 @@ def bench_swebench_live(
         typer.Option("--n-samples", min=1, help="Outer attempts or sampling budget"),
     ] = 1,
     sampling: Annotated[
-        Literal["none", "rejection", "repair", "multiturn", "sofai"],
+        Literal["none", "multiturn"],
         typer.Option("--sampling", help="Mellea sampling strategy"),
     ] = "none",
     sampling_budget: Annotated[
@@ -2554,7 +2554,7 @@ def bench_swebench_lite(
         typer.Option("--n-samples", min=1, help="Outer attempts or sampling budget"),
     ] = 1,
     sampling: Annotated[
-        Literal["none", "rejection", "repair", "multiturn", "sofai"],
+        Literal["none", "multiturn"],
         typer.Option("--sampling", help="Mellea sampling strategy"),
     ] = "none",
     sampling_budget: Annotated[

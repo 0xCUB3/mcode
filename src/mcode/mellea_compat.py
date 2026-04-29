@@ -1,40 +1,9 @@
 from __future__ import annotations
 
-import inspect
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
-
-
-def import_requirements():
-    import mellea.stdlib.components.instruction  # noqa: F401
-    import mellea.stdlib.requirements as requirements
-
-    return requirements
-
-
-def import_sampling():
-    import mellea.stdlib.functional  # noqa: F401
-    import mellea.stdlib.sampling as sampling
-
-    return sampling
-
-
-def requirements_available() -> bool:
-    try:
-        import_requirements()
-        return True
-    except Exception:
-        return False
-
-
-def sampling_available() -> bool:
-    try:
-        import_sampling()
-        return True
-    except Exception:
-        return False
 
 
 def hooks_available() -> bool:
@@ -46,12 +15,12 @@ def hooks_available() -> bool:
         return False
 
 
-def apply_runtime_patches() -> None:
+def apply_provider_compatibility_patches() -> None:
     _patch_openai_tool_validation()
     _patch_openai_tool_ordering()
 
 
-async def acall_tools(result, backend):
+async def acall_tools_with_arg_compat(result, backend):
     import mellea.stdlib.functional as functional
 
     _normalize_tool_calls(result)
@@ -109,17 +78,6 @@ def _coerce_raw_tool_args(
     return {}
 
 
-def build_tool_from_callable(func: Callable[..., Any], *, name: str | None = None):
-    from mellea.backends.tools import MelleaTool
-
-    tool = MelleaTool.from_callable(func, name=name)
-    return MelleaTool(
-        tool.name,
-        func,
-        _patch_tool_schema_defaults(tool.as_json_tool, func),
-    )
-
-
 def _tool_schema(func) -> Mapping[str, Any] | None:
     schema = getattr(func, "as_json_tool", None)
     if not isinstance(schema, Mapping):
@@ -151,33 +109,6 @@ def _tool_required_param_names(func) -> list[str]:
     if not isinstance(required, list):
         return []
     return [str(name) for name in required if isinstance(name, str)]
-
-
-def _patch_tool_schema_defaults(
-    schema: object,
-    func: Callable[..., Any],
-) -> dict[str, Any] | object:
-    if not isinstance(schema, Mapping):
-        return schema
-    patched = deepcopy(schema)
-    function_schema = patched.get("function")
-    if not isinstance(function_schema, dict):
-        return patched
-    parameters = function_schema.get("parameters")
-    if not isinstance(parameters, dict):
-        return patched
-
-    required: list[str] = []
-    for name, param in inspect.signature(func).parameters.items():
-        if param.kind in (
-            inspect.Parameter.VAR_POSITIONAL,
-            inspect.Parameter.VAR_KEYWORD,
-        ):
-            continue
-        if param.default is inspect._empty:
-            required.append(name)
-    parameters["required"] = required
-    return patched
 
 
 def _drop_unspecified_optional_nones(

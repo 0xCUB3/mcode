@@ -365,7 +365,7 @@ def cmd_doctor(
 ) -> None:
     """Health check for a target. With --init, probe and write launch.toml."""
     # Codex verification-pass fix: don't load existing config for --init. The
-    # whole point of --init is to repair a missing/broken launch.toml; eager
+    # whole point of --init is to recover a missing/broken launch.toml; eager
     # loading defeats that.
     if init:
         if target != "bluevela":

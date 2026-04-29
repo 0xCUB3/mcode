@@ -4,6 +4,8 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from mellea.backends.tools import MelleaTool
+
 from mcode.agent.coding_policy import CodingPolicy, build_coding_policy
 from mcode.agent.repo_customization import load_repo_customization
 from mcode.agent.tooling import (
@@ -22,8 +24,6 @@ from mcode.agent.verification import (
     build_verification_policy,
 )
 from mcode.agent.workspace_context import collect_workspace_context
-from mcode.llm.harness_experiments import active_harness_experiments
-from mcode.mellea_compat import build_tool_from_callable
 
 
 @dataclass(frozen=True)
@@ -36,7 +36,6 @@ class CodingAgentAssembly:
     model_options: dict
     loop_budget: int
     timeout_s: int
-    harness_experiments: tuple[str, ...]
 
     @property
     def system_prompt(self) -> str:
@@ -102,12 +101,7 @@ def build_coding_agent(
         workspace_context_text=workspace_context_text,
         verification_prompt=verification_policy.prompt_block,
     )
-    harness_experiments = active_harness_experiments()
-    tools = _build_tools_for_experiments(
-        repo_root,
-        verification_policy=verification_policy,
-        harness_experiments=harness_experiments,
-    )
+    tools = make_agent_tools(repo_root, verification_policy=verification_policy)
 
     return CodingAgentAssembly(
         repo=repo,
@@ -118,18 +112,7 @@ def build_coding_agent(
         model_options=session._model_options(system_prompt=coding_policy.system_prompt),
         loop_budget=budget,
         timeout_s=timeout_s,
-        harness_experiments=harness_experiments,
     )
-
-
-def _build_tools_for_experiments(
-    repo_root: str,
-    *,
-    verification_policy: VerificationPolicy,
-    harness_experiments: tuple[str, ...],
-):
-    del harness_experiments
-    return make_agent_tools(repo_root, verification_policy=verification_policy)
 
 
 def make_agent_tools(
@@ -158,11 +141,11 @@ def make_agent_tools(
         return list_dir(path, repo_root=repo_root)
 
     tools = [
-        build_tool_from_callable(_search, name="search_code"),
-        build_tool_from_callable(_edit, name="edit"),
-        build_tool_from_callable(_read, name="read_file"),
-        build_tool_from_callable(_find, name="find_file"),
-        build_tool_from_callable(_list, name="list_dir"),
+        MelleaTool.from_callable(_search, name="search_code"),
+        MelleaTool.from_callable(_edit, name="edit"),
+        MelleaTool.from_callable(_read, name="read_file"),
+        MelleaTool.from_callable(_find, name="find_file"),
+        MelleaTool.from_callable(_list, name="list_dir"),
     ]
     run_tests_tool = build_run_tests_tool(
         repo_root=repo_root,

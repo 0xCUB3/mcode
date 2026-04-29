@@ -99,7 +99,6 @@ def test_run_bench_on_bluevela_forwards_context_env(tmp_path, monkeypatch) -> No
     monkeypatch.setattr(remote.time, "time", lambda: 1777000001)
     monkeypatch.setenv("MCODE_CONTEXT_WINDOW", "262144")
     monkeypatch.setenv("MCODE_MAX_NEW_TOKENS", "4096")
-    monkeypatch.setenv("MCODE_HARNESS_EXPERIMENTS", "mellea_loop_detect_v1")
     monkeypatch.setenv("MCODE_REACT_TIMEOUT", "2400")
 
     remote.run_bench_on_bluevela(
@@ -113,7 +112,6 @@ def test_run_bench_on_bluevela_forwards_context_env(tmp_path, monkeypatch) -> No
     launch_cmd = next(cmd for cmd in ssh.commands if cmd.startswith("nohup setsid bash -lc"))
     assert "export MCODE_CONTEXT_WINDOW=262144" in launch_cmd
     assert "export MCODE_MAX_NEW_TOKENS=4096" in launch_cmd
-    assert "export MCODE_HARNESS_EXPERIMENTS=mellea_loop_detect_v1" in launch_cmd
     assert "export MCODE_REACT_TIMEOUT=2400" in launch_cmd
 
 

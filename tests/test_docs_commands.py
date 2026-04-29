@@ -7,7 +7,7 @@ def test_command_docs_cover_sampling_and_compare() -> None:
     command_docs = Path("docs/COMMANDS.md").read_text()
     assert "uv run mcode bench swebench-lite" in command_docs
     assert "--shards" in command_docs
-    assert "--sampling {none,rejection,repair,multiturn,sofai}" in command_docs
+    assert "--sampling {none,multiturn}" in command_docs
     assert "uv run mcode compare" in command_docs
 
 
@@ -37,5 +37,5 @@ def test_readmes_match_command_contract() -> None:
     assert "MELLEA_TRACE_APPLICATION" in commands_doc
 
     # Legacy Blue Vela shell scripts still match their pinned shape.
-    assert "--sampling rejection --n-samples 3" in bluevela_readme
+    assert "--sampling multiturn --n-samples 3" in bluevela_readme
     assert "--shards 4" in bluevela_readme

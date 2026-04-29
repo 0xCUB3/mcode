@@ -12,7 +12,6 @@ from pathlib import Path
 from mcode.bench.results import ResultsDB, RunSummary
 from mcode.execution.sandbox import DockerUnavailableError
 from mcode.llm.session import LLMSession
-from mcode.mellea_compat import requirements_available, sampling_available
 from mcode.ui.task_reporter import choose as choose_task_reporter
 
 
@@ -858,8 +857,8 @@ def _runtime_metadata() -> dict[str, str]:
         meta["mellea_metrics_enabled"] = "1" if is_metrics_enabled() else "0"
     except Exception:
         meta["mellea_metrics_enabled"] = "0"
-    meta["mellea_requirements_available"] = "1" if requirements_available() else "0"
-    meta["mellea_sampling_available"] = "1" if sampling_available() else "0"
+    meta["mellea_requirements_available"] = "1"
+    meta["mellea_sampling_available"] = "1"
     return meta
 
 

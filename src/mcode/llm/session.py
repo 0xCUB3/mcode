@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
+from mellea.stdlib.sampling import MultiTurnStrategy
 from pydantic import BaseModel, Field
 
 from mcode.agent.coding_agent import build_coding_agent
@@ -18,7 +19,7 @@ from mcode.agent.verification import (
 )
 from mcode.llm.react_driver import SolveTraceCollector, SolveTracePlugin, run_react_loop
 from mcode.llm.repo_state import get_git_diff, repo_snapshot, restore_repo_snapshot
-from mcode.mellea_compat import apply_runtime_patches, hooks_available, import_sampling
+from mcode.mellea_compat import apply_provider_compatibility_patches, hooks_available
 
 
 class PatchSubmission(BaseModel):
@@ -99,7 +100,6 @@ class McodeSolverPowerup:
         collector: SolveTraceCollector,
         sampling_strategy_name: str,
         sampling_budget: int,
-        harness_experiments: tuple[str, ...],
         hooks_enabled: bool,
     ) -> SolveResult:
         use_requirement_sampling = sampling_strategy_name != "none"
@@ -134,7 +134,6 @@ class McodeSolverPowerup:
                 strategy_name=sampling_strategy_name,
                 sampling_budget=sampling_budget,
             ),
-            harness_experiments=harness_experiments,
             hooks_enabled=hooks_enabled,
         )
 
@@ -251,7 +250,7 @@ class LLMSession:
         from mellea.stdlib.context import ChatContext
 
         _ensure_powerup_registered()
-        apply_runtime_patches()
+        apply_provider_compatibility_patches()
         return mellea.start_session(
             backend_name=self.backend_name,
             model_id=self.model_id,
@@ -408,7 +407,6 @@ class LLMSession:
                             collector=collector,
                             sampling_strategy_name=self.sampling_strategy,
                             sampling_budget=sampling_budget,
-                            harness_experiments=agent.harness_experiments,
                             hooks_enabled=enable_hooks,
                         )
                     )
@@ -494,19 +492,9 @@ def _strategy_for_requirements(
 
 
 def _build_sampling_strategy(*, backend, strategy_name: str, sampling_budget: int):
-    sampling = import_sampling()
-    if strategy_name == "rejection":
-        return sampling.RejectionSamplingStrategy(loop_budget=max(1, sampling_budget))
-    if strategy_name == "repair":
-        return sampling.RepairTemplateStrategy(loop_budget=max(1, sampling_budget))
+    del backend
     if strategy_name == "multiturn":
-        return sampling.MultiTurnStrategy(loop_budget=max(1, sampling_budget))
-    if strategy_name == "sofai":
-        return sampling.SOFAISamplingStrategy(
-            backend,
-            backend,
-            loop_budget=max(1, sampling_budget),
-        )
+        return MultiTurnStrategy(loop_budget=max(1, sampling_budget))
     raise ValueError(f"unknown sampling strategy: {strategy_name}")
 
 

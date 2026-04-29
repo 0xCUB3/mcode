@@ -234,7 +234,7 @@ def test_generate_patch_disables_outer_retry_when_sampling_enabled(tmp_path, mon
         model_id="test",
         backend_name="openai",
         loop_budget=4,
-        sampling_strategy="rejection",
+        sampling_strategy="multiturn",
     )
     attempts = {"count": 0}
     captured: dict[str, object] = {}
@@ -271,7 +271,7 @@ def test_generate_patch_disables_outer_retry_when_sampling_enabled(tmp_path, mon
     )
 
     assert attempts["count"] == 1
-    assert captured["sampling_strategy_name"] == "rejection"
+    assert captured["sampling_strategy_name"] == "multiturn"
     assert captured["sampling_budget"] == 4
 
 

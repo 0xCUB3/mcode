@@ -12,7 +12,10 @@ from mellea.stdlib.context import ChatContext
 from mcode.agent.verification import build_run_tests_tool, build_verification_policy
 from mcode.llm.react_driver import SolveTraceCollector, SolveTracePlugin, run_react_loop
 from mcode.llm.session import PatchSubmission
-from mcode.mellea_compat import acall_tools, apply_runtime_patches, build_tool_from_callable
+from mcode.mellea_compat import (
+    acall_tools_with_arg_compat,
+    apply_provider_compatibility_patches,
+)
 
 
 def test_solve_trace_plugin_collects_generation_tool_and_validation_data():
@@ -270,7 +273,9 @@ def test_run_react_loop_uses_finalizer_content_when_other_tools_returned(monkeyp
 
     session = SimpleNamespace(ctx=ChatContext(), backend=object())
     monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
-    monkeypatch.setattr("mcode.llm.react_driver.acall_tools", fake_acall_tools)
+    monkeypatch.setattr(
+        "mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools
+    )
 
     submission, terminal_reason = asyncio.run(
         run_react_loop(
@@ -293,63 +298,8 @@ def test_run_react_loop_uses_finalizer_content_when_other_tools_returned(monkeyp
     assert submission == "done"
 
 
-def test_run_react_loop_adds_loop_detect_nudge(monkeypatch):
-    seen_user_messages: list[list[str]] = []
-    repeated_call = SimpleNamespace(name="read_file", args={"path": "foo.py"})
-    outputs = iter(
-        [
-            (SimpleNamespace(tool_calls={"read_file": repeated_call}), ChatContext()),
-            (SimpleNamespace(tool_calls={"read_file": repeated_call}), ChatContext()),
-            (SimpleNamespace(tool_calls=None), ChatContext()),
-        ]
-    )
 
-    async def fake_aact(*args, **kwargs):
-        del args
-        context = kwargs["context"]
-        seen_user_messages.append(
-            [
-                str(message.content)
-                for message in context.as_list()
-                if getattr(message, "role", None) == "user"
-            ]
-        )
-        return next(outputs)
-
-    async def fake_acall_tools(result, backend):
-        del result, backend
-        return [SimpleNamespace(name="read_file", content="ok")]
-
-    session = SimpleNamespace(ctx=ChatContext(), backend=object())
-    monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
-    monkeypatch.setattr("mcode.llm.react_driver.acall_tools", fake_acall_tools)
-
-    submission, terminal_reason = asyncio.run(
-        run_react_loop(
-            session,
-            goal="Fix it",
-            tools=[],
-            model_options={},
-            loop_budget=3,
-            timeout_s=5,
-            submission_format=None,
-            collector=SolveTraceCollector(),
-            turn_requirements=lambda turn, budget, state: [],
-            submission_requirements=[],
-            strategy_for_requirements=lambda requirements: None,
-            harness_experiments=("mellea_loop_detect_v1",),
-            hooks_enabled=False,
-        )
-    )
-
-    assert submission is None
-    assert terminal_reason == "budget_exhausted"
-    assert any(
-        "already tried this exact tool call" in message for message in seen_user_messages[-1]
-    )
-
-
-def test_run_react_loop_repairs_missing_required_args(monkeypatch):
+def test_run_react_loop_retries_missing_required_args(monkeypatch):
     seen_user_messages: list[list[str]] = []
     outputs = iter(
         [
@@ -392,7 +342,9 @@ def test_run_react_loop_repairs_missing_required_args(monkeypatch):
 
     session = SimpleNamespace(ctx=ChatContext(), backend=object())
     monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
-    monkeypatch.setattr("mcode.llm.react_driver.acall_tools", fake_acall_tools)
+    monkeypatch.setattr(
+        "mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools
+    )
 
     submission, terminal_reason = asyncio.run(
         run_react_loop(
@@ -407,7 +359,6 @@ def test_run_react_loop_repairs_missing_required_args(monkeypatch):
             turn_requirements=lambda turn, budget, state: [],
             submission_requirements=[],
             strategy_for_requirements=lambda requirements: None,
-            harness_experiments=("required_arg_repair_v1",),
             hooks_enabled=False,
         )
     )
@@ -461,7 +412,9 @@ def test_run_react_loop_executes_valid_calls_when_batch_has_malformed_finalizer(
 
     session = SimpleNamespace(ctx=ChatContext(), backend=object())
     monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
-    monkeypatch.setattr("mcode.llm.react_driver.acall_tools", fake_acall_tools)
+    monkeypatch.setattr(
+        "mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools
+    )
 
     submission, terminal_reason = asyncio.run(
         run_react_loop(
@@ -547,7 +500,9 @@ def test_run_react_loop_blocks_final_answer_until_verification_succeeds(monkeypa
 
     session = SimpleNamespace(ctx=ChatContext(), backend=object())
     monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
-    monkeypatch.setattr("mcode.llm.react_driver.acall_tools", fake_acall_tools)
+    monkeypatch.setattr(
+        "mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools
+    )
 
     submission, terminal_reason = asyncio.run(
         run_react_loop(
@@ -613,7 +568,9 @@ def test_run_react_loop_reminds_to_verify_after_edit(monkeypatch):
 
     session = SimpleNamespace(ctx=ChatContext(), backend=object())
     monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
-    monkeypatch.setattr("mcode.llm.react_driver.acall_tools", fake_acall_tools)
+    monkeypatch.setattr(
+        "mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools
+    )
 
     submission, terminal_reason = asyncio.run(
         run_react_loop(
@@ -675,7 +632,9 @@ def test_run_react_loop_autofills_verified_finalizer(monkeypatch):
     collector = SolveTraceCollector()
     collector.verification_succeeded = True
     monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
-    monkeypatch.setattr("mcode.llm.react_driver.acall_tools", fake_acall_tools)
+    monkeypatch.setattr(
+        "mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools
+    )
 
     submission, terminal_reason = asyncio.run(
         run_react_loop(
@@ -698,58 +657,6 @@ def test_run_react_loop_autofills_verified_finalizer(monkeypatch):
     assert submission == "done"
     assert terminal_reason == "submitted"
 
-
-def test_run_react_loop_skips_failed_finalizer(monkeypatch):
-    outputs = iter(
-        [
-            (SimpleNamespace(tool_calls={"final_answer": object()}), ChatContext()),
-            (SimpleNamespace(tool_calls=None), ChatContext()),
-        ]
-    )
-    tool_calls = iter(
-        [
-            [
-                SimpleNamespace(
-                    name="final_answer",
-                    content="TypeError: missing answer",
-                    tool_output=TypeError("missing answer"),
-                )
-            ],
-        ]
-    )
-
-    async def fake_aact(*args, **kwargs):
-        del args, kwargs
-        return next(outputs)
-
-    async def fake_acall_tools(result, backend):
-        del result, backend
-        return next(tool_calls)
-
-    session = SimpleNamespace(ctx=ChatContext(), backend=object())
-    monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
-    monkeypatch.setattr("mcode.llm.react_driver.acall_tools", fake_acall_tools)
-
-    submission, terminal_reason = asyncio.run(
-        run_react_loop(
-            session,
-            goal="Fix it",
-            tools=[],
-            model_options={},
-            loop_budget=2,
-            timeout_s=5,
-            submission_format=None,
-            collector=SolveTraceCollector(),
-            turn_requirements=lambda turn, budget, state: [],
-            submission_requirements=[],
-            strategy_for_requirements=lambda requirements: None,
-            harness_experiments=("finalizer_success_guard_v1",),
-            hooks_enabled=False,
-        )
-    )
-
-    assert submission is None
-    assert terminal_reason == "budget_exhausted"
 
 
 def test_run_react_loop_times_out_as_budget_exhausted():
@@ -798,7 +705,11 @@ def test_acall_tools_normalizes_string_tool_args(monkeypatch):
         func=MelleaTool.from_callable(lambda test_cmd="default": "ok", name="run_tests"),
         args="default",
     )
-    asyncio.run(acall_tools(SimpleNamespace(tool_calls={"run_tests": tool}), backend=object()))
+    asyncio.run(
+        acall_tools_with_arg_compat(
+            SimpleNamespace(tool_calls={"run_tests": tool}), backend=object()
+        )
+    )
 
     assert captured["args"] == {"test_cmd": "default"}
 
@@ -823,7 +734,11 @@ def test_acall_tools_normalizes_string_args_for_multi_param_tools(monkeypatch):
         func=run_tests_tool,
         args="default",
     )
-    asyncio.run(acall_tools(SimpleNamespace(tool_calls={"run_tests": tool}), backend=object()))
+    asyncio.run(
+        acall_tools_with_arg_compat(
+            SimpleNamespace(tool_calls={"run_tests": tool}), backend=object()
+        )
+    )
 
     assert captured["args"] == {"test_cmd": "default"}
 
@@ -857,7 +772,9 @@ def test_run_react_loop_inserts_assistant_bridge_for_strict_models(monkeypatch):
         backend=SimpleNamespace(model_id="MiniMaxAI/MiniMax-M2.5"),
     )
     monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
-    monkeypatch.setattr("mcode.llm.react_driver.acall_tools", fake_acall_tools)
+    monkeypatch.setattr(
+        "mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools
+    )
 
     submission, terminal_reason = asyncio.run(
         run_react_loop(
@@ -884,41 +801,34 @@ def test_run_react_loop_inserts_assistant_bridge_for_strict_models(monkeypatch):
     assert history[-1].role == "tool"
 
 
-def test_runtime_patch_normalizes_openai_helper_tool_args():
+def test_provider_patch_normalizes_raw_string_tool_args():
     import mellea.helpers.openai_compatible_helpers as helpers
 
-    apply_runtime_patches()
+    apply_provider_compatibility_patches()
     tool = MelleaTool.from_callable(lambda test_cmd="default": "ok", name="run_tests")
 
     assert helpers.validate_tool_arguments(tool, "default", strict=False) == {"test_cmd": "default"}
 
 
-def test_runtime_patch_preserves_optional_defaults_in_validated_tool_args():
+def test_provider_patch_drops_unspecified_optional_none_values():
     import mellea.helpers.openai_compatible_helpers as helpers
 
-    apply_runtime_patches()
-    read_tool = build_tool_from_callable(
-        lambda path, start_line=1, end_line=None: "ok",
-        name="read_file",
-    )
+    apply_provider_compatibility_patches()
     run_tests_tool = build_run_tests_tool(
         repo_root=".",
         verification_policy=build_verification_policy(test_cmds=["pytest -q"]),
     )
     assert run_tests_tool is not None
 
-    assert helpers.validate_tool_arguments(read_tool, {"path": "README.md"}, strict=False) == {
-        "path": "README.md"
-    }
-    assert helpers.validate_tool_arguments(run_tests_tool, "default", strict=False) == {
-        "test_cmd": "default"
-    }
+    assert helpers.validate_tool_arguments(
+        run_tests_tool, {"test_cmd": "default"}, strict=False
+    ) == {"test_cmd": "default"}
 
 
-def test_runtime_patch_inserts_synthetic_assistant_before_tool_messages():
+def test_provider_patch_inserts_synthetic_assistant_before_tool_messages():
     import mellea.backends.openai as openai_backend
 
-    apply_runtime_patches()
+    apply_provider_compatibility_patches()
     fixed = openai_backend._fix_tool_call_ordering(
         [
             {"role": "system", "content": "hi"},

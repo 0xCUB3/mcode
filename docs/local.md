@@ -61,7 +61,7 @@ Useful flags:
 - `--shards N` — fan out N worker processes; per-shard DBs merge into `--db` automatically
 - `--limit N` — only the first N tasks (use this for a fast smoke before a real run)
 - `--loop-budget N` — agent retry budget per task (default 15)
-- `--sampling {none,rejection,repair,multiturn,sofai}` — Mellea sampling strategy
+- `--sampling {none,multiturn}` — Mellea sampling strategy
 - `--selection-attempts N` — independent full-budget trajectories; pick one patch per task
 - `--json` — emit one JSON object per state change with strictly monotonic `seq`
 

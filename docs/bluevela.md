@@ -145,7 +145,6 @@ uv run mcode merge-shards --shards-glob 'research/<run>/results.db-shards/*/resu
 |`MCODE_CONTEXT_WINDOW`|LLM context window (forwarded to the remote bench)|
 |`MCODE_MAX_NEW_TOKENS`|Max output tokens|
 |`MCODE_REACT_TIMEOUT`|ReACT loop timeout in seconds|
-|`MCODE_HARNESS_EXPERIMENTS`|Comma-separated experiment flags|
 |`OPENAI_BASE_URL` / `OPENAI_API_KEY`|Override auto-resolved endpoint|
 
 Full env-var list and every flag: [`COMMANDS.md`](COMMANDS.md).

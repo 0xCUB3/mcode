@@ -119,7 +119,7 @@ mcode bench smoke           --model M  [flags]
 - `--mem-limit` — eval container memory limit; default `4g`
 - `--pids-limit` — eval container PID limit; default 512
 - `--n-samples N` — outer attempts when `--sampling none`, sampling budget fallback otherwise
-- `--sampling {none,rejection,repair,multiturn,sofai}` — Mellea sampling strategy
+- `--sampling {none,multiturn}` — Mellea sampling strategy
 - `--sampling-budget N` — sampling-loop budget override
 - `--selection-attempts N` — independent full-budget trajectories; pick one patch before official eval
 
@@ -219,7 +219,6 @@ MCODE_MELLEA_PATH=/path/to/mellea-checkout mcode deps sync ...
 |`MCODE_CONTEXT_WINDOW`|LLM context window override (int)|
 |`MCODE_MAX_NEW_TOKENS`|LLM max output tokens|
 |`MCODE_REACT_TIMEOUT`|ReACT loop timeout in seconds|
-|`MCODE_HARNESS_EXPERIMENTS`|Comma-separated experiment flags|
 |`MCODE_COMPRESS_CONTEXT`|`1` enables context compression|
 |`MCODE_AIDER_POLYGLOT_ROOT`|Aider polyglot benchmark root override|
 |`MCODE_PODMAN_PULL_ATTEMPTS`|Podman pull retry count|

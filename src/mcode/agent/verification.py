@@ -9,9 +9,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mellea.backends.tools import MelleaTool
+from mellea.stdlib.requirements import (
+    Requirement,
+    simple_validate,
+    tool_arg_validator,
+    uses_tool,
+)
 
 from mcode.agent.tooling import execute_command, format_tool_result, is_tool_result
-from mcode.mellea_compat import build_tool_from_callable, import_requirements
 
 
 @dataclass(frozen=True)
@@ -112,10 +117,9 @@ def build_turn_requirements(
     if not enforce_run_tests:
         return []
 
-    reqs = import_requirements()
     return [
-        reqs.uses_tool("run_tests"),
-        reqs.tool_arg_validator(
+        uses_tool("run_tests"),
+        tool_arg_validator(
             "Set `run_tests.test_cmd` to `default` or to one declared test command.",
             "run_tests",
             "test_cmd",
@@ -125,11 +129,10 @@ def build_turn_requirements(
 
 
 def build_submission_requirements() -> list[object]:
-    reqs = import_requirements()
     return [
-        reqs.Requirement(
+        Requirement(
             "Return a concise structured submission.",
-            validation_fn=reqs.simple_validate(
+            validation_fn=simple_validate(
                 lambda text: _valid_submission_text(text),
                 reason="Return a concise structured submission.",
             ),
@@ -232,7 +235,7 @@ def build_run_tests_tool(
             return _record("\n---\n".join(outputs))
         return _record(format_tool_result(test_cmd, "SKIPPED", "No test commands available."))
 
-    tool = build_tool_from_callable(_run_tests, name="run_tests")
+    tool = MelleaTool.from_callable(_run_tests, name="run_tests")
     return MelleaTool(
         name=tool.name,
         tool_call=_run_tests,

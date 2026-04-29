@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -13,7 +14,7 @@ from mellea.plugins.base import Plugin
 from mellea.plugins.decorators import hook
 from mellea.plugins.types import PluginMode
 
-from mcode.mellea_compat import acall_tools
+from mcode.mellea_compat import acall_tools_with_arg_compat
 
 
 @dataclass
@@ -208,6 +209,11 @@ class SolveTracePlugin(Plugin, name="mcode-solve-trace", priority=20):
         )
 
 
+# This stays as a benchmark adapter rather than delegating to
+# mellea.stdlib.frameworks.react.react because the native loop currently lacks
+# per-turn requirements, async tool dispatch, final-answer gating, timeout labels,
+# and trace callbacks needed by result DB/report metrics.
+
 async def run_react_loop(
     session,
     *,
@@ -221,7 +227,6 @@ async def run_react_loop(
     turn_requirements: Callable[[int, int, SolveTraceCollector], list[object]],
     submission_requirements: list[object],
     strategy_for_requirements: Callable[[list[object]], object | None],
-    harness_experiments: tuple[str, ...] = (),
     hooks_enabled: bool = False,
 ) -> tuple[object | None, str]:
     from mellea.core.utils import FancyLogger
@@ -234,17 +239,6 @@ async def run_react_loop(
     )
     from mellea.stdlib.context import ChatContext
 
-    from mcode.llm.harness_experiments import (
-        FINALIZER_SUCCESS_GUARD_V1,
-        MELLEA_LOOP_DETECT_V1,
-    )
-
-    loop_detect_enabled = MELLEA_LOOP_DETECT_V1 in harness_experiments
-    finalizer_success_guard_enabled = FINALIZER_SUCCESS_GUARD_V1 in harness_experiments
-    force_message = "Switch approaches now. The recent tool-call pattern is stuck."
-    nudge_message = (
-        "You already tried this exact tool call. Use the result you have and make progress."
-    )
 
     async def _run() -> tuple[object | None, str]:
         context = getattr(session, "ctx", None)
@@ -256,8 +250,6 @@ async def run_react_loop(
         )
 
         compress_context = os.environ.get("MCODE_COMPRESS_CONTEXT", "0") == "1"
-        loop_history: list[tuple[str, tuple[tuple[str, str], ...]]] = []
-        last_loop_signal: str | None = None
         has_run_tests_tool = any(getattr(tool, "name", "") == "run_tests" for tool in tools)
         edit_since_verification = False
         reminded_after_edit = False
@@ -267,21 +259,6 @@ async def run_react_loop(
 
             if compress_context and turn == max(3, loop_budget // 2):
                 context = _compress_old_tool_outputs(context)
-
-            if loop_detect_enabled:
-                loop_signal = _detect_loop(loop_history)
-                if loop_signal is None:
-                    last_loop_signal = None
-                elif loop_signal != last_loop_signal:
-                    context = context.add(
-                        Message(
-                            role="user",
-                            content=(
-                                force_message if loop_signal == "force_switch" else nudge_message
-                            ),
-                        )
-                    )
-                    last_loop_signal = loop_signal
 
             if (
                 has_run_tests_tool
@@ -364,10 +341,6 @@ async def run_react_loop(
                         )
                         continue
                     valid_tool_calls[key] = tool_call
-                    if tool_name != MELLEA_FINALIZER_TOOL:
-                        loop_history.append(
-                            (tool_name, _freeze_tool_args(getattr(tool_call, "args", None)))
-                        )
                 collector.note_event(
                     "tool_call_filter",
                     {
@@ -410,7 +383,7 @@ async def run_react_loop(
                     continue
                 if len(valid_tool_calls) != len(result.tool_calls):
                     result.tool_calls = valid_tool_calls
-                tool_responses = await acall_tools(result, backend=session.backend)
+                tool_responses = await acall_tools_with_arg_compat(result, backend=session.backend)
                 for tool_result in tool_responses:
                     if strict_tool_ordering:
                         context = context.add(Message(role="assistant", content=""))
@@ -446,20 +419,6 @@ async def run_react_loop(
                 None,
             )
             if finalizer_response is not None:
-                finalizer_output = getattr(
-                    finalizer_response,
-                    "tool_output",
-                    getattr(finalizer_response, "content", None),
-                )
-                if finalizer_success_guard_enabled and isinstance(finalizer_output, Exception):
-                    collector.note_event(
-                        "final_answer",
-                        {
-                            "action": "skipped_failed_finalizer",
-                            "error": _safe_text(finalizer_output),
-                        },
-                    )
-                    continue
                 if submission_format is None:
                     submission = str(finalizer_response.content)
                 else:
@@ -774,25 +733,6 @@ def _requires_strict_tool_ordering(model_id: object | None) -> bool:
     return "minimax" in lowered or "mistral" in lowered
 
 
-def _freeze_tool_args(args: object) -> tuple[tuple[str, str], ...]:
-    if not isinstance(args, dict):
-        return ()
-    return tuple(
-        sorted(
-            (str(key), json.dumps(value, sort_keys=True, default=str))
-            for key, value in args.items()
-        )
-    )
-
-
-def _detect_loop(history: list[tuple[str, tuple[tuple[str, str], ...]]]) -> str | None:
-    if len(history) < 2:
-        return None
-    if history[-1] != history[-2]:
-        return None
-    if len(history) >= 3 and history[-1] == history[-3]:
-        return "force_switch"
-    return "nudge"
 
 
 def _missing_required_args(tool_call) -> list[str]:
@@ -812,7 +752,25 @@ def _missing_required_args(tool_call) -> list[str]:
     args = getattr(tool_call, "args", None)
     if not isinstance(args, dict):
         args = {}
-    return [name for name in required if name not in args]
+    callable_defaults = _callable_default_param_names(tool)
+    return [
+        name for name in required if name not in args and name not in callable_defaults
+    ]
+
+
+def _callable_default_param_names(tool: object) -> set[str]:
+    func = getattr(tool, "_call_tool", None)
+    if not callable(func):
+        return set()
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):
+        return set()
+    return {
+        name
+        for name, parameter in signature.parameters.items()
+        if parameter.default is not inspect._empty
+    }
 
 
 def _allow_default_missing_args(tool_name: str, missing_args: list[str]) -> bool:

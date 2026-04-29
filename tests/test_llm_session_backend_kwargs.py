@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import os
-from types import SimpleNamespace
 
-import pytest
 from mellea.backends import ModelOption
 from mellea.stdlib.context import ChatContext
 
 from mcode.launch.models import ServerRecord, Target
-from mcode.llm.harness_experiments import parse_harness_experiments
 from mcode.llm.session import LLMSession, _build_sampling_strategy, _strategy_for_requirements
 
 
@@ -86,46 +83,22 @@ def test_model_options_respects_env_max_new_tokens(monkeypatch):
     assert opts[ModelOption.MAX_NEW_TOKENS] == 2048
 
 
-def test_build_sampling_strategy_variants(monkeypatch):
-    captured: list[tuple[str, int]] = []
+def test_build_sampling_strategy_uses_native_multiturn(monkeypatch):
+    captured: list[int] = []
 
-    def make_strategy(name):
-        class Strategy:
-            def __init__(self, *args, loop_budget, **kwargs):
-                del args, kwargs
-                captured.append((name, loop_budget))
+    class Strategy:
+        def __init__(self, *, loop_budget):
+            captured.append(loop_budget)
 
-        return Strategy
-
-    monkeypatch.setattr(
-        "mcode.llm.session.import_sampling",
-        lambda: SimpleNamespace(
-            RejectionSamplingStrategy=make_strategy("rejection"),
-            RepairTemplateStrategy=make_strategy("repair"),
-            MultiTurnStrategy=make_strategy("multiturn"),
-            SOFAISamplingStrategy=make_strategy("sofai"),
-        ),
-    )
+    monkeypatch.setattr("mcode.llm.session.MultiTurnStrategy", Strategy)
 
     backend = object()
-    _build_sampling_strategy(backend=backend, strategy_name="rejection", sampling_budget=2)
-    _build_sampling_strategy(backend=backend, strategy_name="repair", sampling_budget=3)
     _build_sampling_strategy(backend=backend, strategy_name="multiturn", sampling_budget=4)
-    _build_sampling_strategy(backend=backend, strategy_name="sofai", sampling_budget=5)
 
-    assert captured == [
-        ("rejection", 2),
-        ("repair", 3),
-        ("multiturn", 4),
-        ("sofai", 5),
-    ]
+    assert captured == [4]
 
 
-def test_strategy_for_requirements_skips_sampling_when_disabled(monkeypatch):
-    def fail_import_sampling():
-        raise AssertionError("import_sampling should not be called for sampling=none")
-
-    monkeypatch.setattr("mcode.llm.session.import_sampling", fail_import_sampling)
+def test_strategy_for_requirements_skips_sampling_when_disabled():
 
     strategy = _strategy_for_requirements(
         backend=object(),
@@ -136,20 +109,6 @@ def test_strategy_for_requirements_skips_sampling_when_disabled(monkeypatch):
 
     assert strategy is None
 
-
-def test_parse_harness_experiments_normalizes_and_validates():
-    assert parse_harness_experiments(
-        "mellea_loop_detect_v1,required_arg_repair_v1,finalizer_success_guard_v1,mellea_loop_detect_v1"
-    ) == (
-        "mellea_loop_detect_v1",
-        "required_arg_repair_v1",
-        "finalizer_success_guard_v1",
-    )
-
-
-def test_parse_harness_experiments_rejects_unknown_name():
-    with pytest.raises(ValueError, match="unknown harness experiment"):
-        parse_harness_experiments("not_real")
 
 
 def test_start_session_uses_chat_context(monkeypatch):
