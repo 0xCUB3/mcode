@@ -202,6 +202,7 @@ def _rsync(*, src: Path, dest: str, dry_run: bool) -> int:
         "--exclude=bench-runs/",
         "--exclude=runs/",
         "--exclude=benchmarks/",
+        "--exclude=podman-tmp/",
         f"--exclude={_MARKER}",
     ]
     if gitignore.exists():
