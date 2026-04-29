@@ -1,6 +1,10 @@
-# SWE-bench Verified Qwen3.6 Blue Vela infra repair log
+# SWE-bench Verified Qwen3.6 Blue Vela infra repair + full run
 
-This log captures the Qwen3.6 SWE-bench Verified work so far. It is not a final benchmark result. The full run was interrupted after podman rootless image unpack failures, then mcode was patched so sharded Blue Vela SWE-bench runs fail fast on infra rows, preflight and serialize prebuilt image pulls, and retry once from a fresh podman runtime on the special infra exit code.
+**Final result: 319 / 500 = 63.8% pass rate** with `Qwen/Qwen3.6-35B-A3B` on SWE-bench Verified, served via vLLM on Blue Vela. Full 500-task coverage, no holes. The interrupted partial reached 169/271 = 62.4% before the original podman infra failure; the resume work over the next two days added five more infra fixes and finished the remaining 229 tasks across three batches. Per-batch pass rates were 62.4 / 66.7 / 68.1 / 63.8 — consistent, no batch effect from the cpu-cap that was added for the final batch.
+
+Beats the prior MiniMax-M2.5 full Verified baseline (187/500 = 37.4%) by **+26.4 absolute points (+70% relative)**.
+
+Run notes for the resume work: [`../2026-04-27-swebench-verified-qwen36-finish/README.md`](../2026-04-27-swebench-verified-qwen36-finish/README.md).
 
 HTML snapshot: [`swebench-qwen36-so-far-report.html`](https://raw.githack.com/0xCUB3/mcode/main/research/2026-04-27-swebench-verified-qwen36-infra-repair/swebench-qwen36-so-far-report.html) ([source](swebench-qwen36-so-far-report.html))
 
@@ -100,14 +104,16 @@ uv run mcode bench swebench-lite \
   --db research/2026-04-25-swebench-verified-qwen36-research/infra-repair-matplotlib-smoke.db
 ```
 
-## Results so far
+## Results
 
-The full Qwen run is not complete, so the Qwen vs MiniMax comparison is not final. The partial full-run rows are still useful as a signal and as the repro for the infra class.
-
-| Run | Passed | Total rows | Rate | Notes |
+| Run | Passed | Total | Rate | Notes |
 |-|-:|-:|-:|-|
-| Qwen3.6 partial full Verified run before infra repair | 169 | 271 | 62.4% | Stopped after podman image unpack failures in shard 2 |
-| MiniMax-M2.5 full Verified baseline | 187 | 500 | 37.4% | Current repo baseline from the March 31 research folder |
+| **Qwen3.6 full Verified (final)** | **319** | **500** | **63.8%** | Combined unique across the 4 resume batches; no holes |
+| Qwen3.6 partial full Verified run (this entry's original snapshot) | 169 | 271 | 62.4% | Stopped after podman image unpack failures in shard 2 |
+| `byejek9kw` salvage (cluster admin killed mid-run) | 20 | 30 | 66.7% | Recovered from shards 1+2 of an aborted attempt |
+| `bf68u1t7y` partial (cluster admin killed mid-run) | 47 | 69 | 68.1% | Recovered from a 4-shard run cancelled when sklearn pytest spiked the login node |
+| `cap-final` (final clean batch with `--cpu-limit 4`) | 83 | 130 | 63.8% | Last 130 task ids; ran cleanly under the new OMP/BLAS thread cap |
+| MiniMax-M2.5 full Verified baseline | 187 | 500 | 37.4% | Prior repo baseline from the March 31 research folder |
 
 Terminal reasons in the interrupted Qwen partial DB:
 
@@ -154,10 +160,17 @@ The diff is net positive, `542 insertions` and `78 deletions`, mostly because it
 - `../2026-04-25-swebench-verified-qwen36-research/smoke16-*.db` and `single-*.db` - smoke and infra diagnostic runs from the tuning path.
 
 ## Findings
-The partial full run was too strong to ignore but not valid as a final score. It reached 169 passed rows out of 271 completed rows before the infra stop, while the current full MiniMax baseline is 187/500. That does not prove Qwen will finish above MiniMax because the remaining tasks are unknown, but it does justify spending cluster time to finish the repaired full run.
 
-The failure was infra, not model quality. Both full-run failures hit podman rootless image pull or layer unpack behavior, with text such as `writing blob`, `adding layer`, `unpacking failed`, and `Chown error detected`. That matches Blue Vela's rootless podman constraints and the lack of broad subuid/subgid mappings.
+The full run finished at **319/500 = 63.8%** with the same harness config across all four batches (loop_budget=50, sampling=multiturn sb=2, selection_attempts=5, shards=4). Pass rate held within ±3 points across batches, so the cpu/OMP cap added for the final batch did not regress quality.
 
-The right repair boundary is the command layer plus the image pull path. Preflighting and serializing pulls should make most failures happen before model tokens are spent. If the rootless store is already poisoned, the Blue Vela wrapper now has a bounded runtime reset instead of making the operator discover the issue manually after hundreds of rows.
+The original failure was always infra, never model quality. The original 62.4% partial extrapolated cleanly to the final 63.8% over 500.
 
-The next required result is the two-task matplotlib smoke after LSF starts the Qwen server. If that passes without infra failures, rerun the full Verified command with `--shards 4`; if podman pressure is still visible, fall back to `--shards 2` before spending another full run.
+Resume work surfaced four more infra issues beyond the original podman image-unpack one:
+
+1. Hardcoded `/tmp` paths filled the shared login3 filesystem under multi-bench load — moved podman runtime to `bv.workspace_root` and local caches to `~/.cache/mcode`.
+2. `workspace_root` per-user quota (`/u/skula`) too small for ~110 eval images at ~7GB each — moved podman graphroot to `bv.shared_root` (`/proj/dmfexp`, multi-TB).
+3. Lustre/GPFS rmdir race during testbed cleanup raised `OSError: ENOTEMPTY` mid-task — added retry-with-backoff in `_remove_path`.
+4. Docker Hub anonymous-pull rate limit (`429 toomanyrequests`) burned through the cluster's egress quota — wired `REGISTRY_AUTH_FILE=$HOME/.config/containers/auth.json` so authenticated pulls (~10× rate limit) take effect.
+5. sklearn / numpy / scipy pytest invocations inside the eval container fanned out to ~110 host cores via OpenMP and BLAS, tripping the login-node admin auto-killer at the user-process level (rootless podman doesn't honor cgroup `cpu_quota` on this cluster's cgroup-v1 setup). Fix: set `OMP_NUM_THREADS`/`OPENBLAS_NUM_THREADS`/`MKL_NUM_THREADS`/`NUMEXPR_NUM_THREADS`/`VECLIB_MAXIMUM_THREADS`/`BLIS_NUM_THREADS` env vars on every eval container — library-level cap that always works regardless of cgroup support. Exposed as `--cpu-limit N` on the bench commands; defaults unlimited; `MCODE_SWEBENCH_CPU_LIMIT` env override.
+
+Commits that landed during the resume: `65bab01` (no-tmp) → `418d410` (shared_root) → `e312042` (rmtree retry) → `646d031` (auth file) → `a692adc` + `00a6970` (cpu-cap + OMP env vars).
