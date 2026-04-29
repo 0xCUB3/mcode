@@ -131,6 +131,71 @@ def test_results_db_roundtrip(tmp_path: Path) -> None:
     assert grouped[0]["passed"] == 1
 
 
+def test_resume_helpers_find_latest_exact_config_and_task_rows(tmp_path: Path) -> None:
+    db_path = tmp_path / "results.db"
+    config = {
+        "backend_name": "ollama",
+        "model_id": "test-model",
+        "loop_budget": 3,
+        "timeout_s": 60,
+        "cache_dir": tmp_path / "cache",
+    }
+    with ResultsDB(db_path) as rdb:
+        first_run = rdb.start_run("swebench-lite", config)
+        second_run = rdb.start_run("swebench-lite", dict(reversed(config.items())))
+        other_run = rdb.start_run("swebench-live", config)
+
+        rdb.save_task_result(
+            second_run,
+            {
+                "task_id": "task-ok",
+                "passed": True,
+                "attempts_used": 1,
+                "time_ms": 10,
+                "exit_code": 0,
+                "timed_out": False,
+                "stdout": "",
+                "stderr": "",
+                "error": None,
+                "code_sha256": "abc",
+                "terminal_reason": "submitted",
+            },
+        )
+        rdb.save_task_result(
+            second_run,
+            {
+                "task_id": "task-infra",
+                "passed": False,
+                "attempts_used": 2,
+                "time_ms": 20,
+                "exit_code": None,
+                "timed_out": False,
+                "stdout": None,
+                "stderr": "trace",
+                "error": "DockerUnavailableError: podman socket closed",
+                "code_sha256": None,
+                "terminal_reason": "infra_failure",
+            },
+        )
+
+        assert rdb.find_latest_run_by_config("swebench-lite", config) == second_run
+        assert rdb.find_latest_run_by_config("swebench-live", config) == other_run
+        assert rdb.find_latest_run_by_config(
+            "swebench-lite",
+            {**config, "timeout_s": 120},
+        ) is None
+
+        rows = rdb.task_terminal_rows(second_run)
+        assert rows["task-ok"]["passed"] is True
+        assert rows["task-ok"]["terminal_reason"] == "submitted"
+        assert rows["task-infra"]["passed"] is False
+        assert rows["task-infra"]["terminal_reason"] == "infra_failure"
+        assert rows["task-infra"]["error"] == "DockerUnavailableError: podman socket closed"
+        assert rdb.run_summary(second_run).total == 2
+        assert rdb.run_summary(second_run).passed == 1
+        assert rdb.run_summary(first_run).total == 0
+
+
 def test_run_metrics_grouped_includes_time_stats(tmp_path: Path) -> None:
     db_path = tmp_path / "results.db"
     with ResultsDB(db_path) as rdb:

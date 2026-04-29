@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -9,8 +10,6 @@ import tempfile
 import threading
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
-from datetime import datetime
 from glob import glob
 from pathlib import Path
 from typing import Annotated, Literal
@@ -1721,14 +1720,6 @@ _INFRA_ERROR_PATTERNS = (
 )
 
 
-@dataclass(frozen=True)
-class _InfraFailure:
-    shard_db: Path
-    task_id: str
-    reason: str
-    detail: str | None
-
-
 def _is_retryable_infra_exception(exc: object) -> bool:
     try:
         from mcode.execution.swebench import _is_retryable_podman_image_error
@@ -1739,43 +1730,46 @@ def _is_retryable_infra_exception(exc: object) -> bool:
         return any(pattern in text for pattern in _INFRA_ERROR_PATTERNS)
 
 
-def _detect_infra_failures(shard_paths: list[Path]) -> list[_InfraFailure]:
-    failures: list[_InfraFailure] = []
-    for shard_db in shard_paths:
-        if not shard_db.exists():
-            continue
+def _shard_run_fingerprint(
+    *,
+    command: str,
+    base_argv: list[str],
+    shards: int,
+    db: Path,
+    benchmark: str,
+    backend: str,
+    model: str,
+    loop_budget: int,
+    timeout_s: int,
+) -> str:
+    payload = {
+        "command": command,
+        "base_argv": base_argv,
+        "shards": shards,
+        "db": str(db.resolve()),
+        "benchmark": benchmark,
+        "backend": backend,
+        "model": model,
+        "loop_budget": loop_budget,
+        "timeout_s": timeout_s,
+    }
+    raw = json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def _shard_db_has_rows(shard_db: Path) -> bool:
+    if not shard_db.exists():
+        return False
+    try:
+        conn = sqlite3.connect(f"file:{shard_db}?mode=ro", uri=True, timeout=1)
         try:
-            conn = sqlite3.connect(f"file:{shard_db}?mode=ro", uri=True, timeout=1)
-            conn.row_factory = sqlite3.Row
-            try:
-                rows = conn.execute(
-                    """
-                    SELECT task_id, terminal_reason, error
-                    FROM task_results
-                    WHERE terminal_reason = 'infra_failure'
-                       OR error IS NOT NULL
-                    """
-                ).fetchall()
-            finally:
-                conn.close()
-        except sqlite3.Error:
-            continue
-        for row in rows:
-            reason = str(row["terminal_reason"] or "")
-            detail = row["error"]
-            detail_text = str(detail or "").lower()
-            if reason == "infra_failure" or any(
-                pattern in detail_text for pattern in _INFRA_ERROR_PATTERNS
-            ):
-                failures.append(
-                    _InfraFailure(
-                        shard_db=shard_db,
-                        task_id=str(row["task_id"]),
-                        reason=reason or "infra_error",
-                        detail=detail,
-                    )
-                )
-    return failures
+            row = conn.execute("SELECT COUNT(*) FROM task_results").fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False
+    return bool(row and int(row[0]) > 0)
+
 
 
 def _stop_running_shards(
@@ -1831,14 +1825,27 @@ def _run_sharded_benchmark(
     from mcode.launch.models import RunStatus, Target
     from mcode.ui.dashboard import open_dashboard
 
-    run_dir = db.parent / f"{db.stem}-shards" / datetime.now().strftime("%Y%m%d-%H%M%S")
+    fingerprint = _shard_run_fingerprint(
+        command=command,
+        base_argv=base_argv,
+        shards=shards,
+        db=db,
+        benchmark=benchmark,
+        backend=backend,
+        model=model,
+        loop_budget=loop_budget,
+        timeout_s=timeout_s,
+    )
+    run_dir = db.parent / f"{db.stem}-shards" / fingerprint
     run_dir.mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     procs: list[tuple[int, subprocess.Popen[str], Path, Path, threading.Thread]] = []
     failed: list[tuple[int, int, Path]] = []
+    partial: list[tuple[int, int, Path]] = []
     shard_paths: list[Path] = []
+    restart_counts: dict[int, int] = {}
 
     run_id = runstate.make_run_id(benchmark)
     # Target is the closest fit, not literal: bench runs use a launch target
@@ -1860,71 +1867,65 @@ def _run_sharded_benchmark(
                     f"▶ sharded run command={command} shards={shards} out={db} artifacts={run_dir}"
                 ),
             )
+            def launch_shard(shard_index: int) -> None:
+                shard_db = run_dir / f"{db.stem}-shard-{shard_index}.db"
+                shard_log = run_dir / f"{db.stem}-shard-{shard_index}.log"
+                argv = [
+                    sys.executable,
+                    "-u",
+                    "-m",
+                    "mcode",
+                    "bench",
+                    command,
+                    *base_argv,
+                    "--db",
+                    str(shard_db),
+                    "--shard-count",
+                    str(shards),
+                    "--shard-index",
+                    str(shard_index),
+                ]
+                dashboard.post(
+                    "shard_start",
+                    shard=shard_index,
+                    db=str(shard_db),
+                    log=str(shard_log),
+                )
+                proc = subprocess.Popen(
+                    argv,
+                    cwd=str(Path.cwd()),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                )
+                thread = _stream_shard_output(
+                    proc=proc,
+                    shard_index=shard_index,
+                    log_path=shard_log,
+                    dashboard=dashboard,
+                )
+                entry = (shard_index, proc, shard_db, shard_log, thread)
+                for index, existing in enumerate(procs):
+                    if existing[0] == shard_index:
+                        procs[index] = entry
+                        break
+                else:
+                    procs.append(entry)
+
             try:
                 for shard_index in range(shards):
-                    shard_db = run_dir / f"{db.stem}-shard-{shard_index}.db"
-                    shard_log = run_dir / f"{db.stem}-shard-{shard_index}.log"
-                    argv = [
-                        sys.executable,
-                        "-u",
-                        "-m",
-                        "mcode",
-                        "bench",
-                        command,
-                        *base_argv,
-                        "--db",
-                        str(shard_db),
-                        "--shard-count",
-                        str(shards),
-                        "--shard-index",
-                        str(shard_index),
-                    ]
-                    dashboard.post(
-                        "shard_start",
-                        shard=shard_index,
-                        db=str(shard_db),
-                        log=str(shard_log),
-                    )
-                    proc = subprocess.Popen(
-                        argv,
-                        cwd=str(Path.cwd()),
-                        env=env,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        bufsize=1,
-                    )
-                    thread = _stream_shard_output(
-                        proc=proc,
-                        shard_index=shard_index,
-                        log_path=shard_log,
-                        dashboard=dashboard,
-                    )
-                    procs.append((shard_index, proc, shard_db, shard_log, thread))
+                    launch_shard(shard_index)
 
                 runstate.patch_run(run_id=run_id, shard_pids=[p.pid for _, p, *_ in procs])
 
                 remaining = {shard_index for shard_index, *_ in procs}
                 while remaining:
-                    infra_failures = _detect_infra_failures(
-                        [shard_db for _, _, shard_db, _, _ in procs]
-                    )
-                    if infra_failures:
-                        for failure in infra_failures:
-                            dashboard.post(
-                                "infra_failure",
-                                task_id=failure.task_id,
-                                db=str(failure.shard_db),
-                                reason=failure.reason,
-                                detail=failure.detail or "",
-                            )
-                        _stop_running_shards(procs)
-                        raise typer.Exit(SHARDED_INFRA_EXIT_CODE)
-
                     made_progress = False
-                    for shard_index, proc, shard_db, shard_log, thread in procs:
+                    for shard_index, proc, shard_db, shard_log, thread in list(procs):
                         if shard_index not in remaining:
                             continue
                         rc = proc.poll()
@@ -1933,19 +1934,41 @@ def _run_sharded_benchmark(
                         thread.join()
                         remaining.remove(shard_index)
                         made_progress = True
+                        has_rows = _shard_db_has_rows(shard_db)
                         if rc == 0:
-                            shard_paths.append(shard_db)
+                            if has_rows:
+                                shard_paths.append(shard_db)
                             dashboard.post("shard_done", shard=shard_index)
                             continue
-                        if rc == SHARDED_INFRA_EXIT_CODE:
+                        if (
+                            rc == SHARDED_INFRA_EXIT_CODE
+                            and not has_rows
+                            and restart_counts.get(shard_index, 0) < 1
+                        ):
+                            restart_counts[shard_index] = restart_counts.get(shard_index, 0) + 1
                             dashboard.post(
                                 "shard_infra",
                                 shard=shard_index,
                                 rc=rc,
                                 log=str(shard_log),
                             )
-                            _stop_running_shards(procs)
-                            raise typer.Exit(SHARDED_INFRA_EXIT_CODE)
+                            launch_shard(shard_index)
+                            runstate.patch_run(
+                                run_id=run_id,
+                                shard_pids=[p.pid for _, p, *_ in procs],
+                            )
+                            remaining.add(shard_index)
+                            continue
+                        if has_rows:
+                            shard_paths.append(shard_db)
+                            partial.append((shard_index, rc, shard_log))
+                            dashboard.post(
+                                "shard_failed",
+                                shard=shard_index,
+                                rc=rc,
+                                log=str(shard_log),
+                            )
+                            continue
                         failed.append((shard_index, rc, shard_log))
                         dashboard.post(
                             "shard_failed",
@@ -1961,12 +1984,17 @@ def _run_sharded_benchmark(
                 cancel_reason = "interrupt"
                 raise
 
-            if failed:
-                for shard_index, rc, shard_log in failed:
-                    dashboard.post(
-                        "info",
-                        text=f"failed shard={shard_index} exit={rc} log={shard_log}",
-                    )
+            for shard_index, rc, shard_log in partial:
+                dashboard.post(
+                    "info",
+                    text=f"partial shard={shard_index} exit={rc} log={shard_log}",
+                )
+            for shard_index, rc, shard_log in failed:
+                dashboard.post(
+                    "info",
+                    text=f"failed shard={shard_index} exit={rc} log={shard_log}",
+                )
+            if not shard_paths:
                 raise typer.Exit(1)
 
             summary = _merge_into_results_db(db=db, shard_paths=shard_paths)

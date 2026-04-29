@@ -94,6 +94,8 @@ uv run mcode bench aider-polyglot \
 
 Add `--json` to any bench command to get a strictly-monotonic event stream you can pipe to `jq`. Add `--fetch-db / --no-fetch-db` to control whether the DB is rsync'd back when the run ends.
 
+Remote bench run directories are stable for the same model, local DB path, bench argv, and forwarded MCODE context env. If log streaming or DB fetch drops after the remote process finished, rerun the same command to resume remotely and fetch the existing DB metadata instead of starting from scratch.
+
 `OPENAI_BASE_URL` and `OPENAI_API_KEY` (if set) take precedence over auto-resolution.
 
 ## 5. Watch / list / cancel running benches

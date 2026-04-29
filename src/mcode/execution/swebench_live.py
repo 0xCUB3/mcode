@@ -369,24 +369,26 @@ class SWEbenchLiveSandbox:
             # Apply test patch.
             if task.test_patch:
                 _copy_to_container(container, "/tmp/test_patch.diff", task.test_patch)
-                out, exit_code = _exec_in_container(
+                out, exit_code, apply_timed_out = _exec_in_container(
                     container,
                     "git apply --verbose /tmp/test_patch.diff",
                     workdir="/testbed",
                     timeout_s=60,
                 )
+                timed_out = timed_out or apply_timed_out
                 if exit_code != 0:
-                    out2, exit_code2 = _exec_in_container(
+                    out2, exit_code2, reject_timed_out = _exec_in_container(
                         container,
                         "git apply --verbose --reject /tmp/test_patch.diff",
                         workdir="/testbed",
                         timeout_s=60,
                     )
+                    timed_out = timed_out or reject_timed_out
                     if exit_code2 != 0:
                         runtime_s = time.time() - start
                         return SWEbenchLiveRun(
                             resolved=False,
-                            timed_out=False,
+                            timed_out=timed_out,
                             runtime_s=runtime_s,
                             report={"test_patch_apply_failed": True},
                             test_output=out2,
@@ -404,12 +406,13 @@ class SWEbenchLiveSandbox:
                 applied = False
                 last_out = ""
                 for cmd in apply_cmds:
-                    last_out, exit_code = _exec_in_container(
+                    last_out, exit_code, apply_timed_out = _exec_in_container(
                         container,
                         cmd,
                         workdir="/testbed",
                         timeout_s=60,
                     )
+                    timed_out = timed_out or apply_timed_out
                     if exit_code == 0:
                         applied = True
                         break
@@ -417,7 +420,7 @@ class SWEbenchLiveSandbox:
                     runtime_s = time.time() - start
                     return SWEbenchLiveRun(
                         resolved=False,
-                        timed_out=False,
+                        timed_out=timed_out,
                         runtime_s=runtime_s,
                         report={
                             "patch_successfully_applied": False,
@@ -431,12 +434,13 @@ class SWEbenchLiveSandbox:
             all_test_output = []
             for cmd in task.test_cmds:
                 if cmd.strip():
-                    out, _ = _exec_in_container(
+                    out, _, test_timed_out = _exec_in_container(
                         container,
                         cmd,
                         workdir="/testbed",
                         timeout_s=timeout_s,
                     )
+                    timed_out = timed_out or test_timed_out
                     all_test_output.append(out)
             test_output = "\n".join(all_test_output)
 
@@ -459,19 +463,17 @@ class SWEbenchLiveSandbox:
                 test_output=test_output,
                 patch_sha256=patch_sha,
             )
-        except Exception as e:
+        except Exception as exc:
+            reraise_docker_unavailable(exc, scope="SWE-bench Live evaluation")
             runtime_s = time.time() - start
             return SWEbenchLiveRun(
                 resolved=False,
-                timed_out="timed out" in str(e).lower(),
+                timed_out="timed out" in str(exc).lower(),
                 runtime_s=runtime_s,
-                report={"error": str(e)},
+                report={"error": str(exc)},
                 test_output=test_output,
                 patch_sha256=patch_sha,
             )
-        except Exception as exc:
-            reraise_docker_unavailable(exc, scope="SWE-bench Live evaluation")
-            raise
         finally:
             if container is not None:
                 try:
@@ -562,8 +564,9 @@ def _exec_in_container(
     *,
     workdir: str = "/testbed",
     timeout_s: int = 300,
-) -> tuple[str, int]:
-    result_box: list = []
+) -> tuple[str, int, bool]:
+    result_box: list[tuple[str, int]] = []
+    error_box: list[BaseException] = []
 
     def _run():
         try:
@@ -574,13 +577,17 @@ def _exec_in_container(
             output = (val.output or b"").decode("utf-8", errors="replace")
             result_box.append((output, val.exit_code))
         except Exception as e:
-            result_box.append((str(e), -1))
+            error_box.append(e)
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()
     t.join(timeout=timeout_s)
 
-    if not result_box:
-        return (f"Command timed out after {timeout_s}s: {cmd}", -1)
-
-    return result_box[0]
+    if not result_box and not error_box:
+        return (f"Command timed out after {timeout_s}s: {cmd}", -1, True)
+    if error_box:
+        exc = error_box[0]
+        reraise_docker_unavailable(exc, scope="SWE-bench Live evaluation")
+        return (str(exc), -1, False)
+    output, exit_code = result_box[0]
+    return (output, exit_code, False)

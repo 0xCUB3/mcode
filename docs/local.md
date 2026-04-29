@@ -65,6 +65,8 @@ Useful flags:
 - `--selection-attempts N` — independent full-budget trajectories; pick one patch per task
 - `--json` — emit one JSON object per state change with strictly monotonic `seq`
 
+Bench runs resume automatically when you rerun the same command with the same `--db`. Completed tasks are skipped, retryable infra failures are retried, and sharded runs reuse their shard DBs under `<db-stem>-shards/`.
+
 ```bash
 uv run mcode bench smoke --backend openai --model granite4 --shards 4 --json | jq -c '.'
 ```

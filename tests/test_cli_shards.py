@@ -4,14 +4,11 @@ import io
 import re
 from pathlib import Path
 
-import pytest
-import typer
 from typer.testing import CliRunner
 
 from mcode.bench.results import ResultsDB
 from mcode.cli import (
     SHARDED_INFRA_EXIT_CODE,
-    _detect_infra_failures,
     _latest_run_summary,
     _run_sharded_benchmark,
     app,
@@ -172,50 +169,60 @@ def _write_shard_result(
         )
 
 
-def test_detect_infra_failures_matches_reason_and_error(tmp_path: Path) -> None:
-    infra_db = tmp_path / "infra.db"
-    _write_shard_result(
-        infra_db,
-        task_id="matplotlib__matplotlib-23476",
-        terminal_reason="infra_failure",
-        error="RuntimeError: socket timed out",
+
+class _PartialFakePopen:
+    def __init__(self, argv, **kwargs) -> None:
+        del kwargs
+        args = list(argv)
+        shard_index = int(args[args.index("--shard-index") + 1])
+        db = Path(args[args.index("--db") + 1])
+        db.parent.mkdir(parents=True, exist_ok=True)
+        _write_shard_result(
+            db,
+            task_id=f"task-{shard_index}",
+            terminal_reason="submitted" if shard_index == 1 else "infra_failure",
+            error=None if shard_index == 1 else "podman socket did not come up",
+            passed=shard_index == 1,
+        )
+        self.stdout = io.StringIO("")
+        self.returncode = 7 if shard_index == 0 else 0
+        self.pid = 210000 + shard_index
+
+    def wait(self) -> int:
+        return self.returncode
+
+    def poll(self) -> int:
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.returncode = 130
+
+
+def test_run_sharded_benchmark_merges_nonzero_shard_with_rows(
+    tmp_path: Path, monkeypatch
+) -> None:
+    out_db = tmp_path / "results.db"
+    monkeypatch.setattr("mcode.cli.subprocess.Popen", _PartialFakePopen)
+
+    _run_sharded_benchmark(
+        command="swebench-lite",
+        base_argv=["--model", "test-model"],
+        shards=2,
+        db=out_db,
+        benchmark="swebench-lite",
+        backend="ollama",
+        model="test-model",
+        loop_budget=15,
+        timeout_s=300,
     )
-    pull_db = tmp_path / "pull.db"
-    _write_shard_result(
-        pull_db,
-        task_id="matplotlib__matplotlib-24570",
-        terminal_reason=None,
-        error="writing blob: adding layer: unpacking failed",
-    )
 
-    failures = _detect_infra_failures([infra_db, pull_db])
-
-    assert [failure.task_id for failure in failures] == [
-        "matplotlib__matplotlib-23476",
-        "matplotlib__matplotlib-24570",
-    ]
+    summary = _latest_run_summary(out_db)
+    assert summary.total == 2
+    assert summary.passed == 1
 
 
-def test_detect_infra_failures_ignores_normal_terminal_rows(tmp_path: Path) -> None:
-    db = tmp_path / "normal.db"
-    _write_shard_result(
-        db,
-        task_id="task-wrong",
-        terminal_reason="wrong_patch_after_verification",
-        error="Not resolved",
-    )
-    _write_shard_result(
-        db,
-        task_id="task-budget",
-        terminal_reason="budget_exhausted",
-        error=None,
-    )
-
-    assert _detect_infra_failures([db]) == []
-
-
-class _InfraFakePopen:
-    instances: list[_InfraFakePopen] = []
+class _RelaunchFakePopen:
+    attempts: dict[int, int] = {}
 
     def __init__(self, argv, **kwargs) -> None:
         del kwargs
@@ -223,54 +230,53 @@ class _InfraFakePopen:
         shard_index = int(args[args.index("--shard-index") + 1])
         db = Path(args[args.index("--db") + 1])
         db.parent.mkdir(parents=True, exist_ok=True)
-        if shard_index == 0:
+        attempt = self.attempts.get(shard_index, 0) + 1
+        self.attempts[shard_index] = attempt
+        if shard_index != 0 or attempt > 1:
             _write_shard_result(
                 db,
-                task_id="matplotlib__matplotlib-23476",
-                terminal_reason="infra_failure",
-                error="unpacking failed: Chown error detected",
+                task_id=f"task-{shard_index}",
+                terminal_reason="submitted",
+                error=None,
+                passed=True,
             )
         self.stdout = io.StringIO("")
-        self.returncode: int | None = None
-        self.terminated = False
-        self.pid = 200000 + shard_index
-        self.instances.append(self)
+        self.returncode = SHARDED_INFRA_EXIT_CODE if shard_index == 0 and attempt == 1 else 0
+        self.pid = 220000 + shard_index + (attempt * 10)
 
     def wait(self) -> int:
-        if self.returncode is None:
-            self.returncode = 0
         return self.returncode
 
-    def poll(self) -> int | None:
+    def poll(self) -> int:
         return self.returncode
 
     def terminate(self) -> None:
-        self.terminated = True
         self.returncode = 130
 
 
-def test_run_sharded_benchmark_stops_running_shards_on_infra_failure(
+def test_run_sharded_benchmark_relaunches_empty_infra_shard_once(
     tmp_path: Path, monkeypatch
 ) -> None:
-    _InfraFakePopen.instances = []
-    monkeypatch.setattr("mcode.cli.subprocess.Popen", _InfraFakePopen)
+    _RelaunchFakePopen.attempts = {}
+    out_db = tmp_path / "results.db"
+    monkeypatch.setattr("mcode.cli.subprocess.Popen", _RelaunchFakePopen)
 
-    with pytest.raises(typer.Exit) as exc:
-        _run_sharded_benchmark(
-            command="swebench-lite",
-            base_argv=["--model", "test-model"],
-            shards=2,
-            db=tmp_path / "results.db",
-            benchmark="swebench-lite",
-            backend="ollama",
-            model="test-model",
-            loop_budget=15,
-            timeout_s=300,
-        )
+    _run_sharded_benchmark(
+        command="swebench-lite",
+        base_argv=["--model", "test-model"],
+        shards=2,
+        db=out_db,
+        benchmark="swebench-lite",
+        backend="ollama",
+        model="test-model",
+        loop_budget=15,
+        timeout_s=300,
+    )
 
-    assert exc.value.exit_code == SHARDED_INFRA_EXIT_CODE
-    assert len(_InfraFakePopen.instances) == 2
-    assert all(proc.terminated for proc in _InfraFakePopen.instances)
+    assert _RelaunchFakePopen.attempts == {0: 2, 1: 1}
+    summary = _latest_run_summary(out_db)
+    assert summary.total == 2
+    assert summary.passed == 2
 
 
 def test_cli_rejects_auto_and_manual_shards_together() -> None:

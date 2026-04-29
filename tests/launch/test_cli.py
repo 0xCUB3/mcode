@@ -43,6 +43,17 @@ def test_status_empty(runner: CliRunner, isolated_state: Path) -> None:
     assert "no servers or runs" in result.stdout
 
 
+def test_status_formats_bad_state_read(runner: CliRunner, isolated_state: Path) -> None:
+    isolated_state.write_text("{bad json", encoding="utf-8")
+
+    result = runner.invoke(app, ["status"])
+
+    assert result.exit_code == 1
+    output = _all_output(result)
+    assert "could not read launch state" in output
+    assert "check MCODE_LAUNCH_STATE" in output
+
+
 def test_status_lists_server(runner: CliRunner, isolated_state: Path) -> None:
     state.update(
         isolated_state,
@@ -108,6 +119,23 @@ def test_error_formatting_prints_what_why_next(
     assert "next:" in err and "run the test again" in err
     assert "logs:" in err and "/tmp/fake.log" in err
 
+
+
+def test_refresh_formats_state_update_failure(
+    runner: CliRunner, isolated_state: Path, monkeypatch
+) -> None:
+    def fail_update(*args, **kwargs):
+        del args, kwargs
+        raise OSError("state lock failed")
+
+    monkeypatch.setattr("mcode.launch.cli.state.update", fail_update)
+
+    result = runner.invoke(app, ["refresh"])
+
+    assert result.exit_code == 1
+    output = _all_output(result)
+    assert "could not refresh launch state" in output
+    assert "state lock failed" in output
 
 def test_mcode_debug_env_raises_traceback(runner: CliRunner, monkeypatch) -> None:
     monkeypatch.setenv("MCODE_DEBUG", "1")

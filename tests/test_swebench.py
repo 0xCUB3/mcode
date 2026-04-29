@@ -8,7 +8,11 @@ import types
 import pytest
 
 import mcode.execution.sandbox as sandbox_module
-from mcode.execution.sandbox import DockerUnavailableError, is_docker_unavailable_error
+from mcode.execution.sandbox import (
+    DockerSandbox,
+    DockerUnavailableError,
+    is_docker_unavailable_error,
+)
 from mcode.execution.swebench import (
     RetryablePodmanImageError,
     SWEbenchSandbox,
@@ -337,3 +341,57 @@ def test_sandbox_cpu_limit_zero_or_negative_treated_as_unlimited():
     # than send a half-set HostConfig.
     s = SWEbenchSandbox(cpu_limit=0.0001)
     assert s._cpu_kwargs() == {}
+
+
+
+def test_docker_sandbox_timeout_ignores_cleanup_and_log_failures() -> None:
+    class FakeImages:
+        def get(self, image):
+            assert image == "python:3.11-slim"
+
+    class FakeContainer:
+        killed = False
+        removed = False
+
+        def wait(self, *, timeout):
+            del timeout
+            raise TimeoutError("command timed out")
+
+        def kill(self):
+            self.killed = True
+            raise RuntimeError("kill failed")
+
+        def logs(self, *args, **kwargs):
+            del args, kwargs
+            raise RuntimeError("logs unavailable")
+
+        def remove(self, *, force):
+            del force
+            self.removed = True
+            raise RuntimeError("remove failed")
+
+    fake_container = FakeContainer()
+
+    class FakeContainers:
+        def run(self, *args, **kwargs):
+            del args, kwargs
+            return fake_container
+
+    class FakeClient:
+        images = FakeImages()
+        containers = FakeContainers()
+
+        def ping(self):
+            pass
+
+    sandbox = DockerSandbox()
+    sandbox._client = FakeClient()
+
+    result = sandbox.run_python("print('hello')", timeout_s=1)
+
+    assert result.success is False
+    assert result.timed_out is True
+    assert result.error == "Timed out"
+    assert "logs unavailable" in result.stderr
+    assert fake_container.killed is True
+    assert fake_container.removed is True

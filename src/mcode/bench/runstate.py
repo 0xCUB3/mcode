@@ -44,6 +44,7 @@ def open_run(
             shard_pids=list(shard_pids or []),
             remote=dict(remote or {}),
             started_at=time.time(),
+            updated_at=str(time.time()),
         )
         s.upsert_run(rec)
 
@@ -69,6 +70,7 @@ def patch_run(
             rec.remote = {**rec.remote, **remote}
         if progress is not None:
             rec.progress = {**rec.progress, **progress}
+        rec.updated_at = str(time.time())
         s.upsert_run(rec)
 
     launch_state.update(None, _mutator)
@@ -90,6 +92,7 @@ def close_run(
         rec.ended_at = time.time()
         if cancel_reason is not None:
             rec.metadata = {**rec.metadata, "cancel_reason": cancel_reason}
+        rec.updated_at = str(time.time())
         s.upsert_run(rec)
 
     launch_state.update(None, _mutator)

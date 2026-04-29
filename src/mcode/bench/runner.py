@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sqlite3
 import time
 import traceback
 from collections.abc import Callable
@@ -13,6 +14,7 @@ from mcode.bench.results import ResultsDB, RunSummary
 from mcode.execution.sandbox import DockerUnavailableError
 from mcode.llm.session import LLMSession
 from mcode.ui.task_reporter import choose as choose_task_reporter
+from mcode.util.retry import with_backoff
 
 
 def _default_cache_dir() -> Path:
@@ -57,6 +59,13 @@ class BenchConfig:
 
 
 @dataclass(frozen=True)
+class _RunResume:
+    run_id: int
+    existing_rows: dict[str, dict[str, object]]
+    retry_task_ids: set[str]
+
+
+@dataclass(frozen=True)
 class PatchRepoContext:
     repo_root: Path | str
     command_fn: Callable[[str], str] | None = None
@@ -92,6 +101,56 @@ class BenchmarkRunner:
             selection_attempts=self.config.selection_attempts,
             diagnostic_traces=self.config.diagnostic_traces,
         )
+
+    def _start_or_resume_run(self, benchmark: str, config: dict) -> _RunResume:
+        run_id = self.results_db.find_latest_run_by_config(benchmark, config)
+        if run_id is None:
+            run_id = self.results_db.start_run(benchmark, config)
+            return _RunResume(run_id=run_id, existing_rows={}, retry_task_ids=set())
+        existing_rows = self.results_db.task_terminal_rows(run_id)
+        retry_task_ids = {
+            task_id
+            for task_id, row in existing_rows.items()
+            if _is_retryable_task_row(row)
+        }
+        return _RunResume(
+            run_id=run_id,
+            existing_rows=existing_rows,
+            retry_task_ids=retry_task_ids,
+        )
+
+    def _should_run_task(self, resume: _RunResume, task_id: str) -> bool:
+        return task_id not in resume.existing_rows or task_id in resume.retry_task_ids
+
+    def _save_task_result(self, run_id: int, result: dict[str, object]) -> None:
+        with_backoff(
+            lambda: self.results_db.save_task_result(run_id, result),
+            is_retryable=_is_retryable_sqlite_lock,
+            max_attempts=5,
+            base_sleep_s=0.05,
+            max_sleep_s=0.5,
+        )
+
+    def _record_preflight_infra_failure(
+        self,
+        *,
+        resume: _RunResume,
+        tasks: list,
+        error: Exception,
+    ) -> RunSummary:
+        for task in tasks:
+            task_id = _benchmark_task_id(task)
+            if not self._should_run_task(resume, task_id):
+                continue
+            result = _task_error_result(
+                task_id=task_id,
+                start_time=time.time(),
+                error=error,
+                scaffold_metrics=None,
+                attempts_used=0,
+            )
+            self._save_task_result(resume.run_id, result)
+        return self.results_db.run_summary(resume.run_id)
 
     def run_benchmark(
         self,
@@ -137,6 +196,13 @@ class BenchmarkRunner:
             "split": self.config.swebench_split,
         }
 
+        resume = self._start_or_resume_run("swebench-lite", config)
+        pending_tasks = [
+            task for task in tasks if self._should_run_task(resume, task.instance_id)
+        ]
+        if not pending_tasks:
+            return self.results_db.run_summary(resume.run_id)
+
         swe_sandbox = SWEbenchSandbox(
             namespace=self.config.swebench_namespace,
             arch=self.config.swebench_arch,
@@ -146,23 +212,34 @@ class BenchmarkRunner:
             cpu_limit=self.config.swebench_cpu_limit,
             force_rebuild=self.config.swebench_force_rebuild,
         )
-        swe_sandbox.prepare_images([t.raw_instance for t in tasks])
-        run_id = self.results_db.start_run("swebench-lite", config)
+        try:
+            with_backoff(
+                lambda: swe_sandbox.prepare_images([t.raw_instance for t in pending_tasks]),
+                is_retryable=_is_retryable_infra_error,
+                max_attempts=2,
+                base_sleep_s=0.1,
+                max_sleep_s=0.5,
+            )
+        except Exception as exc:
+            if not _is_retryable_infra_error(exc):
+                raise
+            return self._record_preflight_infra_failure(
+                resume=resume,
+                tasks=pending_tasks,
+                error=exc,
+            )
 
-        passed = 0
-        total = 0
         with choose_task_reporter() as reporter:
-            reporter.total(len(tasks))
-            for task in tasks:
-                total += 1
-                result = self._run_swebench_task(task, swe_sandbox=swe_sandbox, run_id=run_id)
-                if result["passed"]:
-                    passed += 1
-                self.results_db.save_task_result(run_id, result)
+            reporter.total(len(pending_tasks))
+            for task in pending_tasks:
+                result = self._run_swebench_task(
+                    task, swe_sandbox=swe_sandbox, run_id=resume.run_id
+                )
+                self._save_task_result(resume.run_id, result)
                 detail = f"{task.instance_id} {'ok' if result['passed'] else 'fail'}"
                 reporter.advance(detail=detail)
 
-        return RunSummary(run_id=run_id, total=total, passed=passed)
+        return self.results_db.run_summary(resume.run_id)
 
     def _run_swebench_live(
         self,
@@ -188,34 +265,50 @@ class BenchmarkRunner:
             "split": self.config.swebench_split,
         }
 
+        resume = self._start_or_resume_run("swebench-live", config)
+        pending_tasks = [
+            task for task in tasks if self._should_run_task(resume, task.instance_id)
+        ]
+        if not pending_tasks:
+            return self.results_db.run_summary(resume.run_id)
+
         live_sandbox = SWEbenchLiveSandbox(
             mem_limit=self.config.swebench_mem_limit,
             pids_limit=self.config.swebench_pids_limit,
             cpu_limit=self.config.swebench_cpu_limit,
         )
-        live_sandbox.prepare_images(tasks)
-        run_id = self.results_db.start_run("swebench-live", config)
+        try:
+            with_backoff(
+                lambda: live_sandbox.prepare_images(pending_tasks),
+                is_retryable=_is_retryable_infra_error,
+                max_attempts=2,
+                base_sleep_s=0.1,
+                max_sleep_s=0.5,
+            )
+        except Exception as exc:
+            if not _is_retryable_infra_error(exc):
+                raise
+            return self._record_preflight_infra_failure(
+                resume=resume,
+                tasks=pending_tasks,
+                error=exc,
+            )
 
-        passed = 0
-        total = 0
         with choose_task_reporter() as reporter:
-            reporter.total(len(tasks))
-            for task in tasks:
-                total += 1
+            reporter.total(len(pending_tasks))
+            for task in pending_tasks:
                 result = self._run_swebench_live_task(
                     task,
                     live_sandbox=live_sandbox,
-                    run_id=run_id,
+                    run_id=resume.run_id,
                 )
-                if result["passed"]:
-                    passed += 1
-                self.results_db.save_task_result(run_id, result)
+                self._save_task_result(resume.run_id, result)
                 if not os.environ.get("MCODE_KEEP_IMAGES"):
                     live_sandbox.remove_image(task)
                 detail = f"{task.instance_id} {'ok' if result['passed'] else 'fail'}"
                 reporter.advance(detail=detail)
 
-        return RunSummary(run_id=run_id, total=total, passed=passed)
+        return self.results_db.run_summary(resume.run_id)
 
     def _run_aider_polyglot(
         self,
@@ -243,22 +336,22 @@ class BenchmarkRunner:
             "retry": self.config.aider_polyglot_retry,
             "retry_loop_budget": self.config.aider_polyglot_retry_loop_budget,
         }
-        run_id = self.results_db.start_run("aider-polyglot", config)
+        resume = self._start_or_resume_run("aider-polyglot", config)
+        pending_tasks = [
+            task for task in tasks if self._should_run_task(resume, task.task_id)
+        ]
+        if not pending_tasks:
+            return self.results_db.run_summary(resume.run_id)
 
-        passed = 0
-        total = 0
         with choose_task_reporter() as reporter:
-            reporter.total(len(tasks))
-            for task in tasks:
-                total += 1
+            reporter.total(len(pending_tasks))
+            for task in pending_tasks:
                 result = self._run_aider_polyglot_task(task)
-                if result["passed"]:
-                    passed += 1
-                self.results_db.save_task_result(run_id, result)
+                self._save_task_result(resume.run_id, result)
                 detail = f"{task.task_id} {'ok' if result['passed'] else 'fail'}"
                 reporter.advance(detail=detail)
 
-        return RunSummary(run_id=run_id, total=total, passed=passed)
+        return self.results_db.run_summary(resume.run_id)
 
     def _run_aider_polyglot_task(self, task) -> dict[str, object]:
         from pathlib import Path
@@ -521,16 +614,9 @@ class BenchmarkRunner:
                         elif scaffold_result.get("verification_succeeded"):
                             scaffold_result["terminal_reason"] = "wrong_patch_after_verification"
                 break
-            except DockerUnavailableError as e:
-                if attempts_used == 2:
-                    return _task_error_result(
-                        task_id=task_id,
-                        start_time=start,
-                        error=e,
-                        scaffold_metrics=scaffold_metrics,
-                        attempts_used=attempts_used,
-                    )
             except Exception as e:
+                if _is_retryable_infra_error(e) and attempts_used < 2:
+                    continue
                 return _task_error_result(
                     task_id=task_id,
                     start_time=start,
@@ -617,6 +703,54 @@ def _evaluate_lite_patch(
         stdout=_truncate(run.test_output),
         stderr=json.dumps(inst_report, sort_keys=True),
         error=None if run.resolved else "Not resolved",
+    )
+
+
+def _benchmark_task_id(task: object) -> str:
+    task_id = getattr(task, "instance_id", None)
+    if task_id is None:
+        task_id = getattr(task, "task_id")
+    return str(task_id)
+
+
+def _is_retryable_sqlite_lock(exc: BaseException) -> bool:
+    return (
+        isinstance(exc, sqlite3.OperationalError)
+        and "database is locked" in str(exc).lower()
+    )
+
+
+def _is_retryable_task_row(row: dict[str, object]) -> bool:
+    if row.get("terminal_reason") == "infra_failure":
+        return True
+    error = row.get("error")
+    return isinstance(error, str) and _is_retryable_infra_text(error)
+
+
+def _is_retryable_infra_error(exc: BaseException) -> bool:
+    if isinstance(exc, DockerUnavailableError):
+        return True
+    return _is_retryable_infra_text(str(exc))
+
+
+def _is_retryable_infra_text(text: str) -> bool:
+    try:
+        from mcode.execution.swebench import _is_retryable_podman_image_error
+
+        if _is_retryable_podman_image_error(text):
+            return True
+    except Exception:
+        pass
+    lowered = text.lower()
+    return any(
+        pattern in lowered
+        for pattern in (
+            "dockerunavailableerror",
+            "docker unavailable",
+            "podman socket",
+            "docker socket",
+            "database is locked",
+        )
     )
 
 

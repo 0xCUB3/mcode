@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import time
+from types import SimpleNamespace
+
 import pytest
 
+from mcode.execution.sandbox import DockerUnavailableError
 from mcode.execution.swebench_live import (
+    SWEbenchLiveSandbox,
     _build_agent_shell_command,
     _check_resolution,
+    _exec_in_container,
     _ms_image_name,
     _parse_pytest_output,
 )
@@ -199,3 +205,71 @@ def test_build_agent_shell_command_activates_testbed_and_rewrites_repo_root():
     assert "git config --global --add safe.directory /testbed" in wrapped
     assert "cd /testbed && python -m pytest -q" in wrapped
     assert "/tmp/mcode-testbed-123/testbed" not in wrapped
+
+
+
+
+def test_exec_in_container_raises_docker_unavailable() -> None:
+    class BrokenContainer:
+        def exec_run(self, *args, **kwargs):
+            del args, kwargs
+            raise RuntimeError("podman.sock connection reset")
+
+    with pytest.raises(DockerUnavailableError, match="SWE-bench Live evaluation"):
+        _exec_in_container(BrokenContainer(), "pytest", timeout_s=1)
+
+
+def test_swebench_live_evaluate_patch_propagates_test_timeout(monkeypatch) -> None:
+    task = SimpleNamespace(
+        instance_id="django__django__4.0",
+        test_patch="",
+        test_cmds=["python -m pytest tests/test_fix.py"],
+        fail_to_pass=["tests/test_fix.py::test_fix"],
+        pass_to_pass=[],
+    )
+
+    class FakeImages:
+        def get(self, name):
+            assert name == _ms_image_name(task.instance_id)
+
+    class FakeExecResult:
+        def __init__(self, output: bytes, exit_code: int) -> None:
+            self.output = output
+            self.exit_code = exit_code
+
+    class FakeContainer:
+        def start(self) -> None:
+            pass
+
+        def put_archive(self, dest, data) -> None:
+            del dest, data
+
+        def exec_run(self, argv, *, workdir):
+            del workdir
+            command = argv[-1]
+            if "git apply" in command:
+                return FakeExecResult(b"applied\n", 0)
+            time.sleep(0.05)
+            return FakeExecResult(b"PASSED tests/test_fix.py::test_fix\n", 0)
+
+        def remove(self, *, force: bool) -> None:
+            del force
+
+    class FakeContainers:
+        def create(self, **kwargs):
+            return FakeContainer()
+
+    fake_client = SimpleNamespace(images=FakeImages(), containers=FakeContainers())
+    sandbox = SWEbenchLiveSandbox()
+    monkeypatch.setattr(sandbox, "_get_client", lambda: fake_client)
+
+    result = sandbox.evaluate_patch(
+        task=task,
+        patch="diff --git a/foo.py b/foo.py\n+x = 2\n",
+        run_id="test-run",
+        timeout_s=0.001,
+    )
+
+    assert result.timed_out is True
+    assert result.resolved is False
+    assert "Command timed out" in result.test_output

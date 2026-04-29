@@ -113,6 +113,8 @@ mcode bench smoke           --model M  [flags]
 - `--diagnostic-traces / --no-diagnostic-traces` — persist compact bench trace events
 - `--json` — machine-readable event stream (one JSON object per line, monotonic `seq`)
 
+Re-running the same bench command against the same `--db` resumes the matching run. Completed task rows are skipped, retryable infra rows are retried, and sharded runs reuse stable shard DBs before merging whatever completed rows exist.
+
 ### `swebench-live` / `swebench-lite` extras
 
 - `--split` — `test` / `lite` / `verified` / `full` / `dev`

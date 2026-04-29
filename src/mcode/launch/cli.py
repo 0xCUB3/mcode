@@ -161,7 +161,17 @@ def cmd_status(
     """List currently-known servers and runs."""
     from mcode.launch.formatting import format_status_json, format_status_lines
 
-    s = state.load()
+    def load_state():
+        try:
+            return state.load()
+        except Exception as exc:
+            raise LaunchError(
+                what="could not read launch state",
+                why=str(exc),
+                next="check MCODE_LAUNCH_STATE or remove the corrupt state file",
+            ) from exc
+
+    s = _run(load_state)
     if json_mode:
         print(json.dumps(format_status_json(s, raw=raw), indent=2))
         return
@@ -462,7 +472,17 @@ def cmd_refresh() -> None:
                 count += 1
         return count
 
-    n = state.update(None, _update)
+    def refresh_state() -> int:
+        try:
+            return state.update(None, _update)
+        except Exception as exc:
+            raise LaunchError(
+                what="could not refresh launch state",
+                why=str(exc),
+                next="check MCODE_LAUNCH_STATE or retry after fixing the state file",
+            ) from exc
+
+    n = _run(refresh_state)
     print(f"refreshed {n} records")
 
 

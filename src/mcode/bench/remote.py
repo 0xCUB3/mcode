@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import shlex
 import subprocess
 import sys
 import time
-import uuid
 from pathlib import Path
 
 from mcode.launch import config as launch_config
@@ -25,6 +26,26 @@ _FORWARDED_ENV_VARS = (
     "MCODE_MAX_NEW_TOKENS",
     "MCODE_REACT_TIMEOUT",
 )
+
+def _remote_run_key(
+    *,
+    model: str,
+    local_db: Path,
+    bench_argv: list[str],
+    forwarded_env: dict[str, str],
+) -> str:
+    payload = {
+        "model": model,
+        "local_db": str(local_db.resolve()),
+        "bench_argv": bench_argv,
+        "forwarded_env": forwarded_env,
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:16]
+    safe_model = model.replace("/", "-")[:24]
+    return f"bench-{digest}-{safe_model}"
+
 _SHARDED_INFRA_EXIT_CODE = 86
 
 
@@ -146,10 +167,19 @@ def run_bench_on_bluevela(
     api_key = os.environ.get("OPENAI_API_KEY", "dummy")
 
     ssh = SshClient(bv.login)
-    run_id = f"bench-{int(time.time())}-{uuid.uuid4().hex[:8]}-{model.replace('/', '-')[:24]}"
+    forwarded_env = {
+        name: value for name in _FORWARDED_ENV_VARS if (value := os.environ.get(name))
+    }
+    run_id = _remote_run_key(
+        model=model,
+        local_db=local_db,
+        bench_argv=bench_argv,
+        forwarded_env=forwarded_env,
+    )
     remote_dir = f"{bv.workspace_root}/bench-runs/{run_id}"
     remote_db = f"{remote_dir}/results.db"
     remote_log = f"{remote_dir}/bench.log"
+    exit_sentinel = f"{remote_dir}/exit_code"
     # Podman storage goes under shared_root (NOT /tmp, NOT workspace_root).
     # /tmp on login3 is small + shared (150G); workspace_root is under the
     # per-user quota on /u/skula and 100+ swebench eval images at ~7GB each
@@ -159,7 +189,6 @@ def run_bench_on_bluevela(
     # with metadata sync — kills `mcode-testbed-*` cleanup with ENOTEMPTY.
     runtime_dir = f"{bv.shared_root}/podman-runtime/{run_id}"
     tmp_dir = f"{bv.workspace_root}/podman-tmp/{run_id}"
-    forwarded_env = {name: value for name in _FORWARDED_ENV_VARS if (value := os.environ.get(name))}
     forwarded_exports = "".join(
         f"export {name}={shlex.quote(value)}\n" for name, value in forwarded_env.items()
     )
@@ -182,7 +211,6 @@ def run_bench_on_bluevela(
 
     hf_env = bv.hf_env
     bench_cmd = "uv run mcode bench " + " ".join(shlex.quote(a) for a in argv)
-    exit_sentinel = f"{remote_dir}/exit_code"
     svc_log = f"{remote_dir}/podman-svc.log"
     remote_script = f"""
 set -euo pipefail
@@ -291,7 +319,13 @@ exit $rc
         run_id=run_id,
         benchmark=benchmark_name,
         status=launch_state.RunStatus.RUNNING,
-        remote={"login": bv.login, "run_dir": remote_dir},
+        remote={
+            "login": bv.login,
+            "run_dir": remote_dir,
+            "remote_db": remote_db,
+            "remote_log": remote_log,
+            "exit_sentinel": exit_sentinel,
+        },
         db_path=str(local_db),
         started_at=time.time(),
     )
@@ -316,7 +350,14 @@ exit $rc
         pid = r.stdout.strip().splitlines()[-1]
         _upsert_run(
             run_id=run_id,
-            remote={"login": bv.login, "run_dir": remote_dir, "pid": pid},
+            remote={
+                "login": bv.login,
+                "run_dir": remote_dir,
+                "pid": pid,
+                "remote_db": remote_db,
+                "remote_log": remote_log,
+                "exit_sentinel": exit_sentinel,
+            },
             log_paths=[remote_log],
         )
         print(f"▶ remote bench started: pid={pid} host={bv.login} log={remote_log}")
@@ -329,32 +370,45 @@ exit $rc
             print("\n⚠ interrupted; remote job still running. Check with:")
             print(f"  ssh {bv.login} 'tail -f {remote_log}'")
             return 130
+        except Exception as exc:
+            print(f"⚠ log streaming failed: {exc}; checking remote sentinel and DB")
 
-        # Trust the sentinel, not the DB size.
         sentinel_r = ssh.run(
-            f"cat {shlex.quote(exit_sentinel)} 2>/dev/null || echo 99",
+            f"cat {shlex.quote(exit_sentinel)} 2>/dev/null",
+            timeout=30,
+        )
+        sentinel_ok = bool(sentinel_r.ok)
+        if sentinel_ok:
+            try:
+                exit_code = int((sentinel_r.stdout.strip() or "99").splitlines()[-1])
+            except ValueError:
+                exit_code = 99
+        else:
+            exit_code = 99
+            print("⚠ remote bench did not write a readable exit sentinel")
+
+        qdb = shlex.quote(remote_db)
+        size_r = ssh.run(
+            f"test -f {qdb} && stat -c %s {qdb} || echo 0",
             timeout=30,
         )
         try:
-            exit_code = int((sentinel_r.stdout.strip() or "99").splitlines()[-1])
-        except ValueError:
-            exit_code = 99
-        if exit_code == 99:
-            print("✗ remote bench did not write an exit sentinel (likely killed)")
-
-        # Fetch DB whenever it exists — non-zero exit can still have useful
-        # rows for debugging. Caller can inspect terminal_reason counts.
-        if fetch_db:
-            qdb = shlex.quote(remote_db)
-            size_r = ssh.run(
-                f"test -f {qdb} && stat -c %s {qdb} || echo 0",
-                timeout=30,
-            )
             size = int((size_r.stdout.strip() or "0").splitlines()[-1])
+        except ValueError:
+            size = 0
+
+        if fetch_db:
             if size > 0:
                 local_db.parent.mkdir(parents=True, exist_ok=True)
-                ssh.download(remote_db, local_db, timeout=120)
-                print(f"✓ fetched DB: {local_db} ({size} bytes)")
+                try:
+                    ssh.download(remote_db, local_db, timeout=120)
+                    print(f"✓ fetched DB: {local_db} ({size} bytes)")
+                except Exception as exc:
+                    print(
+                        f"⚠ remote DB exists but download failed: {exc}; "
+                        f"remote_db={remote_db}"
+                    )
+                    exit_code = exit_code or 99
             else:
                 print("⚠ remote DB is empty; nothing to fetch")
 
@@ -419,6 +473,7 @@ def _upsert_run(
             existing.ended_at = ended_at
         if metadata is not None:
             existing.metadata = {**existing.metadata, **metadata}
+        existing.updated_at = str(time.time())
         s.upsert_run(existing)
 
     launch_state.update(None, _mutator)

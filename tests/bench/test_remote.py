@@ -4,6 +4,7 @@ from pathlib import Path
 
 from mcode.bench import remote
 from mcode.launch import config as launch_config
+from mcode.launch import state as launch_state
 
 
 class _FakeResult:
@@ -57,21 +58,23 @@ def test_run_bench_on_bluevela_uses_tmp_for_podman_storage(tmp_path, monkeypatch
     monkeypatch.setattr(remote, "_resolve_endpoint", lambda model, cfg: "http://host:8321/v1")
     monkeypatch.setattr(remote, "SshClient", _FakeSshClient)
     monkeypatch.setattr(remote, "_stream_remote_log", lambda ssh, remote_log, pid: None)
-    monkeypatch.setattr(remote.time, "time", lambda: 1777000000)
-    fake_uuid = type("FakeUUID", (), {"hex": "abcdef123456"})()
-    monkeypatch.setattr(remote.uuid, "uuid4", lambda: fake_uuid)
-
+    local_db = tmp_path / "results.db"
     exit_code = remote.run_bench_on_bluevela(
         bench_argv=["smoke", "--model", "Qwen/Qwen3.5-35B-A3B"],
         model="Qwen/Qwen3.5-35B-A3B",
-        local_db=tmp_path / "results.db",
+        local_db=local_db,
     )
 
     assert exit_code == 0
     ssh = _FakeSshClient.last
     assert ssh is not None
     launch_cmd = next(cmd for cmd in ssh.commands if cmd.startswith("nohup setsid bash -lc"))
-    run_id = "bench-1777000000-abcdef12-Qwen-Qwen3.5-35B-A3B"
+    run_id = remote._remote_run_key(
+        model="Qwen/Qwen3.5-35B-A3B",
+        local_db=local_db,
+        bench_argv=["smoke", "--model", "Qwen/Qwen3.5-35B-A3B"],
+        forwarded_env={},
+    )
 
     assert f"export XDG_RUNTIME_DIR=/u/skula/mcode-shared/podman-runtime/{run_id}" in launch_cmd
     assert f"WORKSPACE_TMP=/u/skula/mcode-launch/podman-tmp/{run_id}" in launch_cmd
@@ -173,3 +176,58 @@ def test_run_bench_on_bluevela_sets_up_aider_polyglot_root(tmp_path, monkeypatch
     assert 'export CARGO_HOME="$TOOLCHAIN_ROOT/cargo"' in launch_cmd
     assert "$TOOLCHAIN_ROOT/node/bin" in launch_cmd
     assert "$TOOLCHAIN_ROOT/cmake/bin" in launch_cmd
+
+
+
+class _RecoverableMetadataSshClient(_FakeSshClient):
+    def run(self, cmd: str, *, timeout: float = 60.0):
+        del timeout
+        self.commands.append(cmd)
+        if cmd.startswith("mkdir -p "):
+            return _FakeResult()
+        if cmd.startswith("nohup setsid bash -lc"):
+            return _FakeResult(stdout="4242\n")
+        if cmd.startswith("cat "):
+            return _FakeResult(ok=False, stderr="sentinel missing")
+        if cmd.startswith("test -f "):
+            return _FakeResult(stdout="123\n")
+        raise AssertionError(f"unexpected ssh command: {cmd}")
+
+    def download(self, src: str, dst: Path, *, timeout: float = 300.0) -> None:
+        super().download(src, dst, timeout=timeout)
+        raise RuntimeError("scp failed")
+
+
+def test_run_bench_on_bluevela_keeps_recoverable_metadata_on_fetch_failure(
+    tmp_path, monkeypatch
+) -> None:
+    state_path = tmp_path / "state.json"
+    monkeypatch.setenv("MCODE_LAUNCH_STATE", str(state_path))
+    monkeypatch.setattr(remote.launch_config, "load", lambda: _bluevela_cfg())
+    monkeypatch.setattr(remote.launch_config, "validate_for_bluevela", lambda cfg: [])
+    monkeypatch.setattr(remote, "_resolve_endpoint", lambda model, cfg: "http://host:8321/v1")
+    monkeypatch.setattr(remote, "SshClient", _RecoverableMetadataSshClient)
+    monkeypatch.setattr(
+        remote,
+        "_stream_remote_log",
+        lambda ssh, remote_log, pid: (_ for _ in ()).throw(RuntimeError("ssh dropped")),
+    )
+    local_db = tmp_path / "results.db"
+
+    exit_code = remote.run_bench_on_bluevela(
+        bench_argv=["smoke", "--model", "Qwen/Qwen3.5-35B-A3B"],
+        model="Qwen/Qwen3.5-35B-A3B",
+        local_db=local_db,
+    )
+
+    assert exit_code == 99
+    snap = launch_state.load(state_path)
+    assert len(snap.runs) == 1
+    rec = snap.runs[0]
+    assert rec.remote["remote_db"].endswith("/results.db")
+    assert rec.remote["remote_log"].endswith("/bench.log")
+    assert rec.remote["exit_sentinel"].endswith("/exit_code")
+    assert rec.updated_at is not None
+    ssh = _RecoverableMetadataSshClient.last
+    assert ssh is not None
+    assert ssh.downloads

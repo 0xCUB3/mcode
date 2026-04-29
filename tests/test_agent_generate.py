@@ -528,14 +528,96 @@ def test_run_task_records_infra_failure_after_docker_retry(tmp_path):
     assert result["error"] == "DockerUnavailableError: socket timed out"
 
 
-def test_swebench_image_preflight_stops_before_model_loop(tmp_path, monkeypatch):
-    task = SimpleNamespace(
-        raw_instance={"instance_id": "matplotlib__matplotlib-23476"},
-        instance_id="matplotlib__matplotlib-23476",
-    )
-    generated = {"called": False}
 
-    class FakeSandbox:
+def test_swebench_runner_skips_completed_tasks_without_touching_sandbox(
+    tmp_path, monkeypatch
+) -> None:
+    task = SimpleNamespace(
+        raw_instance={"instance_id": "task-complete"},
+        instance_id="task-complete",
+        repo="test/repo",
+        problem_statement="Fix the bug",
+        hints_text="",
+    )
+
+    @contextmanager
+    def repo_context(_instance):
+        yield SimpleNamespace(repo_root=str(tmp_path), command_fn=None, visible_repo_root=None)
+
+    class FakeRun:
+        resolved = True
+        timed_out = False
+        test_output = "ok"
+        report = {"task-complete": {"resolved": True}}
+
+    class FirstSandbox:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def prepare_images(self, instances):
+            assert instances == [task.raw_instance]
+
+        def repo_context(self, instance):
+            return repo_context(instance)
+
+        def evaluate_patch(self, **kwargs):
+            return FakeRun()
+
+    class ForbiddenSandbox:
+        def __init__(self, **kwargs) -> None:
+            raise AssertionError("completed rerun should not touch sandbox")
+
+    monkeypatch.setattr(runner_module, "_runtime_metadata", lambda: {})
+    monkeypatch.setattr(
+        "mcode.bench.swebench_lite.load_swebench_lite",
+        lambda *args, **kwargs: [task],
+    )
+    monkeypatch.setattr("mcode.execution.swebench.SWEbenchSandbox", FirstSandbox)
+
+    results_db = ResultsDB(tmp_path / "results.db")
+    runner = BenchmarkRunner(
+        config=BenchConfig(model_id="test-model", backend_name="ollama"),
+        results_db=results_db,
+    )
+    runner.llm.check_available = lambda: None  # type: ignore[method-assign]
+    runner._generate_task_patch = lambda *args, **kwargs: (  # type: ignore[method-assign]
+        "diff --git a/foo.py b/foo.py\n+x = 2\n",
+        None,
+    )
+
+    first = runner.run_benchmark("swebench-lite")
+    assert first.total == 1
+    assert first.passed == 1
+
+    monkeypatch.setattr("mcode.execution.swebench.SWEbenchSandbox", ForbiddenSandbox)
+    second = runner.run_benchmark("swebench-lite")
+
+    assert second.run_id == first.run_id
+    assert second.total == 1
+    assert second.passed == 1
+
+
+def test_swebench_runner_retries_prior_infra_failure(tmp_path, monkeypatch) -> None:
+    task = SimpleNamespace(
+        raw_instance={"instance_id": "task-retry"},
+        instance_id="task-retry",
+        repo="test/repo",
+        problem_statement="Fix the bug",
+        hints_text="",
+    )
+    sandbox_calls = {"prepare": 0, "evaluate": 0, "generate": 0}
+
+    @contextmanager
+    def repo_context(_instance):
+        yield SimpleNamespace(repo_root=str(tmp_path), command_fn=None, visible_repo_root=None)
+
+    class FakeRun:
+        resolved = True
+        timed_out = False
+        test_output = "ok"
+        report = {"task-retry": {"resolved": True}}
+
+    class FirstSandbox:
         def __init__(self, **kwargs) -> None:
             pass
 
@@ -543,32 +625,57 @@ def test_swebench_image_preflight_stops_before_model_loop(tmp_path, monkeypatch)
             assert instances == [task.raw_instance]
             raise RuntimeError("unpacking failed: Chown error detected")
 
+    class SecondSandbox:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def prepare_images(self, instances):
+            sandbox_calls["prepare"] += 1
+            assert instances == [task.raw_instance]
+
+        def repo_context(self, instance):
+            return repo_context(instance)
+
+        def evaluate_patch(self, **kwargs):
+            sandbox_calls["evaluate"] += 1
+            return FakeRun()
+
+    monkeypatch.setattr(runner_module, "_runtime_metadata", lambda: {})
     monkeypatch.setattr(
         "mcode.bench.swebench_lite.load_swebench_lite",
         lambda *args, **kwargs: [task],
     )
-    monkeypatch.setattr("mcode.execution.swebench.SWEbenchSandbox", FakeSandbox)
 
+    results_db = ResultsDB(tmp_path / "results.db")
     runner = BenchmarkRunner(
         config=BenchConfig(model_id="test-model", backend_name="ollama"),
-        results_db=ResultsDB(tmp_path / "results.db"),
+        results_db=results_db,
     )
     runner.llm.check_available = lambda: None  # type: ignore[method-assign]
+    def generate_patch(*args, **kwargs):
+        del args, kwargs
+        sandbox_calls["generate"] += 1
+        return "diff --git a/foo.py b/foo.py\n+x = 2\n", None
 
-    def fail_if_called(*args, **kwargs):
-        generated["called"] = True
-        raise AssertionError("model loop should not run after preflight failure")
+    runner._generate_task_patch = generate_patch  # type: ignore[method-assign]
 
-    runner._generate_task_patch = fail_if_called  # type: ignore[method-assign]
+    monkeypatch.setattr("mcode.execution.swebench.SWEbenchSandbox", FirstSandbox)
+    first = runner.run_benchmark("swebench-lite")
+    assert first.total == 1
+    assert first.passed == 0
+    first_rows = results_db.task_terminal_rows(first.run_id)
+    assert first_rows[task.instance_id]["terminal_reason"] == "infra_failure"
+    assert sandbox_calls["generate"] == 0
 
-    try:
-        runner.run_benchmark("swebench-lite")
-    except RuntimeError as exc:
-        assert "unpacking failed" in str(exc)
-    else:
-        raise AssertionError("preflight failure should propagate")
+    monkeypatch.setattr("mcode.execution.swebench.SWEbenchSandbox", SecondSandbox)
+    second = runner.run_benchmark("swebench-lite")
 
-    assert generated["called"] is False
+    assert second.run_id == first.run_id
+    assert second.total == 1
+    assert second.passed == 1
+    assert sandbox_calls == {"prepare": 1, "evaluate": 1, "generate": 1}
+    second_rows = results_db.task_terminal_rows(second.run_id)
+    assert second_rows[task.instance_id]["terminal_reason"] == "submitted"
 
 
 def test_solve_result_carries_diagnostic_events_only_when_enabled(tmp_path, monkeypatch):

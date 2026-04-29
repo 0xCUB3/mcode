@@ -220,10 +220,65 @@ class ResultsDB:
             model_id=config["model_id"],
             loop_budget=config.get("loop_budget", 3),
             timeout_s=config["timeout_s"],
-            config_json=json.dumps(config, sort_keys=True, default=str),
+            config_json=_config_json(config),
         )
         self.conn.commit()
         return int(cursor.lastrowid)
+
+    def find_latest_run_by_config(self, benchmark: str, config: dict) -> int | None:
+        row = self.conn.execute(
+            """
+            SELECT id FROM runs
+            WHERE benchmark = ? AND config_json = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (benchmark, _config_json(config)),
+        ).fetchone()
+        return int(row["id"]) if row is not None else None
+
+    def task_terminal_rows(self, run_id: int) -> dict[str, dict[str, object]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+              task_id,
+              passed,
+              error,
+              terminal_reason,
+              timed_out,
+              exit_code
+            FROM task_results
+            WHERE run_id = ?
+            """,
+            (run_id,),
+        ).fetchall()
+        return {
+            str(row["task_id"]): {
+                "passed": bool(row["passed"]),
+                "error": row["error"],
+                "terminal_reason": row["terminal_reason"],
+                "timed_out": bool(row["timed_out"]),
+                "exit_code": row["exit_code"],
+            }
+            for row in rows
+        }
+
+    def run_summary(self, run_id: int) -> RunSummary:
+        row = self.conn.execute(
+            """
+            SELECT
+              COUNT(*) AS total,
+              COALESCE(SUM(CASE WHEN passed THEN 1 ELSE 0 END), 0) AS passed
+            FROM task_results
+            WHERE run_id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        return RunSummary(
+            run_id=run_id,
+            total=int(row["total"]),
+            passed=int(row["passed"]),
+        )
 
     def save_task_result(self, run_id: int, result: dict) -> None:
         task_id = str(result["task_id"])
@@ -926,6 +981,10 @@ def _diagnostic_events_for_task(
     return events
 
 
+def _config_json(config: dict) -> str:
+    return json.dumps(config, sort_keys=True, default=str)
+
+
 def _row_value(row: sqlite3.Row, key: str, default=None):
     keys = row.keys() if hasattr(row, "keys") else ()
     if key in keys:
@@ -1059,7 +1118,7 @@ def merge_shard_dbs(*, out_path: Path, shard_paths: list[Path], force: bool = Fa
     merged_config["merged_shards"] = len(chosen)
     out_db.conn.execute(
         "UPDATE runs SET config_json = ? WHERE id = ?",
-        (json.dumps(merged_config, sort_keys=True, default=str), run_id),
+        (_config_json(merged_config), run_id),
     )
     out_db.conn.commit()
 

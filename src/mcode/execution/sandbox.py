@@ -125,6 +125,11 @@ def reraise_docker_unavailable(exc: BaseException, *, scope: str) -> None:
         raise DockerUnavailableError(_docker_error_message(scope)) from exc
 
 
+def _is_container_wait_timeout(exc: BaseException) -> bool:
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(marker in text for marker in ("timeout", "timed out", "readtimeout"))
+
+
 class DockerSandbox:
     def __init__(
         self,
@@ -191,18 +196,28 @@ class DockerSandbox:
                 )
                 try:
                     result = container.wait(timeout=timeout_s)
-                except Exception:
+                except Exception as exc:
+                    if not _is_container_wait_timeout(exc):
+                        reraise_docker_unavailable(exc, scope="sandboxed execution")
+                        raise
                     timed_out = True
-                    container.kill()
+                    try:
+                        container.kill()
+                    except Exception:
+                        pass
                     result = {"StatusCode": None}
 
                 # docker-py log demux support varies by version; keep compatibility.
                 try:
-                    stdout_b = container.logs(stdout=True, stderr=False)
-                    stderr_b = container.logs(stdout=False, stderr=True)
-                except TypeError:
-                    combined = container.logs(stdout=True, stderr=True)
-                    stdout_b, stderr_b = combined, b""
+                    try:
+                        stdout_b = container.logs(stdout=True, stderr=False)
+                        stderr_b = container.logs(stdout=False, stderr=True)
+                    except TypeError:
+                        combined = container.logs(stdout=True, stderr=True)
+                        stdout_b, stderr_b = combined, b""
+                except Exception as exc:
+                    stdout_b = b""
+                    stderr_b = f"Unable to collect container logs: {exc}".encode()
 
                 stdout = (stdout_b or b"").decode("utf-8", errors="replace")
                 stderr = (stderr_b or b"").decode("utf-8", errors="replace")
