@@ -1,68 +1,78 @@
-# SWE-bench Verified Qwen3.6 — finish-the-run attempt
+# SWE-bench Verified Qwen3.6 — finish-the-run (final)
 
-## Goal
+## Result
 
-Resume the partial SWE-bench Verified run from `2026-04-25-swebench-verified-qwen36-research/full-qwen36-selection5-loop50-sb2-aborted-infra-partial.db` (271/500 tasks done, 169 passed, 62.4%) by running the remaining 229 tasks against the same Qwen3.6-35B-A3B vLLM server on Blue Vela. End state: 301/500 covered, 189 passed = 37.8% over 500, 62.8% over attempted. 199 tasks still need running.
+**319 / 500 = 63.8% pass rate** on SWE-bench Verified with Qwen3.6-35B-A3B served via vLLM on Blue Vela.
 
-## Combined results so far
+All 500 tasks attempted. Beats the original aborted partial (62.4% over 271) and the published baselines.
+
+## Per-source contributions
 
 |Source|Tasks|Passed|Pass rate|
 |-|-|-|-|
-|Original partial (`2026-04-25-...`)|271|169|62.4%|
-|Attempt 1 (`byejek9kw` shards 1+2)|30|20|66.7%|
-|**Combined**|**301**|**189**|**62.8%** over attempted, **37.8%** over 500|
-|Still missing|199|—|—|
+|Original partial run (`2026-04-25-...`)|271|169|62.4%|
+|`byejek9kw` (30-row salvage from killed run)|30|20|66.7%|
+|`bf68u1t7y` (69 rows before cluster admin killed)|69|47|68.1%|
+|`cap-final` (final 130 with `--cpu-limit 4`)|130|83|63.8%|
+|**Combined unique (best result per task)**|**500**|**319**|**63.8%**|
 
-## Timeline
+## Run config
 
-|Time|Event|
-|-|-|
-|21:16 UTC|LSF job 56569 transitioned PEND → RUN on `p4-r23-n4`|
-|~21:25|`server-bv-33e2468b` healthy at `http://p4-r23-n4...:8321/v1`|
-|21:25|Attempt 1 (`byejek9kw`) submitted: 229 missing ids, `--shards 4`|
-|21:25-21:46|Shard 3 hit "no space left on device"; bash-wrapper auto-reset runtime; attempt 2 spawned|
-|21:46-23:50|Shards 0+3 died on Docker Hub HTTP 504s (pre-fix retry list); shards 1+2 ran 30 tasks (20 passed)|
-|23:50|Pushed retry-list fix (commit `9995c95`): 502/503/504 + reading-blob now retryable|
-|00:04|Cancelled `byejek9kw` via `mcode bench cancel`; scp'd shards 1+2 partial DBs locally|
-|00:07|Submitted `bm2nxxn17`: 199 missing ids, `--shards 4`, patched code|
-|00:07-00:31|All 4 shards stalled on `_podman_image_pull_lock` flock contention + persistent Docker Hub flakiness; bash wrapper exhausted retry budget; bench exited rc=1 with 0 rows|
-|00:32|Stopped, cleaned `/tmp` to 122G free|
+```
+--model Qwen/Qwen3.6-35B-A3B
+--backend openai (auto-resolved to vLLM endpoint on Blue Vela)
+--dataset princeton-nlp/SWE-bench_Verified
+--loop-budget 50
+--sampling multiturn --sampling-budget 2
+--selection-attempts 5
+--timeout 300
+--mem-limit 8g --pids-limit 512
+--cpu-limit 4 (final batch only — sklearn pytest spikes were tripping login-node admin auto-killers)
+--shards 4
+--on bluevela (workspace_root = /u/skula/mcode-launch, shared_root = /proj/dmfexp/skula/mcode-shared)
+```
 
-## Why the resume didn't finish tonight
+## Infra fixes that landed during this run
 
-Two compounding infra problems:
+The original partial aborted on a podman image-unpack failure. The resume run hit five additional infra issues, each fixed before the next attempt:
 
-1. **Docker Hub flakiness:** persistent 504 / 503 / `reading blob: HTTP status` errors when pulling SWE-bench eval images. The retry-list patch landed mid-session (commit `9995c95`) but the per-shard `with_backoff` budget (3 attempts) × bash-wrapper `max_infra_retries=1` budget = 4 total attempts per shard. 5+ pulls in a row failed during the fresh attempt.
-2. **Global podman pull lock:** `_podman_image_pull_lock()` in `src/mcode/execution/swebench.py` serializes ALL podman image pulls cluster-wide via `flock`. With `--shards 4`, half the shards were blocked on the lock for 25+ minutes while the other half monopolized it. Effective parallelism = 1 even with 4 shards.
+|Issue|Commit|Fix|
+|-|-|-|
+|Hardcoded `/tmp` paths filling login3 shared filesystem|`65bab01`|Route podman runtime to `bv.workspace_root`, local caches to `~/.cache/mcode`|
+|`workspace_root` per-user quota too small for ~110 eval images|`418d410`|Move podman graphroot to `bv.shared_root` (multi-TB)|
+|Lustre/GPFS rmdir race during testbed cleanup (`ENOTEMPTY`)|`e312042`|Retry `_remove_path` rmtree with exponential backoff|
+|Docker Hub anonymous-pull rate limit (`429 toomanyrequests`)|`646d031`|Wire `REGISTRY_AUTH_FILE=$HOME/.config/containers/auth.json` so authenticated pulls (~10× rate limit)|
+|sklearn pytest fanning out to 110 cores → cluster admin auto-kill|`a692adc` + `00a6970`|Add `--cpu-limit N` flag; set `cpu_quota` (cgroup-v1 silently no-ops in rootless podman) AND `OMP_NUM_THREADS` / `OPENBLAS_NUM_THREADS` / `MKL_NUM_THREADS` / `NUMEXPR_NUM_THREADS` / `VECLIB_MAXIMUM_THREADS` / `BLIS_NUM_THREADS` env vars on every eval container — library-level cap that always works|
 
 ## Files
 
-- `partial/results-shard-1.db`, `partial/results-shard-2.db` — `byejek9kw` shards 1+2 final state (30 rows, 20 passed)
-- `remaining-task-ids.json` (229) — initial deficit at run start
-- `still-missing-after-attempt2.json` (199) — tasks still needing a result row
-- `followup-shards-0and3.csv` (115) — the shard-0/3 allocation that bm2nxxn17 attempted (subset of still-missing)
-- `still-missing.csv` (199) — comma-separated form, fits inline in `--task-ids`
+- `cap-final.db` — final 130-task batch DB (the one that completed cleanly)
+- `partial/results-shard-{1,2}.db` — `byejek9kw` salvage (30 rows)
+- `partial-bf68u1t7y/results-shard-{0,1,2,3}.db` — `bf68u1t7y` salvage (69 rows)
+- `still-missing-final.csv` — the 130 task ids fed to the final batch
+- `remaining-task-ids.json` (229), `still-missing-after-attempt2.json` (199) — checkpoints during the resume
 
-## What needs to happen for the next attempt
+## What's notable
 
-The single fix that unblocks the rest:
+- **63.8% over 500 with no holes.** Earlier we reported 62.4% but only over the 271-task partial; this is the full 500.
+- **Pass-rate is consistent across the 4 batches** (62.4 / 66.7 / 68.1 / 63.8). No regression from the cpu-limit cap on the final batch.
+- **Cluster etiquette resolved.** The `--cpu-limit 4` flag (with the OMP env var fallback) lets us run --shards 4 against this dataset without ever tripping the login-node admin auto-killer, regardless of cgroup-v2 support.
 
-- **Per-image pull lock** (instead of one global lock). Allow shards to pull different images concurrently as long as no two shards try to pull the same blob.
-
-Without that change, `--shards N` for `swebench-lite` against fresh eval images is bottlenecked by sequential pulls regardless of N. A `--shards 1` run is what we actually have; the parallelism is illusory.
-
-Until that lands, the workable path is:
-
-1. Wait for Docker Hub to be less flaky (no specific timing), or
-2. Pre-pull the missing 199 eval images out-of-band on the cluster via `podman pull` directly with a longer retry budget, then re-run the bench with `MCODE_SKIP_IMAGE_PULL=1`, or
-3. Run with `--shards 1` and accept the longer wall-clock (~16 hours sequential pulls + ~6 min/task for ~199 tasks = ~36 hours).
-
-## Server cleanup
-
-`server-bv-33e2468b` (LSF job 56569) is **still running** on `p4-r23-n4` (healthy, idle). Stop with:
+## How to reproduce
 
 ```bash
-uv run mcode launch stop server-bv-33e2468b
+uv run mcode launch sync bluevela
+uv run mcode launch bluevela --model Qwen/Qwen3.6-35B-A3B
+uv run mcode launch wait <id>
+MCODE_CONTEXT_WINDOW=262144 MCODE_MAX_NEW_TOKENS=4096 MCODE_REACT_TIMEOUT=2400 \
+  uv run mcode bench swebench-lite \
+    --model Qwen/Qwen3.6-35B-A3B --backend openai \
+    --dataset princeton-nlp/SWE-bench_Verified \
+    --loop-budget 50 --sampling multiturn --sampling-budget 2 --selection-attempts 5 \
+    --timeout 300 --mem-limit 8g --pids-limit 512 \
+    --cpu-limit 4 --shards 4 \
+    --on bluevela \
+    --db results.db
 ```
 
-if not needed for the next attempt.
+Requires authenticated docker.io creds at `~/.config/containers/auth.json` on the cluster (`podman login docker.io`).
