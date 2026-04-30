@@ -5,9 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -26,6 +28,7 @@ _FORWARDED_ENV_VARS = (
     "MCODE_MAX_NEW_TOKENS",
     "MCODE_REACT_TIMEOUT",
 )
+
 
 def _remote_run_key(
     *,
@@ -46,7 +49,18 @@ def _remote_run_key(
     safe_model = model.replace("/", "-")[:24]
     return f"bench-{digest}-{safe_model}"
 
+
 _SHARDED_INFRA_EXIT_CODE = 86
+
+
+_LSF_JOB_ID_RE = re.compile(r"Job\s*<(\d+)>")
+
+
+def _parse_lsf_job_id(text: str) -> str:
+    match = _LSF_JOB_ID_RE.search(text)
+    if not match:
+        raise RemoteBenchError(f"could not parse LSF job id from bsub output: {text.strip()[:200]}")
+    return match.group(1)
 
 
 def _resolve_endpoint(model: str, *, cfg: launch_config.LaunchConfig) -> str:
@@ -151,7 +165,7 @@ def run_bench_on_bluevela(
     local_db: Path,
     fetch_db: bool = True,
 ) -> int:
-    """Run `uv run mcode bench <bench_argv>` on Blue Vela login3.
+    """Submit `uv run mcode bench <bench_argv>` to a Blue Vela compute node.
 
     `bench_argv` is the full list after `mcode bench` (e.g. `["smoke",
     "--model", "X", "--db", "<remote>", ...]`). The caller is responsible for
@@ -167,9 +181,7 @@ def run_bench_on_bluevela(
     api_key = os.environ.get("OPENAI_API_KEY", "dummy")
 
     ssh = SshClient(bv.login)
-    forwarded_env = {
-        name: value for name in _FORWARDED_ENV_VARS if (value := os.environ.get(name))
-    }
+    forwarded_env = {name: value for name in _FORWARDED_ENV_VARS if (value := os.environ.get(name))}
     run_id = _remote_run_key(
         model=model,
         local_db=local_db,
@@ -211,6 +223,10 @@ def run_bench_on_bluevela(
     svc_log = f"{remote_dir}/podman-svc.log"
     remote_script = f"""
 set -euo pipefail
+if [ -z "${{LSB_JOBID:-}}" ]; then
+  echo "refusing to start podman outside an LSF compute job" >&2
+  exit 98
+fi
 cd {shlex.quote(bv.workspace_root)}
 [ -f {shlex.quote(hf_env)} ] && source {shlex.quote(hf_env)}
 export XDG_RUNTIME_DIR={shlex.quote(runtime_dir)}
@@ -306,11 +322,12 @@ done
 echo "$rc" > {shlex.quote(exit_sentinel)}
 exit $rc
 """.strip()
+    remote_script_path = f"{remote_dir}/bench.sh"
 
     # Open a RunRecord so `mcode bench list` / `mcode bench cancel` can find
-    # this run. PID is filled in below once the launch_cmd completes. Wrapped
-    # in try/finally so any unexpected exception (parse failure, SSH I/O,
-    # download error) closes the run rather than leaving it RUNNING forever.
+    # this run. The LSF job id is filled in after bsub accepts the script.
+    # Wrapped in try/finally so unexpected exceptions (parse failure, SSH I/O,
+    # download error) close the run instead of leaving it RUNNING forever.
     benchmark_name = bench_argv[0] if bench_argv else "unknown"
     _upsert_run(
         run_id=run_id,
@@ -330,42 +347,47 @@ exit $rc
     cancel_reason: str | None = None
     exit_code = 1
     try:
-        # Use a detached run + streaming tail so we can show progress without
-        # holding a single multi-hour ssh session.
-        launch_cmd = (
-            # `setsid` makes the bash process a new session leader so its
-            # child processes inherit the same group. Wave 4 `mcode bench
-            # cancel` then uses `kill -TERM -<pid>` to terminate the whole
-            # tree. Without setsid the captured PID is not a process-group
-            # leader and the negative-pid kill targets the wrong group.
-            f"nohup setsid bash -lc {shlex.quote(remote_script)}"
-            f" > {shlex.quote(remote_log)} 2>&1 & echo $!"
+        with tempfile.TemporaryDirectory() as tmp_dir_local:
+            local_script = Path(tmp_dir_local) / "bench.sh"
+            local_script.write_text(remote_script + "\n", encoding="utf-8")
+            ssh.upload(local_script, remote_script_path, timeout=60)
+
+        queue = bv.queue_order[0]
+        submit_cmd = (
+            f"bsub -G {shlex.quote(bv.group)} -q {shlex.quote(queue)} "
+            f"-J {shlex.quote(f'mcode-bench-{run_id[:40]}')} "
+            f"-n 8 -R {shlex.quote('span[hosts=1]')} "
+            f"-R {shlex.quote('rusage[mem=16000]')} "
+            f"-o {shlex.quote(remote_log)} -e {shlex.quote(remote_log)} "
+            f"bash {shlex.quote(remote_script_path)}"
         )
-        r = ssh.run(launch_cmd, timeout=30)
+        r = ssh.run(submit_cmd, timeout=60)
         if not r.ok:
-            raise RemoteBenchError(f"failed to launch remote bench: {r.stderr.strip()}")
-        pid = r.stdout.strip().splitlines()[-1]
+            detail = (r.stderr or r.stdout).strip()
+            raise RemoteBenchError(f"failed to submit remote bench: {detail}")
+        job_id = _parse_lsf_job_id(r.stdout + r.stderr)
         _upsert_run(
             run_id=run_id,
             remote={
                 "login": bv.login,
                 "run_dir": remote_dir,
-                "pid": pid,
+                "job_id": job_id,
+                "queue": queue,
                 "remote_db": remote_db,
                 "remote_log": remote_log,
                 "exit_sentinel": exit_sentinel,
             },
             log_paths=[remote_log],
         )
-        print(f"▶ remote bench started: pid={pid} host={bv.login} log={remote_log}")
+        print(f"▶ remote bench submitted: job={job_id} queue={queue} log={remote_log}")
 
         try:
-            _stream_remote_log(ssh, remote_log, pid=pid)
+            _stream_remote_log(ssh, remote_log, job_id=job_id)
         except KeyboardInterrupt:
             final_status = launch_state.RunStatus.STOPPED
             cancel_reason = "interrupt"
-            print("\n⚠ interrupted; remote job still running. Check with:")
-            print(f"  ssh {bv.login} 'tail -f {remote_log}'")
+            print("\n⚠ interrupted; remote LSF job is still running. Check with:")
+            print(f"  ssh {bv.login} 'bjobs {job_id}; tail -f {remote_log}'")
             return 130
         except Exception as exc:
             print(f"⚠ log streaming failed: {exc}; checking remote sentinel and DB")
@@ -401,10 +423,7 @@ exit $rc
                     ssh.download(remote_db, local_db, timeout=120)
                     print(f"✓ fetched DB: {local_db} ({size} bytes)")
                 except Exception as exc:
-                    print(
-                        f"⚠ remote DB exists but download failed: {exc}; "
-                        f"remote_db={remote_db}"
-                    )
+                    print(f"⚠ remote DB exists but download failed: {exc}; remote_db={remote_db}")
                     exit_code = exit_code or 99
             else:
                 print("⚠ remote DB is empty; nothing to fetch")
@@ -476,23 +495,20 @@ def _upsert_run(
     launch_state.update(None, _mutator)
 
 
-def _stream_remote_log(ssh: SshClient, remote_log: str, *, pid: str) -> None:
-    """Tail `remote_log` until the remote pid is gone.
-
-    Uses a single nested ssh session: `tail -F` in the background plus a
-    `kill -0` poll loop so the session self-terminates when the remote bench
-    exits. A non-zero SSH exit is treated as transport failure — callers need
-    to verify the exit sentinel afterward, but we surface the drop visibly.
-    """
+def _stream_remote_log(ssh: SshClient, remote_log: str, *, job_id: str) -> None:
+    """Tail `remote_log` until the LSF job leaves an active state."""
     from mcode.launch.ssh import DEFAULT_SSH_OPTIONS
 
+    job_q = shlex.quote(job_id)
     argv = [
         "ssh",
         *DEFAULT_SSH_OPTIONS,
         ssh.login,
         f"tail -F -n +1 {shlex.quote(remote_log)} & TPID=$!; "
-        f"while kill -0 {shlex.quote(pid)} 2>/dev/null; do sleep 5; done; "
-        "sleep 2; kill $TPID 2>/dev/null || true",
+        "while true; do "
+        f"STAT=$(bjobs -noheader -o stat {job_q} 2>/dev/null | tr -d '[:space:]' || true); "
+        'case "$STAT" in PEND|RUN|PSUSP|USUSP|SSUSP) sleep 5 ;; *) break ;; esac; '
+        "done; sleep 2; kill $TPID 2>/dev/null || true",
     ]
     proc = subprocess.Popen(argv, stdout=sys.stdout, stderr=sys.stderr)
     rc = proc.wait()

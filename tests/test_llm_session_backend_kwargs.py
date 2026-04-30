@@ -110,7 +110,6 @@ def test_strategy_for_requirements_skips_sampling_when_disabled():
     assert strategy is None
 
 
-
 def test_start_session_uses_chat_context(monkeypatch):
     import mellea
 

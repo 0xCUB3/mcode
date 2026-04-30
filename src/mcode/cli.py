@@ -1771,7 +1771,6 @@ def _shard_db_has_rows(shard_db: Path) -> bool:
     return bool(row and int(row[0]) > 0)
 
 
-
 def _stop_running_shards(
     procs: list[tuple[int, subprocess.Popen[str], Path, Path, threading.Thread]],
 ) -> None:
@@ -1867,6 +1866,7 @@ def _run_sharded_benchmark(
                     f"▶ sharded run command={command} shards={shards} out={db} artifacts={run_dir}"
                 ),
             )
+
             def launch_shard(shard_index: int) -> None:
                 shard_db = run_dir / f"{db.stem}-shard-{shard_index}.db"
                 shard_log = run_dir / f"{db.stem}-shard-{shard_index}.log"

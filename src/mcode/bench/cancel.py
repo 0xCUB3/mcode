@@ -4,7 +4,8 @@ Cancel design (per Wave 4 of the plan): three-way dispatch on the RunRecord
 shape.
 
   if shard_pids   → local sharded run; SIGTERM/SIGKILL each pid
-  elif remote     → Blue Vela run; ssh kill -TERM/-KILL the captured pid
+  elif remote.job_id → Blue Vela run; bkill the LSF job
+  elif remote.pid → legacy Blue Vela run; ssh kill -TERM/-KILL the captured pid
   else            → in-process single run; not cancellable from another shell
 
 State transitions to RunStatus.STOPPED with metadata.cancel_reason="user" so
@@ -149,24 +150,19 @@ def _cancel_local(run: RunRecord) -> int:
 
 
 def _cancel_remote(run: RunRecord) -> int:
-    """SSH and `kill -TERM -<pid>` then `-KILL` the remote process group.
-
-    Best-effort: orphaned podman containers are possible if the kill misses
-    subprocesses. The remote PID is a process-group leader because Wave 1
-    added `setsid` to bench/remote.py:run_bench_on_bluevela.
-
-    Verifies the kill landed by polling `kill -0 <pid>` after the SIGKILL.
-    Refuses to mark the record `stopped` if the remote process is still
-    alive — leaving the job visible for retry rather than silently leaking.
-    """
+    """Cancel a Blue Vela run by LSF job id, or legacy process group pid."""
     from mcode.launch.ssh import SshClient
 
     login = run.remote.get("login", "")
+    job_id = run.remote.get("job_id", "")
+    if login and job_id:
+        return _cancel_remote_lsf(run, login=str(login), job_id=str(job_id))
+
     pid = run.remote.get("pid", "")
     if not login or not pid:
         raise MCodeError(
             what=f"run {run.id} has incomplete remote metadata",
-            why=f"remote={run.remote!r}; expected login + pid",
+            why=f"remote={run.remote!r}; expected login + job_id or login + pid",
             next="run already terminated, or state file was hand-edited",
         )
     pid_str = shlex.quote(str(pid))
@@ -186,9 +182,6 @@ def _cancel_remote(run: RunRecord) -> int:
     except Exception as e:
         ssh_errors.append(f"KILL: {e}")
 
-    # Verify the process is actually gone before declaring success. `kill -0`
-    # returns 0 if the pid still exists. The leading `!` flips so exit 0
-    # means dead, exit 1 means still alive.
     alive = True
     try:
         check = ssh.run(f"! kill -0 {pid_str} 2>/dev/null", timeout=10)
@@ -214,6 +207,49 @@ def _cancel_remote(run: RunRecord) -> int:
         f"  note: orphaned podman containers possible; verify with "
         f"`ssh {login} 'pgrep -af mcode|podman'`"
     )
+    return 0
+
+
+def _cancel_remote_lsf(run: RunRecord, *, login: str, job_id: str) -> int:
+    from mcode.launch.ssh import SshClient
+
+    job_id_q = shlex.quote(job_id)
+    ssh = SshClient(login)
+    ssh_errors: list[str] = []
+    try:
+        r1 = ssh.run(f"bkill {job_id_q}", timeout=10)
+        if not getattr(r1, "ok", True):
+            ssh_errors.append((r1.stderr or r1.stdout or "bkill failed").strip())
+    except Exception as e:
+        ssh_errors.append(f"bkill: {e}")
+    time.sleep(min(_KILL_GRACE_S, 5.0))
+
+    active = True
+    try:
+        check = ssh.run(
+            "STAT=$(bjobs -noheader -o stat "
+            f"{job_id_q} 2>/dev/null | tr -d '[:space:]' || true); "
+            'case "$STAT" in PEND|RUN|PSUSP|USUSP|SSUSP) exit 1 ;; *) exit 0 ;; esac',
+            timeout=10,
+        )
+        active = not bool(getattr(check, "ok", True))
+    except Exception as e:
+        ssh_errors.append(f"verify: {e}")
+
+    if active:
+        raise MCodeError(
+            what=f"failed to bkill remote run {run.id} (job {job_id} on {login} still active)",
+            why="; ".join(ssh_errors) or "bkill verification failed",
+            next=(
+                f"check VPN/SSH; manually `ssh {login} bkill {job_id}`; "
+                f"only then retry `mcode bench cancel {run.id}`"
+            ),
+        )
+
+    _mark_cancelled(run.id)
+    print(f"✓ cancelled {run.id} (LSF job {job_id} on {login})")
+    if ssh_errors:
+        print(f"  note: SSH had transient errors during cancel: {'; '.join(ssh_errors)}")
     return 0
 
 

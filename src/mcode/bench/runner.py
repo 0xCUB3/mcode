@@ -109,9 +109,7 @@ class BenchmarkRunner:
             return _RunResume(run_id=run_id, existing_rows={}, retry_task_ids=set())
         existing_rows = self.results_db.task_terminal_rows(run_id)
         retry_task_ids = {
-            task_id
-            for task_id, row in existing_rows.items()
-            if _is_retryable_task_row(row)
+            task_id for task_id, row in existing_rows.items() if _is_retryable_task_row(row)
         }
         return _RunResume(
             run_id=run_id,
@@ -197,9 +195,7 @@ class BenchmarkRunner:
         }
 
         resume = self._start_or_resume_run("swebench-lite", config)
-        pending_tasks = [
-            task for task in tasks if self._should_run_task(resume, task.instance_id)
-        ]
+        pending_tasks = [task for task in tasks if self._should_run_task(resume, task.instance_id)]
         if not pending_tasks:
             return self.results_db.run_summary(resume.run_id)
 
@@ -266,9 +262,7 @@ class BenchmarkRunner:
         }
 
         resume = self._start_or_resume_run("swebench-live", config)
-        pending_tasks = [
-            task for task in tasks if self._should_run_task(resume, task.instance_id)
-        ]
+        pending_tasks = [task for task in tasks if self._should_run_task(resume, task.instance_id)]
         if not pending_tasks:
             return self.results_db.run_summary(resume.run_id)
 
@@ -337,9 +331,7 @@ class BenchmarkRunner:
             "retry_loop_budget": self.config.aider_polyglot_retry_loop_budget,
         }
         resume = self._start_or_resume_run("aider-polyglot", config)
-        pending_tasks = [
-            task for task in tasks if self._should_run_task(resume, task.task_id)
-        ]
+        pending_tasks = [task for task in tasks if self._should_run_task(resume, task.task_id)]
         if not pending_tasks:
             return self.results_db.run_summary(resume.run_id)
 
@@ -714,10 +706,7 @@ def _benchmark_task_id(task: object) -> str:
 
 
 def _is_retryable_sqlite_lock(exc: BaseException) -> bool:
-    return (
-        isinstance(exc, sqlite3.OperationalError)
-        and "database is locked" in str(exc).lower()
-    )
+    return isinstance(exc, sqlite3.OperationalError) and "database is locked" in str(exc).lower()
 
 
 def _is_retryable_task_row(row: dict[str, object]) -> bool:

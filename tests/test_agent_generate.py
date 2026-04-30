@@ -528,7 +528,6 @@ def test_run_task_records_infra_failure_after_docker_retry(tmp_path):
     assert result["error"] == "DockerUnavailableError: socket timed out"
 
 
-
 def test_swebench_runner_skips_completed_tasks_without_touching_sandbox(
     tmp_path, monkeypatch
 ) -> None:
@@ -652,6 +651,7 @@ def test_swebench_runner_retries_prior_infra_failure(tmp_path, monkeypatch) -> N
         results_db=results_db,
     )
     runner.llm.check_available = lambda: None  # type: ignore[method-assign]
+
     def generate_patch(*args, **kwargs):
         del args, kwargs
         sandbox_calls["generate"] += 1

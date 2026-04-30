@@ -214,6 +214,7 @@ class SolveTracePlugin(Plugin, name="mcode-solve-trace", priority=20):
 # per-turn requirements, async tool dispatch, final-answer gating, timeout labels,
 # and trace callbacks needed by result DB/report metrics.
 
+
 async def run_react_loop(
     session,
     *,
@@ -238,7 +239,6 @@ async def run_react_loop(
         ReactThought,
     )
     from mellea.stdlib.context import ChatContext
-
 
     async def _run() -> tuple[object | None, str]:
         context = getattr(session, "ctx", None)
@@ -733,8 +733,6 @@ def _requires_strict_tool_ordering(model_id: object | None) -> bool:
     return "minimax" in lowered or "mistral" in lowered
 
 
-
-
 def _missing_required_args(tool_call) -> list[str]:
     tool = getattr(tool_call, "func", None)
     schema = getattr(tool, "as_json_tool", None)
@@ -753,9 +751,7 @@ def _missing_required_args(tool_call) -> list[str]:
     if not isinstance(args, dict):
         args = {}
     callable_defaults = _callable_default_param_names(tool)
-    return [
-        name for name in required if name not in args and name not in callable_defaults
-    ]
+    return [name for name in required if name not in args and name not in callable_defaults]
 
 
 def _callable_default_param_names(tool: object) -> set[str]:

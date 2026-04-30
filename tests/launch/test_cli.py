@@ -120,7 +120,6 @@ def test_error_formatting_prints_what_why_next(
     assert "logs:" in err and "/tmp/fake.log" in err
 
 
-
 def test_refresh_formats_state_update_failure(
     runner: CliRunner, isolated_state: Path, monkeypatch
 ) -> None:
@@ -136,6 +135,7 @@ def test_refresh_formats_state_update_failure(
     output = _all_output(result)
     assert "could not refresh launch state" in output
     assert "state lock failed" in output
+
 
 def test_mcode_debug_env_raises_traceback(runner: CliRunner, monkeypatch) -> None:
     monkeypatch.setenv("MCODE_DEBUG", "1")

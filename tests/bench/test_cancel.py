@@ -146,3 +146,33 @@ def test_cancel_remote_calls_ssh_kill(isolated_state: Path, monkeypatch) -> None
     assert rc == 0
     assert any("kill -TERM -4242" in c for c in calls)
     assert any("kill -KILL -4242" in c for c in calls)
+
+
+def test_cancel_remote_lsf_calls_bkill(isolated_state: Path, monkeypatch) -> None:
+    calls: list[str] = []
+
+    class _FakeSsh:
+        def __init__(self, login: str) -> None:
+            self.login = login
+
+        def run(self, cmd: str, *, timeout: float = 30.0):
+            calls.append(cmd)
+            return type("_R", (), {"ok": True, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr("mcode.launch.ssh.SshClient", _FakeSsh)
+    monkeypatch.setattr("mcode.bench.cancel.time.sleep", lambda s: None)
+    _put(
+        RunRecord(
+            id="r1",
+            target=Target.BLUEVELA,
+            benchmark="smoke",
+            status=RunStatus.RUNNING,
+            remote={"login": "skula@bv", "job_id": "871884", "run_dir": "/u/skula/x"},
+        )
+    )
+
+    rc = cancel_mod.cancel_run("r1")
+
+    assert rc == 0
+    assert any(c == "bkill 871884" for c in calls)
+    assert any("bjobs -noheader -o stat 871884" in c for c in calls)

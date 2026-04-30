@@ -169,7 +169,6 @@ def _write_shard_result(
         )
 
 
-
 class _PartialFakePopen:
     def __init__(self, argv, **kwargs) -> None:
         del kwargs
@@ -198,9 +197,7 @@ class _PartialFakePopen:
         self.returncode = 130
 
 
-def test_run_sharded_benchmark_merges_nonzero_shard_with_rows(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_run_sharded_benchmark_merges_nonzero_shard_with_rows(tmp_path: Path, monkeypatch) -> None:
     out_db = tmp_path / "results.db"
     monkeypatch.setattr("mcode.cli.subprocess.Popen", _PartialFakePopen)
 

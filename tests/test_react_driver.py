@@ -273,9 +273,7 @@ def test_run_react_loop_uses_finalizer_content_when_other_tools_returned(monkeyp
 
     session = SimpleNamespace(ctx=ChatContext(), backend=object())
     monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
-    monkeypatch.setattr(
-        "mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools
-    )
+    monkeypatch.setattr("mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools)
 
     submission, terminal_reason = asyncio.run(
         run_react_loop(
@@ -296,7 +294,6 @@ def test_run_react_loop_uses_finalizer_content_when_other_tools_returned(monkeyp
 
     assert terminal_reason == "submitted"
     assert submission == "done"
-
 
 
 def test_run_react_loop_retries_missing_required_args(monkeypatch):
@@ -342,9 +339,7 @@ def test_run_react_loop_retries_missing_required_args(monkeypatch):
 
     session = SimpleNamespace(ctx=ChatContext(), backend=object())
     monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
-    monkeypatch.setattr(
-        "mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools
-    )
+    monkeypatch.setattr("mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools)
 
     submission, terminal_reason = asyncio.run(
         run_react_loop(
@@ -412,9 +407,7 @@ def test_run_react_loop_executes_valid_calls_when_batch_has_malformed_finalizer(
 
     session = SimpleNamespace(ctx=ChatContext(), backend=object())
     monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
-    monkeypatch.setattr(
-        "mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools
-    )
+    monkeypatch.setattr("mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools)
 
     submission, terminal_reason = asyncio.run(
         run_react_loop(
@@ -500,9 +493,7 @@ def test_run_react_loop_blocks_final_answer_until_verification_succeeds(monkeypa
 
     session = SimpleNamespace(ctx=ChatContext(), backend=object())
     monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
-    monkeypatch.setattr(
-        "mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools
-    )
+    monkeypatch.setattr("mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools)
 
     submission, terminal_reason = asyncio.run(
         run_react_loop(
@@ -568,9 +559,7 @@ def test_run_react_loop_reminds_to_verify_after_edit(monkeypatch):
 
     session = SimpleNamespace(ctx=ChatContext(), backend=object())
     monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
-    monkeypatch.setattr(
-        "mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools
-    )
+    monkeypatch.setattr("mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools)
 
     submission, terminal_reason = asyncio.run(
         run_react_loop(
@@ -632,9 +621,7 @@ def test_run_react_loop_autofills_verified_finalizer(monkeypatch):
     collector = SolveTraceCollector()
     collector.verification_succeeded = True
     monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
-    monkeypatch.setattr(
-        "mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools
-    )
+    monkeypatch.setattr("mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools)
 
     submission, terminal_reason = asyncio.run(
         run_react_loop(
@@ -656,7 +643,6 @@ def test_run_react_loop_autofills_verified_finalizer(monkeypatch):
     assert captured["args"] == {"answer": "Verified patch ready."}
     assert submission == "done"
     assert terminal_reason == "submitted"
-
 
 
 def test_run_react_loop_times_out_as_budget_exhausted():
@@ -772,9 +758,7 @@ def test_run_react_loop_inserts_assistant_bridge_for_strict_models(monkeypatch):
         backend=SimpleNamespace(model_id="MiniMaxAI/MiniMax-M2.5"),
     )
     monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
-    monkeypatch.setattr(
-        "mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools
-    )
+    monkeypatch.setattr("mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools)
 
     submission, terminal_reason = asyncio.run(
         run_react_loop(

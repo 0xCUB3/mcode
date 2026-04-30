@@ -180,10 +180,13 @@ def test_resume_helpers_find_latest_exact_config_and_task_rows(tmp_path: Path) -
 
         assert rdb.find_latest_run_by_config("swebench-lite", config) == second_run
         assert rdb.find_latest_run_by_config("swebench-live", config) == other_run
-        assert rdb.find_latest_run_by_config(
-            "swebench-lite",
-            {**config, "timeout_s": 120},
-        ) is None
+        assert (
+            rdb.find_latest_run_by_config(
+                "swebench-lite",
+                {**config, "timeout_s": 120},
+            )
+            is None
+        )
 
         rows = rdb.task_terminal_rows(second_run)
         assert rows["task-ok"]["passed"] is True

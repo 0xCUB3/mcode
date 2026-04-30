@@ -343,7 +343,6 @@ def test_sandbox_cpu_limit_zero_or_negative_treated_as_unlimited():
     assert s._cpu_kwargs() == {}
 
 
-
 def test_docker_sandbox_timeout_ignores_cleanup_and_log_failures() -> None:
     class FakeImages:
         def get(self, image):

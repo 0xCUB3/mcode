@@ -207,8 +207,6 @@ def test_build_agent_shell_command_activates_testbed_and_rewrites_repo_root():
     assert "/tmp/mcode-testbed-123/testbed" not in wrapped
 
 
-
-
 def test_exec_in_container_raises_docker_unavailable() -> None:
     class BrokenContainer:
         def exec_run(self, *args, **kwargs):
