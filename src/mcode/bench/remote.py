@@ -180,15 +180,12 @@ def run_bench_on_bluevela(
     remote_db = f"{remote_dir}/results.db"
     remote_log = f"{remote_dir}/bench.log"
     exit_sentinel = f"{remote_dir}/exit_code"
-    # Podman storage goes under shared_root (NOT /tmp, NOT workspace_root).
-    # /tmp on login3 is small + shared (150G); workspace_root is under the
-    # per-user quota on /u/skula and 100+ swebench eval images at ~7GB each
-    # blow it. shared_root is on /proj/dmfexp which has multi-TB free.
-    # TMPDIR is split out to workspace_root because /proj/dmfexp is a
-    # distributed FS (Lustre/GPFS) where rmdir of just-written paths races
-    # with metadata sync — kills `mcode-testbed-*` cleanup with ENOTEMPTY.
+    # Podman storage and temporary testbeds go under shared_root on /proj.
+    # /tmp on login3 is small + shared, and workspace_root may be under a
+    # per-user quota on /u/skula depending on local config. The shared /proj
+    # filesystem is the only place large image pulls and benchmark repos fit.
     runtime_dir = f"{bv.shared_root}/podman-runtime/{run_id}"
-    tmp_dir = f"{bv.workspace_root}/podman-tmp/{run_id}"
+    tmp_dir = f"{bv.shared_root}/podman-tmp/{run_id}"
     forwarded_exports = "".join(
         f"export {name}={shlex.quote(value)}\n" for name, value in forwarded_env.items()
     )
