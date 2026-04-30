@@ -198,6 +198,10 @@ def _rsync(*, src: Path, dest: str, dry_run: bool) -> int:
         "--exclude=.pytest_cache/",
         "--exclude=.ruff_cache/",
         "--exclude=node_modules/",
+        "--exclude=.uv-cache/",
+        "--exclude=.bluevela-reruns/",
+        "--exclude=research/",
+        "--exclude=experiments/",
         # Remote-only dirs the launcher writes; sync must never wipe these.
         "--exclude=bench-runs/",
         "--exclude=runs/",

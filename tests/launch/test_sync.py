@@ -93,6 +93,10 @@ def test_sync_invokes_rsync_to_correct_destination(
     assert "-az" in argv and "--delete" in argv
     assert any(a.startswith("--exclude=.git/") for a in argv)
     assert any(a.startswith("--exclude=benchmarks/") for a in argv)
+    assert any(a.startswith("--exclude=.uv-cache/") for a in argv)
+    assert any(a.startswith("--exclude=.bluevela-reruns/") for a in argv)
+    assert any(a.startswith("--exclude=research/") for a in argv)
+    assert any(a.startswith("--exclude=experiments/") for a in argv)
     assert any(a.startswith("--exclude=podman-tmp/") for a in argv)
     assert f"{str(src)}/" in argv
     assert "alice@host:/u/alice/mcode/" in argv
