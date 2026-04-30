@@ -152,8 +152,8 @@ _FAILURE_CATALOG: list[tuple[re.Pattern, list[str]]] = [
     (
         re.compile(r"HF_TOKEN|401 Client Error", re.I),
         [
-            "HF token missing or invalid; populate <$HOME>/.config/mcode/hf-env.sh "
-            "with `export HF_TOKEN=...` and accept the model's HF gate if any",
+            "HF token missing or invalid; populate [bluevela].hf_env with `export HF_TOKEN=...` "
+            "and accept the model's HF gate if any",
         ],
     ),
 ]
@@ -1002,16 +1002,16 @@ def doctor_init(
     ssh_client: SshClient | None = None,
 ) -> Path:
     """Probe a Blue Vela account and write a launch.toml seeded with real
-    values (user's home, groups, open queues). Caller supplies the login
+    values (group membership and open queues). Caller supplies the login
     string since we can't invent a hostname.
 
     Per M7: strict SSH preflight — a 5s connect test runs first. If it fails,
     the function raises LaunchError with actionable next-steps and does NOT
     attempt probes against a broken connection.
 
-    Per the portability requirement: never writes the developer's username
-    into a shared file. The only user-specific values it records are the ones
-    the caller's own account actually reports.
+    All launcher-owned paths live under `/proj/dmfexp/<user>`. We derive that
+    from the login user instead of probing `$HOME`, so `doctor --init` cannot
+    silently drift back to home-directory storage.
     """
     if "@" not in login:
         raise LaunchError(
@@ -1019,6 +1019,8 @@ def doctor_init(
             why="doctor --init needs to know who and where",
             next="pass --login user@login-host.example",
         )
+    user = login.split("@", 1)[0]
+    _require_safe("bluevela user", user, _SAFE_IDENT_RE)
     ssh = ssh_client or SshClient(login)
 
     # --- preflight: 5s connect test ---------------------------------------
@@ -1050,20 +1052,12 @@ def doctor_init(
                 next=_hint_for(str(e)),
             ) from e
 
-    # --- home + user ------------------------------------------------------
-    home = _probe("echo $HOME", timeout=10).stdout.strip() or "$HOME"
-    if not _SAFE_POSIX_PATH_RE.match(home):
-        raise LaunchError(
-            what=f"unexpected $HOME value: {home!r}",
-            why="doctor --init needs a POSIX path we can safely write into TOML",
-            next="set [bluevela].workspace_root and shared_root manually",
-        )
-
+    # --- user --------------------------------------------------------------
+    proj_root = f"/proj/dmfexp/{user}"
     # --- groups -----------------------------------------------------------
     # bugroup (no args) lists ALL groups + members. Pass the SSH user so
     # _parse_bugroup filters to just this account's groups — without it,
     # catch-all groups like `lsfadmins` win the first-row lottery.
-    user = login.split("@", 1)[0]
     bg = _probe("bugroup 2>/dev/null || true")
     groups = _parse_bugroup(bg.stdout, user=user)
     group = groups[0] if groups else ""
@@ -1130,18 +1124,14 @@ def doctor_init(
         )
 
     # --- compose config ---------------------------------------------------
-    # Note on shared_root: an earlier iteration auto-preferred
-    # `/proj/dmfexp/<user>` to escape home-quota failures from per-host
-    # podman graphroots. The bluevela_vllm.sh script now uses per-job
-    # graphroots in /tmp instead, so shared_root only carries small
-    # artifacts (run dirs, templates, log files) — home is fine for that.
-    # Users who want HF cache on a quota-free filesystem can set HF_HOME
-    # in their hf-env.sh, independent of shared_root.
+    # All launcher-owned Blue Vela paths live under /proj/dmfexp/<user> so the
+    # bench path, server path, caches, logs, and Podman runtime all stay off
+    # the login-node home directory and off /tmp.
     cfg = config_mod.LaunchConfig()
     cfg.bluevela.login = login
-    cfg.bluevela.workspace_root = f"{home}/mcode-launch"
-    cfg.bluevela.shared_root = f"{home}/mcode-shared"
-    cfg.bluevela.hf_env = f"{home}/.config/mcode/hf-env.sh"
+    cfg.bluevela.workspace_root = f"{proj_root}/mcode-launch"
+    cfg.bluevela.shared_root = f"{proj_root}/mcode-shared"
+    cfg.bluevela.hf_env = f"{proj_root}/mcode-shared/hf-env.sh"
     cfg.bluevela.group = group
     cfg.bluevela.queue_order = queue_order
     cfg.bluevela.gpu_mode = "exclusive_process"  # Phase 0.5 finding

@@ -74,8 +74,6 @@ def test_doctor_init_writes_config_with_probed_values(tmp_path: Path) -> None:
     def run(cmd: str, *, timeout: float = 60.0):
         if "mcode-doctor-init-ok" in cmd:
             return _ok(stdout="mcode-doctor-init-ok\n")
-        if cmd.startswith("echo $HOME"):
-            return _ok(stdout="/u/testuser\n")
         if "bugroup" in cmd:
             return _ok(stdout="GROUP_NAME USERS GROUP_ADMIN\ngrp_runtime testuser (admin)\n")
         if "bqueues" in cmd:
@@ -90,8 +88,9 @@ def test_doctor_init_writes_config_with_probed_values(tmp_path: Path) -> None:
     assert written == dst
     cfg = config_mod.load(dst)
     assert cfg.bluevela.login == "testuser@testhost"
-    assert cfg.bluevela.workspace_root == "/u/testuser/mcode-launch"
-    assert cfg.bluevela.shared_root == "/u/testuser/mcode-shared"
+    assert cfg.bluevela.workspace_root == "/proj/dmfexp/testuser/mcode-launch"
+    assert cfg.bluevela.shared_root == "/proj/dmfexp/testuser/mcode-shared"
+    assert cfg.bluevela.hf_env == "/proj/dmfexp/testuser/mcode-shared/hf-env.sh"
     # Filtered: lsfadmins excluded (testuser not a member), grp_runtime picked.
     assert cfg.bluevela.group == "grp_runtime"
     # Filtered: `interactive` queue dropped via ONLY_INTERACTIVE policy check.
@@ -108,8 +107,6 @@ def test_doctor_init_raises_when_no_parseable_queues(tmp_path: Path) -> None:
     def run(cmd: str, *, timeout: float = 60.0):
         if "mcode-doctor-init-ok" in cmd:
             return _ok(stdout="mcode-doctor-init-ok\n")
-        if cmd.startswith("echo $HOME"):
-            return _ok(stdout="/u/testuser\n")
         if "bugroup" in cmd:
             return _ok(stdout="")
         if "bqueues" in cmd:
@@ -124,8 +121,8 @@ def test_doctor_init_raises_when_no_parseable_queues(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "failing_cmd",
-    ["echo $HOME", "bugroup", "bqueues -u"],
-    ids=["home", "bugroup", "bqueues-u"],
+    ["bugroup", "bqueues -u"],
+    ids=["bugroup", "bqueues-u"],
 )
 def test_doctor_init_converts_transport_error_to_launch_error(
     failing_cmd: str, tmp_path: Path
@@ -142,8 +139,6 @@ def test_doctor_init_converts_transport_error_to_launch_error(
         if failing_cmd in cmd:
             raise TransportError("ssh session dropped")
         # Non-failing paths — return minimal valid output.
-        if cmd.startswith("echo $HOME"):
-            return _ok(stdout="/u/testuser\n")
         if cmd.startswith("bugroup"):
             return _ok(stdout="GROUP_NAME USERS GROUP_ADMIN\ngrp_x testuser ( - )\n")
         if "bqueues -u" in cmd:
@@ -171,8 +166,6 @@ def test_doctor_init_handles_transport_error_in_queue_probe(tmp_path: Path) -> N
     def run(cmd: str, *, timeout: float = 60.0):
         if "mcode-doctor-init-ok" in cmd:
             return _ok(stdout="mcode-doctor-init-ok\n")
-        if cmd.startswith("echo $HOME"):
-            return _ok(stdout="/u/testuser\n")
         if cmd.startswith("bugroup"):
             return _ok(stdout="GROUP_NAME USERS GROUP_ADMIN\ngrp_x testuser ( - )\n")
         if "bqueues -u" in cmd:
@@ -194,8 +187,6 @@ def test_doctor_init_raises_when_only_interactive_queues_available(tmp_path: Pat
     def run(cmd: str, *, timeout: float = 60.0):
         if "mcode-doctor-init-ok" in cmd:
             return _ok(stdout="mcode-doctor-init-ok\n")
-        if cmd.startswith("echo $HOME"):
-            return _ok(stdout="/u/testuser\n")
         if cmd.startswith("bugroup"):
             return _ok(stdout="GROUP_NAME USERS GROUP_ADMIN\ngrp_x testuser ( - )\n")
         if "bqueues -u" in cmd:
@@ -210,18 +201,12 @@ def test_doctor_init_raises_when_only_interactive_queues_available(tmp_path: Pat
     assert "batch-capable" in ei.value.what
 
 
-def test_doctor_init_shared_root_is_under_home(tmp_path: Path) -> None:
-    """shared_root lives under $HOME — the bluevela_vllm.sh script uses
-    per-job podman graphroots in /tmp, so shared_root only carries small
-    artifacts. Users who need HF_HOME on a quota-free filesystem configure
-    it via hf-env.sh separately."""
+def test_doctor_init_writes_proj_roots(tmp_path: Path) -> None:
     ssh = MagicMock()
 
     def run(cmd: str, *, timeout: float = 60.0):
         if "mcode-doctor-init-ok" in cmd:
             return _ok(stdout="mcode-doctor-init-ok\n")
-        if cmd.startswith("echo $HOME"):
-            return _ok(stdout="/u/testuser\n")
         if cmd.startswith("bugroup"):
             return _ok(stdout="GROUP_NAME USERS GROUP_ADMIN\ngrp_runtime testuser ( - )\n")
         if "bqueues -u" in cmd:
@@ -234,22 +219,13 @@ def test_doctor_init_shared_root_is_under_home(tmp_path: Path) -> None:
     dst = tmp_path / "launch.toml"
     bluevela.doctor_init(dst, login="testuser@testhost", ssh_client=ssh)
     cfg = config_mod.load(dst)
-    assert cfg.bluevela.shared_root == "/u/testuser/mcode-shared"
+    assert cfg.bluevela.workspace_root == "/proj/dmfexp/testuser/mcode-launch"
+    assert cfg.bluevela.shared_root == "/proj/dmfexp/testuser/mcode-shared"
+    assert cfg.bluevela.hf_env == "/proj/dmfexp/testuser/mcode-shared/hf-env.sh"
 
 
-def test_doctor_init_rejects_weird_home_path(tmp_path: Path) -> None:
-    """If $HOME contains characters that can't safely round-trip through TOML,
-    hard-fail instead of writing a bad config."""
+def test_doctor_init_rejects_weird_user(tmp_path: Path) -> None:
     ssh = MagicMock()
-
-    def run(cmd: str, *, timeout: float = 60.0):
-        if "mcode-doctor-init-ok" in cmd:
-            return _ok(stdout="mcode-doctor-init-ok\n")
-        if cmd.startswith("echo $HOME"):
-            return _ok(stdout="/u/alice; rm -rf /\n")  # malicious
-        return _ok()
-
-    ssh.run.side_effect = run
     with pytest.raises(LaunchError) as ei:
-        bluevela.doctor_init(tmp_path / "x.toml", login="a@h", ssh_client=ssh)
-    assert "$HOME" in ei.value.what or "unexpected" in ei.value.what.lower()
+        bluevela.doctor_init(tmp_path / "launch.toml", login="alice;rm@testhost", ssh_client=ssh)
+    assert "unsafe bluevela user" in ei.value.what.lower()

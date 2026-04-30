@@ -37,27 +37,16 @@ mkdir -p "$RUN_DIR"
 hostname > "$RUN_DIR/vllm_host.txt"
 HOST_TAG="$(hostname -s)"
 
-# Podman storage roots — BOTH per-job.
-#
-# Earlier iterations used a per-host shared graphroot under $BV_SHARED_DIR
-# to benefit from image layer caching across runs. In practice, podman's
-# persistent DB inside the graphroot remembers the last job's runroot and
-# every subsequent job on the same host fails with:
-#
-#    Error: database run root "/tmp/.../runroot-A" does not match our run
-#    root "/tmp/.../runroot-B": database configuration mismatch
-#
-# Node-local per-job graphroot fully isolates each launch. Cost: image
-# re-pull on every run (~5-10 min on this cluster). Benefit: reliability.
-# This matches the smoke-test script's approach.
-# Compute-node-local scratch under $HOME (NOT /tmp). Memory rule: avoid /tmp
-# anywhere in the code path. ${HOME}/.local/run is per-user and on a writable
-# filesystem visible from the compute node.
-export XDG_RUNTIME_DIR="${HOME}/.local/run/podman-${LSB_JOBID:-0}"
+# Podman storage roots, HF cache, and all other launcher-owned state live
+# under $BV_SHARED_DIR. Never use login-node paths, never use /tmp, and never
+# spill back into $HOME. Each LSF job gets its own isolated subtree so podman's
+# persistent DB cannot mismatch graphroot/runroot across launches.
+export XDG_RUNTIME_DIR="${BV_SHARED_DIR}/server-podman-${LSB_JOBID:-0}"
 mkdir -p "$XDG_RUNTIME_DIR"
 GRAPHROOT="${XDG_RUNTIME_DIR}/graphroot"
 RUNROOT="${XDG_RUNTIME_DIR}/runroot"
-mkdir -p "$GRAPHROOT" "$RUNROOT"
+HF_CACHE_DIR="${HF_HOME:-${BV_SHARED_DIR}/hf-cache}"
+mkdir -p "$GRAPHROOT" "$RUNROOT" "$HF_CACHE_DIR"
 
 # Optional HF env file (HF_TOKEN etc.).
 if [[ -n "${BV_HF_ENV:-}" && -f "$BV_HF_ENV" ]]; then
@@ -91,8 +80,7 @@ exec podman --cgroup-manager=cgroupfs --storage-driver=overlay \
     --storage-opt ignore_chown_errors=true \
     "${PODMAN_ENV_ARGS[@]}" \
     "${CHAT_TEMPLATE_ARGS[@]}" \
-    -v "${HF_HOME:-$HOME/.cache/huggingface}:/root/.cache/huggingface" \
-    "$VLLM_IMAGE" \
+    -v "${HF_CACHE_DIR}:/root/.cache/huggingface" \
     --model "$MODEL" \
     --port "$VLLM_PORT" \
     --tensor-parallel-size "$GPU_COUNT" \

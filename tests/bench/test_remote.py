@@ -105,6 +105,7 @@ def test_bluevela_bench_submits_lsf_job_with_podman_on_compute(tmp_path, monkeyp
     assert 'if [ "$rc" = "86" ]' in script_text
     assert "resetting runtime" in script_text
     assert f"/u/skula/mcode-shared/podman-runtime/{run_id}" in script_text
+    assert 'REGISTRY_AUTH_FILE=/u/skula/mcode-shared/containers-auth.json' in script_text
 
 
 def test_run_bench_on_bluevela_forwards_context_env(tmp_path, monkeypatch) -> None:

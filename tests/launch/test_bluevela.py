@@ -74,6 +74,13 @@ def test_build_env_json_propagates_minimax_extra_env() -> None:
     assert "--enable_expert_parallel" in env["VLLM_FLAGS"]
 
 
+def test_bluevela_vllm_script_uses_shared_root_only() -> None:
+    script = (Path(bluevela.__file__).parent / "scripts" / "bluevela_vllm.sh").read_text()
+    assert '${BV_SHARED_DIR}/server-podman-${LSB_JOBID:-0}' in script
+    assert '${HF_HOME:-${BV_SHARED_DIR}/hf-cache}' in script
+    assert '${HOME}/.local/run' not in script
+    assert ' -v "${HF_CACHE_DIR}:/root/.cache/huggingface" \\' in script
+
 # --- config hash stability -------------------------------------------------
 def test_config_hash_sensitive_to_model_and_image() -> None:
     h1 = bluevela._config_hash(_spec("Qwen/Qwen3.5-27B"))

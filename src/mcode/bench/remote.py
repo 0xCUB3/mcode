@@ -198,6 +198,7 @@ def run_bench_on_bluevela(
     # filesystem is the only place large image pulls and benchmark repos fit.
     runtime_dir = f"{bv.shared_root}/podman-runtime/{run_id}"
     tmp_dir = f"{bv.shared_root}/podman-tmp/{run_id}"
+    shared_auth = f"{bv.shared_root}/containers-auth.json"
     forwarded_exports = "".join(
         f"export {name}={shlex.quote(value)}\n" for name, value in forwarded_env.items()
     )
@@ -236,11 +237,11 @@ RUNROOT="$XDG_RUNTIME_DIR/runroot"
 CONTAINERS_CONF="$XDG_RUNTIME_DIR/containers.conf"
 SOCK="$XDG_RUNTIME_DIR/podman.sock"
 export MCODE_PODMAN_LOCK_DIR="$XDG_RUNTIME_DIR"
-# Use the user's authenticated docker.io creds if present so we get the
-# higher pull rate limit (~200/6h vs ~100/6h for anonymous on the cluster's
-# shared egress IP). Falls back to anonymous pulls if missing.
-if [ -f "$HOME/.config/containers/auth.json" ]; then
-  export REGISTRY_AUTH_FILE="$HOME/.config/containers/auth.json"
+# Use shared docker.io creds if present so we get the higher pull rate limit
+# (~200/6h vs ~100/6h for anonymous on the cluster's shared egress IP). The
+# launcher never reads login-node home paths during remote bench startup.
+if [ -f {shlex.quote(shared_auth)} ]; then
+  export REGISTRY_AUTH_FILE={shlex.quote(shared_auth)}
 fi
 
 prepare_runtime() {{
