@@ -80,6 +80,7 @@ def test_bluevela_vllm_script_uses_shared_root_only() -> None:
     assert '${HF_HOME:-${BV_SHARED_DIR}/hf-cache}' in script
     assert '${HOME}/.local/run' not in script
     assert ' -v "${HF_CACHE_DIR}:/root/.cache/huggingface" \\' in script
+    assert '    "$VLLM_IMAGE" \\' in script
 
 # --- config hash stability -------------------------------------------------
 def test_config_hash_sensitive_to_model_and_image() -> None:

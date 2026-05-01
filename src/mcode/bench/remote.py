@@ -190,8 +190,12 @@ def run_bench_on_bluevela(
     )
     remote_dir = f"{bv.workspace_root}/bench-runs/{run_id}"
     remote_db = f"{remote_dir}/results.db"
-    remote_log = f"{remote_dir}/bench.log"
-    exit_sentinel = f"{remote_dir}/exit_code"
+    attempt_token = f"{int(time.time() * 1000)}-{os.getpid()}"
+    remote_logs_dir = f"{remote_dir}/logs"
+    remote_log = f"{remote_logs_dir}/bench-{attempt_token}.log"
+    exit_sentinel = f"{remote_dir}/exit-{attempt_token}.code"
+    remote_script_path = f"{remote_dir}/bench-{attempt_token}.sh"
+    svc_log = f"{remote_logs_dir}/podman-svc-{attempt_token}.log"
     # Podman storage and temporary testbeds go under shared_root on /proj.
     # /tmp on login3 is small + shared, and workspace_root may be under a
     # per-user quota on /u/skula depending on local config. The shared /proj
@@ -217,11 +221,13 @@ def run_bench_on_bluevela(
         shared_root=bv.shared_root,
     )
 
-    ssh.run(f"mkdir -p {shlex.quote(remote_dir)}", timeout=30)
+    ssh.run(
+        f"mkdir -p {shlex.quote(remote_dir)} {shlex.quote(remote_logs_dir)}",
+        timeout=30,
+    )
 
     hf_env = bv.hf_env
     bench_cmd = "uv run mcode bench " + " ".join(shlex.quote(a) for a in argv)
-    svc_log = f"{remote_dir}/podman-svc.log"
     remote_script = f"""
 set -euo pipefail
 if [ -z "${{LSB_JOBID:-}}" ]; then
@@ -244,8 +250,48 @@ if [ -f {shlex.quote(shared_auth)} ]; then
   export REGISTRY_AUTH_FILE={shlex.quote(shared_auth)}
 fi
 
+wait_for_pid_exit() {{
+  local pid="$1"
+  local timeout_s="$2"
+  for _ in $(seq 1 "$timeout_s"); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}}
+
+run_with_timeout() {{
+  local timeout_s="$1"
+  shift
+  "$@" &
+  local cmd_pid=$!
+  if wait_for_pid_exit "$cmd_pid" "$timeout_s"; then
+    wait "$cmd_pid" 2>/dev/null
+    return $?
+  fi
+  kill "$cmd_pid" 2>/dev/null || true
+  if ! wait_for_pid_exit "$cmd_pid" 5; then
+    kill -KILL "$cmd_pid" 2>/dev/null || true
+    wait_for_pid_exit "$cmd_pid" 1 || true
+  fi
+  if ! kill -0 "$cmd_pid" 2>/dev/null; then
+    wait "$cmd_pid" 2>/dev/null || true
+  fi
+  return 124
+}}
+
+cleanup_runtime_dir() {{
+  if run_with_timeout 20 rm -rf "$XDG_RUNTIME_DIR"; then
+    return 0
+  fi
+  echo "plain runtime cleanup did not finish, trying podman unshare" >&2
+  run_with_timeout 20 podman unshare rm -rf "$XDG_RUNTIME_DIR" || true
+}}
+
 prepare_runtime() {{
-  mkdir -p "$WORKSPACE_TMP" "$GRAPHROOT" "$RUNROOT"
+  mkdir -p "$XDG_RUNTIME_DIR" "$WORKSPACE_TMP" "$GRAPHROOT" "$RUNROOT"
   printf '[containers]\nkeyring=false\n' > "$CONTAINERS_CONF"
   export CONTAINERS_CONF
   export TMPDIR="$WORKSPACE_TMP"
@@ -255,21 +301,33 @@ prepare_runtime() {{
 
 stop_podman() {{
   if [ -n "${{PODMAN_PID:-}}" ]; then
-    kill "$PODMAN_PID" 2>/dev/null || true
-    wait "$PODMAN_PID" 2>/dev/null || true
+    local pid="$PODMAN_PID"
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+      if ! wait_for_pid_exit "$pid" 15; then
+        echo "podman service did not stop after TERM, sending KILL" >&2
+        kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+        if ! wait_for_pid_exit "$pid" 5; then
+          echo "podman service still alive after KILL" >&2
+        fi
+      fi
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      wait "$pid" 2>/dev/null || true
+    fi
     PODMAN_PID=""
   fi
 }}
 
 reset_podman_runtime() {{
   stop_podman
-  podman unshare rm -rf "$XDG_RUNTIME_DIR" 2>/dev/null || rm -rf "$XDG_RUNTIME_DIR" || true
+  cleanup_runtime_dir
   prepare_runtime
 }}
 
 start_podman() {{
   prepare_runtime
-  podman \\
+  setsid podman \\
     --cgroup-manager=cgroupfs --storage-driver=overlay \\
     --root "$GRAPHROOT" --runroot "$RUNROOT" \\
     --storage-opt ignore_chown_errors=true \\
@@ -293,7 +351,7 @@ start_podman() {{
 
 cleanup() {{
   stop_podman
-  podman unshare rm -rf "$XDG_RUNTIME_DIR" 2>/dev/null || rm -rf "$XDG_RUNTIME_DIR" || true
+  cleanup_runtime_dir
 }}
 trap cleanup EXIT
 
@@ -323,7 +381,6 @@ done
 echo "$rc" > {shlex.quote(exit_sentinel)}
 exit $rc
 """.strip()
-    remote_script_path = f"{remote_dir}/bench.sh"
 
     # Open a RunRecord so `mcode bench list` / `mcode bench cancel` can find
     # this run. The LSF job id is filled in after bsub accepts the script.
@@ -337,9 +394,12 @@ exit $rc
         remote={
             "login": bv.login,
             "run_dir": remote_dir,
+            "attempt_token": attempt_token,
             "remote_db": remote_db,
             "remote_log": remote_log,
             "exit_sentinel": exit_sentinel,
+            "podman_svc_log": svc_log,
+            "remote_script": remote_script_path,
         },
         db_path=str(local_db),
         started_at=time.time(),
@@ -349,7 +409,7 @@ exit $rc
     exit_code = 1
     try:
         with tempfile.TemporaryDirectory() as tmp_dir_local:
-            local_script = Path(tmp_dir_local) / "bench.sh"
+            local_script = Path(tmp_dir_local) / Path(remote_script_path).name
             local_script.write_text(remote_script + "\n", encoding="utf-8")
             ssh.upload(local_script, remote_script_path, timeout=60)
 
@@ -372,18 +432,21 @@ exit $rc
             remote={
                 "login": bv.login,
                 "run_dir": remote_dir,
+                "attempt_token": attempt_token,
                 "job_id": job_id,
                 "queue": queue,
                 "remote_db": remote_db,
                 "remote_log": remote_log,
                 "exit_sentinel": exit_sentinel,
+                "podman_svc_log": svc_log,
+                "remote_script": remote_script_path,
             },
             log_paths=[remote_log],
         )
         print(f"▶ remote bench submitted: job={job_id} queue={queue} log={remote_log}")
 
         try:
-            _stream_remote_log(ssh, remote_log, job_id=job_id)
+            _stream_remote_log(ssh, remote_log, exit_sentinel=exit_sentinel, job_id=job_id)
         except KeyboardInterrupt:
             final_status = launch_state.RunStatus.STOPPED
             cancel_reason = "interrupt"
@@ -428,6 +491,31 @@ exit $rc
                     exit_code = exit_code or 99
             else:
                 print("⚠ remote DB is empty; nothing to fetch")
+
+        if sentinel_ok:
+            try:
+                if _lsf_job_is_active(ssh, job_id):
+                    print(
+                        f"⚠ benchmark finished but LSF job {job_id} is still active; "
+                        "sending bkill"
+                    )
+                    kill_r = ssh.run(f"bkill {shlex.quote(job_id)}", timeout=10)
+                    if not kill_r.ok:
+                        detail = (kill_r.stderr or kill_r.stdout or "bkill failed").strip()
+                        print(
+                            f"⚠ failed to clean up lingering LSF job {job_id}: {detail}"
+                        )
+                    else:
+                        time.sleep(2)
+                        if _lsf_job_is_active(ssh, job_id):
+                            print(
+                                f"⚠ lingering LSF job {job_id} is still active after bkill; "
+                                f"inspect {remote_log}"
+                            )
+                        else:
+                            print(f"✓ cleaned up lingering LSF job {job_id}")
+            except Exception as exc:
+                print(f"⚠ failed to clean up lingering LSF job {job_id}: {exc}")
 
         final_status = (
             launch_state.RunStatus.DONE if exit_code == 0 else launch_state.RunStatus.FAILED
@@ -496,20 +584,63 @@ def _upsert_run(
     launch_state.update(None, _mutator)
 
 
-def _stream_remote_log(ssh: SshClient, remote_log: str, *, job_id: str) -> None:
-    """Tail `remote_log` until the LSF job leaves an active state."""
+def _lsf_job_is_active(ssh: SshClient, job_id: str) -> bool:
+    check = ssh.run(
+        "STAT=$(bjobs -noheader -o stat "
+        f"{shlex.quote(job_id)} 2>/dev/null | tr -d '[:space:]' || true); "
+        'case "$STAT" in PEND|RUN|PSUSP|USUSP|SSUSP) exit 1 ;; *) exit 0 ;; esac',
+        timeout=10,
+    )
+    return not bool(getattr(check, "ok", True))
+
+
+def _stream_remote_log(
+    ssh: SshClient, remote_log: str, *, exit_sentinel: str, job_id: str
+) -> None:
+    """Tail one attempt log until the bench finishes or the LSF job exits."""
     from mcode.launch.ssh import DEFAULT_SSH_OPTIONS
 
+    sentinel_q = shlex.quote(exit_sentinel)
     job_q = shlex.quote(job_id)
+    log_q = shlex.quote(remote_log)
+    grace_s = 3
+    sentinel_poll = (
+        f'if [ "$SENTINEL_SEEN" = 0 ] && test -f {sentinel_q}; then '
+        'SENTINEL_SEEN=1; '
+        f'DEADLINE=$(( $(date +%s) + {grace_s} )); '
+        'fi; '
+    )
+    job_stat_poll = (
+        f"STAT=$(bjobs -noheader -o stat {job_q} 2>/dev/null | tr -d '[:space:]' || true); "
+    )
+    sentinel_grace = (
+        'if [ "$SENTINEL_SEEN" = 1 ]; then '
+        'if [ "$(date +%s)" -ge "$DEADLINE" ]; then break; fi; '
+        'sleep 1; continue; '
+        'fi; '
+    )
+    sentinel_warning = (
+        'if [ "$SENTINEL_SEEN" = 1 ]; then '
+        'case "$STAT" in PEND|RUN|PSUSP|USUSP|SSUSP) '
+        f'echo "WARNING: benchmark finished but LSF job {job_id} is still $STAT; " '
+        f'"inspect {remote_log}" >&2 ;; '
+        'esac; '
+        'fi'
+    )
     argv = [
         "ssh",
         *DEFAULT_SSH_OPTIONS,
         ssh.login,
-        f"tail -F -n +1 {shlex.quote(remote_log)} & TPID=$!; "
-        "while true; do "
-        f"STAT=$(bjobs -noheader -o stat {job_q} 2>/dev/null | tr -d '[:space:]' || true); "
-        'case "$STAT" in PEND|RUN|PSUSP|USUSP|SSUSP) sleep 5 ;; *) break ;; esac; '
-        "done; sleep 2; kill $TPID 2>/dev/null || true",
+        (
+            f"tail -n 0 -F {log_q} & TPID=$!; "
+            "STAT=''; SENTINEL_SEEN=0; DEADLINE=0; "
+            "while true; do "
+            f"{sentinel_poll}{job_stat_poll}{sentinel_grace}"
+            'case "$STAT" in PEND|RUN|PSUSP|USUSP|SSUSP) sleep 5 ;; *) break ;; esac; '
+            "done; "
+            "kill $TPID 2>/dev/null || true; wait $TPID 2>/dev/null || true; "
+            f"{sentinel_warning}"
+        ),
     ]
     proc = subprocess.Popen(argv, stdout=sys.stdout, stderr=sys.stderr)
     rc = proc.wait()

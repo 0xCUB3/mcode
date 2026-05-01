@@ -185,6 +185,43 @@ def test_ensure_image_retries_retryable_pull_failure(tmp_path, monkeypatch):
 
     assert client.api.calls == 2
 
+def test_ensure_image_retries_retryable_inspect_failure(tmp_path, monkeypatch):
+    class ImageNotFound(Exception):
+        pass
+
+    class FakeImages:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get(self, name):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError(
+                    "ReadTimeout: UnixHTTPConnectionPool(host='localhost', port=None): "
+                    "Read timed out. (read timeout=60)"
+                )
+            return object()
+
+    class FakeApi:
+        def pull(self, fq, *, stream, decode):
+            del fq, stream, decode
+            raise AssertionError("pull should not run when inspect retry succeeds")
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.images = FakeImages()
+            self.api = FakeApi()
+
+    fake_docker = types.SimpleNamespace(errors=types.SimpleNamespace(ImageNotFound=ImageNotFound))
+    monkeypatch.setitem(sys.modules, "docker", fake_docker)
+    monkeypatch.setenv("MCODE_PODMAN_LOCK_DIR", str(tmp_path))
+    monkeypatch.setenv("MCODE_PODMAN_PULL_RETRY_DELAY", "0")
+
+    client = FakeClient()
+    _ensure_image(client, "swebench/example:latest")
+
+    assert client.images.calls == 2
+
 
 def test_repo_context_disables_network_for_source_container(monkeypatch):
     class FakeSourceContainer:

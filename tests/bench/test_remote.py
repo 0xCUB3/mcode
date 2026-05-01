@@ -35,6 +35,10 @@ class _FakeSshClient:
             return _FakeResult(stdout="0\n")
         if cmd.startswith("test -f "):
             return _FakeResult(stdout="128\n")
+        if cmd.startswith("STAT=$(bjobs -noheader -o stat "):
+            return _FakeResult()
+        if cmd.startswith("bkill "):
+            return _FakeResult(stdout="Job <4242> is being terminated\n")
         raise AssertionError(f"unexpected ssh command: {cmd}")
 
     def download(self, src: str, dst: Path, *, timeout: float = 300.0) -> None:
@@ -56,12 +60,32 @@ def _bluevela_cfg() -> launch_config.LaunchConfig:
     )
 
 
+def _set_attempt_context(monkeypatch, *, timestamp: float, pid: int = 4242) -> str:
+    monkeypatch.setattr(remote.time, "time", lambda: timestamp)
+    monkeypatch.setattr(remote.os, "getpid", lambda: pid)
+    return f"{int(timestamp * 1000)}-{pid}"
+
+def _ignore_stream(ssh, remote_log, *, exit_sentinel, job_id) -> None:
+    del ssh, remote_log, exit_sentinel, job_id
+
+
 def test_bluevela_bench_submits_lsf_job_with_podman_on_compute(tmp_path, monkeypatch) -> None:
+    streamed: dict[str, str] = {}
     monkeypatch.setattr(remote.launch_config, "load", lambda: _bluevela_cfg())
     monkeypatch.setattr(remote.launch_config, "validate_for_bluevela", lambda cfg: [])
     monkeypatch.setattr(remote, "_resolve_endpoint", lambda model, cfg: "http://host:8321/v1")
     monkeypatch.setattr(remote, "SshClient", _FakeSshClient)
-    monkeypatch.setattr(remote, "_stream_remote_log", lambda ssh, remote_log, job_id: None)
+    attempt_token = _set_attempt_context(monkeypatch, timestamp=1777000000.0)
+
+    def fake_stream(ssh, remote_log, *, exit_sentinel, job_id) -> None:
+        del ssh
+        streamed.update(
+            remote_log=remote_log,
+            exit_sentinel=exit_sentinel,
+            job_id=job_id,
+        )
+
+    monkeypatch.setattr(remote, "_stream_remote_log", fake_stream)
     local_db = tmp_path / "results.db"
     exit_code = remote.run_bench_on_bluevela(
         bench_argv=["smoke", "--model", "Qwen/Qwen3.5-35B-A3B"],
@@ -79,6 +103,8 @@ def test_bluevela_bench_submits_lsf_job_with_podman_on_compute(tmp_path, monkeyp
         bench_argv=["smoke", "--model", "Qwen/Qwen3.5-35B-A3B"],
         forwarded_env={},
     )
+    remote_log = f"/u/skula/mcode-launch/bench-runs/{run_id}/logs/bench-{attempt_token}.log"
+    exit_sentinel = f"/u/skula/mcode-launch/bench-runs/{run_id}/exit-{attempt_token}.code"
 
     assert "nohup setsid" not in launch_cmd
     assert "-G grp_runtime" in launch_cmd
@@ -86,9 +112,18 @@ def test_bluevela_bench_submits_lsf_job_with_podman_on_compute(tmp_path, monkeyp
     assert "-n 8" in launch_cmd
     assert "span[hosts=1]" in launch_cmd
     assert "rusage[mem=16000]" in launch_cmd
-    assert launch_cmd.endswith(f"bash /u/skula/mcode-launch/bench-runs/{run_id}/bench.sh")
+    assert f"-o {remote_log} -e {remote_log}" in launch_cmd
+    assert launch_cmd.endswith(
+        f"bash /u/skula/mcode-launch/bench-runs/{run_id}/bench-{attempt_token}.sh"
+    )
+    assert streamed == {
+        "remote_log": remote_log,
+        "exit_sentinel": exit_sentinel,
+        "job_id": "4242",
+    }
     assert ssh.uploads
     script_text = ssh.uploads[0][0]
+    assert ssh.uploads[0][1].endswith(f"/bench-{attempt_token}.sh")
     assert 'if [ -z "${LSB_JOBID:-}" ]; then' in script_text
     assert "refusing to start podman outside an LSF compute job" in script_text
     assert f"export XDG_RUNTIME_DIR=/u/skula/mcode-shared/podman-runtime/{run_id}" in script_text
@@ -98,7 +133,13 @@ def test_bluevela_bench_submits_lsf_job_with_podman_on_compute(tmp_path, monkeyp
     assert 'CONTAINERS_CONF="$XDG_RUNTIME_DIR/containers.conf"' in script_text
     assert "keyring=false" in script_text
     assert "export CONTAINERS_CONF" in script_text
-    assert 'podman unshare rm -rf "$XDG_RUNTIME_DIR"' in script_text
+    assert 'cleanup_runtime_dir() {' in script_text
+    assert 'run_with_timeout 20 rm -rf "$XDG_RUNTIME_DIR"' in script_text
+    assert 'run_with_timeout 20 podman unshare rm -rf "$XDG_RUNTIME_DIR" || true' in script_text
+    assert 'wait "$PODMAN_PID"' not in script_text
+    assert 'setsid podman \\' in script_text
+    assert 'kill -TERM -- "-$pid"' in script_text
+    assert 'kill -KILL -- "-$pid"' in script_text
     assert "trap cleanup EXIT" in script_text
     assert 'export MCODE_PODMAN_LOCK_DIR="$XDG_RUNTIME_DIR"' in script_text
     assert "max_infra_retries=1" in script_text
@@ -113,8 +154,8 @@ def test_run_bench_on_bluevela_forwards_context_env(tmp_path, monkeypatch) -> No
     monkeypatch.setattr(remote.launch_config, "validate_for_bluevela", lambda cfg: [])
     monkeypatch.setattr(remote, "_resolve_endpoint", lambda model, cfg: "http://host:8321/v1")
     monkeypatch.setattr(remote, "SshClient", _FakeSshClient)
-    monkeypatch.setattr(remote, "_stream_remote_log", lambda ssh, remote_log, job_id: None)
-    monkeypatch.setattr(remote.time, "time", lambda: 1777000001)
+    monkeypatch.setattr(remote, "_stream_remote_log", _ignore_stream)
+    _set_attempt_context(monkeypatch, timestamp=1777000001.0)
     monkeypatch.setenv("MCODE_CONTEXT_WINDOW", "262144")
     monkeypatch.setenv("MCODE_MAX_NEW_TOKENS", "4096")
     monkeypatch.setenv("MCODE_REACT_TIMEOUT", "2400")
@@ -137,8 +178,8 @@ def test_run_bench_on_bluevela_prefers_openai_env_override(tmp_path, monkeypatch
     monkeypatch.setattr(remote.launch_config, "load", lambda: _bluevela_cfg())
     monkeypatch.setattr(remote.launch_config, "validate_for_bluevela", lambda cfg: [])
     monkeypatch.setattr(remote, "SshClient", _FakeSshClient)
-    monkeypatch.setattr(remote, "_stream_remote_log", lambda ssh, remote_log, job_id: None)
-    monkeypatch.setattr(remote.time, "time", lambda: 1777000002)
+    monkeypatch.setattr(remote, "_stream_remote_log", _ignore_stream)
+    _set_attempt_context(monkeypatch, timestamp=1777000002.0)
     monkeypatch.setenv("OPENAI_BASE_URL", "https://example.test/v1")
     monkeypatch.setenv("OPENAI_API_KEY", "secret-key")
 
@@ -160,8 +201,8 @@ def test_run_bench_on_bluevela_sets_up_aider_polyglot_root(tmp_path, monkeypatch
     monkeypatch.setattr(remote.launch_config, "validate_for_bluevela", lambda cfg: [])
     monkeypatch.setattr(remote, "_resolve_endpoint", lambda model, cfg: "http://host:8321/v1")
     monkeypatch.setattr(remote, "SshClient", _FakeSshClient)
-    monkeypatch.setattr(remote, "_stream_remote_log", lambda ssh, remote_log, job_id: None)
-    monkeypatch.setattr(remote.time, "time", lambda: 1777000003)
+    monkeypatch.setattr(remote, "_stream_remote_log", _ignore_stream)
+    _set_attempt_context(monkeypatch, timestamp=1777000003.0)
 
     remote.run_bench_on_bluevela(
         bench_argv=[
@@ -205,6 +246,10 @@ class _RecoverableMetadataSshClient(_FakeSshClient):
             return _FakeResult(ok=False, stderr="sentinel missing")
         if cmd.startswith("test -f "):
             return _FakeResult(stdout="123\n")
+        if cmd.startswith("STAT=$(bjobs -noheader -o stat "):
+            return _FakeResult()
+        if cmd.startswith("bkill "):
+            return _FakeResult(stdout="Job <4242> is being terminated\n")
         raise AssertionError(f"unexpected ssh command: {cmd}")
 
     def download(self, src: str, dst: Path, *, timeout: float = 300.0) -> None:
@@ -215,10 +260,27 @@ class _RecoverableMetadataSshClient(_FakeSshClient):
         self.uploads.append((src.read_text(), dst, timeout))
 
 
+class _LingeringJobSshClient(_FakeSshClient):
+    def __init__(self, login: str) -> None:
+        super().__init__(login)
+        self.active_checks = 0
+
+    def run(self, cmd: str, *, timeout: float = 60.0):
+        if cmd.startswith("STAT=$(bjobs -noheader -o stat "):
+            self.commands.append(cmd)
+            self.active_checks += 1
+            return _FakeResult(ok=self.active_checks > 1)
+        if cmd.startswith("bkill "):
+            self.commands.append(cmd)
+            return _FakeResult(stdout="Job <4242> is being terminated\n")
+        return super().run(cmd, timeout=timeout)
+
+
 def test_run_bench_on_bluevela_keeps_recoverable_metadata_on_fetch_failure(
     tmp_path, monkeypatch
 ) -> None:
     state_path = tmp_path / "state.json"
+    attempt_token = _set_attempt_context(monkeypatch, timestamp=1777000004.0)
     monkeypatch.setenv("MCODE_LAUNCH_STATE", str(state_path))
     monkeypatch.setattr(remote.launch_config, "load", lambda: _bluevela_cfg())
     monkeypatch.setattr(remote.launch_config, "validate_for_bluevela", lambda cfg: [])
@@ -227,7 +289,9 @@ def test_run_bench_on_bluevela_keeps_recoverable_metadata_on_fetch_failure(
     monkeypatch.setattr(
         remote,
         "_stream_remote_log",
-        lambda ssh, remote_log, job_id: (_ for _ in ()).throw(RuntimeError("ssh dropped")),
+        lambda ssh, remote_log, *, exit_sentinel, job_id: (_ for _ in ()).throw(
+            RuntimeError("ssh dropped")
+        ),
     )
     local_db = tmp_path / "results.db"
 
@@ -241,10 +305,79 @@ def test_run_bench_on_bluevela_keeps_recoverable_metadata_on_fetch_failure(
     snap = launch_state.load(state_path)
     assert len(snap.runs) == 1
     rec = snap.runs[0]
+    assert rec.remote["attempt_token"] == attempt_token
     assert rec.remote["remote_db"].endswith("/results.db")
-    assert rec.remote["remote_log"].endswith("/bench.log")
-    assert rec.remote["exit_sentinel"].endswith("/exit_code")
+    assert rec.remote["remote_log"].endswith(f"/logs/bench-{attempt_token}.log")
+    assert rec.remote["exit_sentinel"].endswith(f"/exit-{attempt_token}.code")
+    assert rec.remote["podman_svc_log"].endswith(
+        f"/logs/podman-svc-{attempt_token}.log"
+    )
+    assert rec.remote["remote_script"].endswith(f"/bench-{attempt_token}.sh")
     assert rec.updated_at is not None
     ssh = _RecoverableMetadataSshClient.last
     assert ssh is not None
     assert ssh.downloads
+
+
+
+
+def test_run_bench_on_bluevela_bkills_lingering_lsf_job(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(remote.launch_config, "load", lambda: _bluevela_cfg())
+    monkeypatch.setattr(remote.launch_config, "validate_for_bluevela", lambda cfg: [])
+    monkeypatch.setattr(remote, "_resolve_endpoint", lambda model, cfg: "http://host:8321/v1")
+    monkeypatch.setattr(remote, "SshClient", _LingeringJobSshClient)
+    monkeypatch.setattr(remote, "_stream_remote_log", _ignore_stream)
+    _set_attempt_context(monkeypatch, timestamp=1777000005.0)
+
+    exit_code = remote.run_bench_on_bluevela(
+        bench_argv=["smoke", "--model", "Qwen/Qwen3.5-35B-A3B"],
+        model="Qwen/Qwen3.5-35B-A3B",
+        local_db=tmp_path / "results.db",
+    )
+
+    assert exit_code == 0
+    ssh = _LingeringJobSshClient.last
+    assert ssh is not None
+    assert any(cmd.startswith("bkill 4242") for cmd in ssh.commands)
+    assert ssh.active_checks == 2
+
+
+def test_stream_remote_log_stops_after_sentinel_even_if_bjob_stays_running(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeProc:
+        def __init__(self, argv, *, stdout, stderr) -> None:
+            captured["argv"] = argv
+            captured["stdout"] = stdout
+            captured["stderr"] = stderr
+
+        def wait(self) -> int:
+            return 0
+
+    monkeypatch.setattr(
+        remote.subprocess,
+        "Popen",
+        lambda argv, stdout, stderr: _FakeProc(argv, stdout=stdout, stderr=stderr),
+    )
+
+    ssh = type("_Ssh", (), {"login": "skula@login3.bluevela.rmf.ibm.com"})()
+    remote_log = "/proj/dmfexp/skula/mcode-launch/bench-runs/r1/logs/bench-attempt.log"
+    exit_sentinel = "/proj/dmfexp/skula/mcode-launch/bench-runs/r1/exit-attempt.code"
+    remote._stream_remote_log(
+        ssh,
+        remote_log,
+        exit_sentinel=exit_sentinel,
+        job_id="4242",
+    )
+
+    argv = captured["argv"]
+    assert isinstance(argv, list)
+    assert argv[0] == "ssh"
+    remote_cmd = argv[-1]
+    assert f"tail -n 0 -F {remote_log}" in remote_cmd
+    assert 'tail -F -n +1' not in remote_cmd
+    assert f"test -f {exit_sentinel}" in remote_cmd
+    assert 'bjobs -noheader -o stat 4242' in remote_cmd
+    assert 'SENTINEL_SEEN=1' in remote_cmd
+    assert 'WARNING: benchmark finished but LSF job 4242 is still $STAT; ' in remote_cmd
+    assert f'"inspect {remote_log}" >&2' in remote_cmd

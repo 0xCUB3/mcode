@@ -81,6 +81,7 @@ exec podman --cgroup-manager=cgroupfs --storage-driver=overlay \
     "${PODMAN_ENV_ARGS[@]}" \
     "${CHAT_TEMPLATE_ARGS[@]}" \
     -v "${HF_CACHE_DIR}:/root/.cache/huggingface" \
+    "$VLLM_IMAGE" \
     --model "$MODEL" \
     --port "$VLLM_PORT" \
     --tensor-parallel-size "$GPU_COUNT" \

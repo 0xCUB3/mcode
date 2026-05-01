@@ -125,9 +125,6 @@ def _ensure_image(client: object, name: str) -> None:
     import docker
 
     fq = _fq_image(name)
-    if _image_present(client, name, fq, docker):
-        return
-
     attempts_raw = os.environ.get("MCODE_PODMAN_PULL_ATTEMPTS", "2")
     delay_raw = os.environ.get("MCODE_PODMAN_PULL_RETRY_DELAY", "2")
     try:
@@ -141,10 +138,29 @@ def _ensure_image(client: object, name: str) -> None:
 
     from mcode.util.retry import with_backoff
 
-    with _podman_image_pull_lock():
-        if _image_present(client, name, fq, docker):
+    def image_present_with_backoff() -> bool:
+        return with_backoff(
+            lambda: _image_present(client, name, fq, docker),
+            is_retryable=_is_retryable_podman_image_error,
+            max_attempts=attempts,
+            base_sleep_s=delay if delay > 0 else 0.001,
+            max_sleep_s=max(delay, 30.0),
+        )
+
+    try:
+        if image_present_with_backoff():
             return
+    except Exception as last_error:
+        if _is_retryable_podman_image_error(last_error):
+            raise RetryablePodmanImageError(
+                f"Retryable podman image inspect failed for {fq}: {last_error}"
+            ) from last_error
+        raise
+
+    with _podman_image_pull_lock():
         try:
+            if image_present_with_backoff():
+                return
             with_backoff(
                 lambda: _pull_image_once(client, fq),
                 is_retryable=_is_retryable_podman_image_error,
