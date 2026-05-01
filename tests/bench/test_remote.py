@@ -134,8 +134,10 @@ def test_bluevela_bench_submits_lsf_job_with_podman_on_compute(tmp_path, monkeyp
     assert "keyring=false" in script_text
     assert "export CONTAINERS_CONF" in script_text
     assert 'cleanup_runtime_dir() {' in script_text
-    assert 'run_with_timeout 20 rm -rf "$XDG_RUNTIME_DIR"' in script_text
-    assert 'run_with_timeout 20 podman unshare rm -rf "$XDG_RUNTIME_DIR" || true' in script_text
+    assert 'cleanup_target="$XDG_RUNTIME_DIR.stale.${LSB_JOBID:-0}.$$.$(date +%s)"' in script_text
+    assert 'run_with_timeout 5 mv "$XDG_RUNTIME_DIR" "$cleanup_target"' in script_text
+    assert 'run_with_timeout 20 rm -rf "$cleanup_target"' in script_text
+    assert 'run_with_timeout 20 podman unshare rm -rf "$cleanup_target"' in script_text
     assert 'wait "$PODMAN_PID"' not in script_text
     assert 'setsid podman \\' in script_text
     assert 'kill -TERM -- "-$pid"' in script_text

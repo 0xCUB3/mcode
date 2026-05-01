@@ -283,11 +283,23 @@ run_with_timeout() {{
 }}
 
 cleanup_runtime_dir() {{
-  if run_with_timeout 20 rm -rf "$XDG_RUNTIME_DIR"; then
+  local cleanup_target="$XDG_RUNTIME_DIR"
+  if [ ! -e "$cleanup_target" ]; then
+    return 0
+  fi
+  cleanup_target="$XDG_RUNTIME_DIR.stale.${{LSB_JOBID:-0}}.$$.$(date +%s)"
+  if ! run_with_timeout 5 mv "$XDG_RUNTIME_DIR" "$cleanup_target"; then
+    echo "runtime rename did not finish, cleaning in place" >&2
+    cleanup_target="$XDG_RUNTIME_DIR"
+  fi
+  if run_with_timeout 20 rm -rf "$cleanup_target"; then
     return 0
   fi
   echo "plain runtime cleanup did not finish, trying podman unshare" >&2
-  run_with_timeout 20 podman unshare rm -rf "$XDG_RUNTIME_DIR" || true
+  if run_with_timeout 20 podman unshare rm -rf "$cleanup_target"; then
+    return 0
+  fi
+  echo "runtime cleanup still not finished for $cleanup_target" >&2
 }}
 
 prepare_runtime() {{
