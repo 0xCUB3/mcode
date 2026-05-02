@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import sqlite3
 import subprocess
 import sys
@@ -2724,24 +2725,48 @@ def bench_artifacts_fetch(
     """Fetch a remote artifact directory for a finished Blue Vela run."""
     from mcode.launch import state as launch_state
     from mcode.launch.ssh import SshClient
+    from mcode.ui.errors import MCodeError, handle_errors
 
-    run = launch_state.load().run(run_id)
-    if run is None:
-        raise typer.BadParameter(f"No run with id {run_id!r}")
-    login = str(run.remote.get("login") or "")
-    remote_artifact_dir = str(run.remote.get("remote_artifact_dir") or "")
-    local_artifact_dir = (
-        Path(dest) if dest is not None else Path(str(run.remote.get("local_artifact_dir") or ""))
-    )
-    if not login or not remote_artifact_dir or not str(local_artifact_dir):
-        raise typer.BadParameter(
-            f"Run {run_id!r} does not have remote artifact metadata to fetch"
+    @handle_errors
+    def _do() -> None:
+        run = launch_state.load().run(run_id)
+        if run is None:
+            raise MCodeError(
+                what=f"no run with id {run_id!r}",
+                next="`mcode bench list --json` to inspect available runs",
+            )
+        login = str(run.remote.get("login") or "")
+        remote_artifact_dir = str(run.remote.get("remote_artifact_dir") or "")
+        saved_local_artifact_dir = str(run.remote.get("local_artifact_dir") or "")
+        local_artifact_dir = Path(dest) if dest is not None else Path(saved_local_artifact_dir)
+        if not login or not remote_artifact_dir or not str(local_artifact_dir):
+            raise MCodeError(
+                what=f"run {run_id!r} has no deferred artifact fetch metadata",
+                why="the run did not record a remote artifact directory",
+                next="rerun the remote bench with --fetch-artifacts or specify a fresh run id",
+            )
+        ssh = SshClient(login)
+        probe = ssh.run(
+            f"test -d {shlex.quote(remote_artifact_dir)} && echo ok || echo missing",
+            timeout=30,
         )
-    ssh = SshClient(login)
-    ssh.download_tree(remote_artifact_dir, local_artifact_dir, timeout=300)
-    console.print(f"fetched artifacts to {local_artifact_dir}")
+        if not probe.ok or not probe.stdout.strip().endswith("ok"):
+            raise MCodeError(
+                what=f"remote artifact directory is missing for {run_id}",
+                why=remote_artifact_dir,
+                next="rerun the remote bench with --fetch-artifacts, or inspect the remote run dir",
+            )
+        try:
+            ssh.download_tree(remote_artifact_dir, local_artifact_dir, timeout=300)
+        except Exception as exc:
+            raise MCodeError(
+                what=f"failed to fetch artifacts for {run_id}",
+                why=str(exc),
+                next="check SSH reachability, remote paths, and local disk space, then retry",
+            ) from exc
+        console.print(f"fetched artifacts to {local_artifact_dir}")
 
-
+    _do()
 @bench_app.command("artifacts-show")
 def bench_artifacts_show(
     task_id: Annotated[str, typer.Argument(..., help="Task id to inspect")],
