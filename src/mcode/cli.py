@@ -368,7 +368,8 @@ def results(
         bool,
         typer.Option("--time", help="Include time-to-solve metrics (sec/solve, solves/hour, p95)"),
     ] = False,
-) -> None:
+    json_mode: JsonFlag = False,
+ ) -> None:
     """Query pass rates from the results DB."""
     group_by_config = (
         "suite_name",
@@ -397,6 +398,9 @@ def results(
                     key=lambda r: (r["solves_per_hour"], r["pass_rate"]),
                     reverse=True,
                 )
+                if json_mode:
+                    console.print_json(data=rows)
+                    return
                 table = Table(title="Pass rates + time (grouped)")
                 table.add_column("benchmark")
                 table.add_column("suite")
@@ -454,6 +458,9 @@ def results(
                 group_by=group_by_config,
                 loop_budget=loop_budget,
             )
+            if json_mode:
+                console.print_json(data=rows)
+                return
             table = Table(title="Pass rates by config")
             table.add_column("benchmark")
             table.add_column("suite")
@@ -497,6 +504,9 @@ def results(
                 loop_budget=loop_budget,
             )
             rows = sorted(rows, key=lambda r: (r["solves_per_hour"], r["pass_rate"]), reverse=True)
+            if json_mode:
+                console.print_json(data=rows)
+                return
             table = Table(title="Pass rates + time (per run)")
             table.add_column("run_id", justify="right")
             table.add_column("timestamp")
@@ -554,6 +564,9 @@ def results(
             group_by=(),
             loop_budget=loop_budget,
         )
+        if json_mode:
+            console.print_json(data=rows)
+            return
         table = Table(title="Pass rates (per run)")
         table.add_column("run_id", justify="right")
         table.add_column("timestamp")
@@ -603,18 +616,21 @@ def compare(
     ] = None,
     suite_name: Annotated[str | None, typer.Option("--suite")] = None,
     suite_entry_name: Annotated[str | None, typer.Option("--suite-entry")] = None,
+    json_mode: JsonFlag = False,
  ) -> None:
-    from mcode.bench.compare import compare_run_dirs
+    from mcode.bench.compare import compare_runs, format_comparison
 
-    console.print(
-        compare_run_dirs(
-            baseline_dir=str(baseline_dir),
-            candidate_dir=str(candidate_dir),
-            task_ids=_parse_task_ids(task_ids),
-            suite_name=suite_name,
-            suite_entry_name=suite_entry_name,
-        )
+    report = compare_runs(
+        baseline_dir=str(baseline_dir),
+        candidate_dir=str(candidate_dir),
+        task_ids=_parse_task_ids(task_ids),
+        suite_name=suite_name,
+        suite_entry_name=suite_entry_name,
     )
+    if json_mode:
+        console.print_json(data=report)
+        return
+    console.print(format_comparison(report))
 
 
 def _config_label(r: dict) -> str:
