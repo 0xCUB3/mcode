@@ -87,7 +87,7 @@ Wait exit codes: 0 healthy, 1 failed-or-stopped, 2 timeout (or transient state r
 ## Bench — run benchmarks
 
 ```bash
-uv run mcode bench list [--json] [--benchmark NAME] [--status running|done|failed|stopped] [--artifacts]
+uv run mcode bench list [--json] [--benchmark NAME] [--status running|done|failed|stopped] [--artifacts] [--limit N]
 uv run mcode bench cancel <run-id>
 uv run mcode bench swebench-live   --model M  [flags]
 uv run mcode bench swebench-lite   --model M  [flags]
@@ -227,6 +227,8 @@ Every bench command supports `--json`. Events are line-delimited JSON with stric
 ```
 
 Kinds: `run_start`, `shard_start`, `shard_stdout`, `shard_done`, `shard_failed`, `shard_infra`, `infra_failure`, `merged`, `summary`, `remote_stdout`, `info`.
+`bench list` is sorted newest-first after filtering. Use `--limit N` when the state file is noisy and you only care about the most recent runs.
+
 
 ### Cancel semantics
 
@@ -327,7 +329,7 @@ uv run mcode bench smoke \
   --on bluevela --shards 4 --json
 
 # inspect / cancel
-uv run mcode bench list --benchmark suite --artifacts
+uv run mcode bench list --benchmark suite --artifacts --limit 5
 uv run mcode bench list --json | jq '.[] | select(.status == "running")'
 uv run mcode bench cancel run-abc123
 uv run mcode launch stop server-bv-abc123

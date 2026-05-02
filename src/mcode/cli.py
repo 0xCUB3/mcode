@@ -2622,6 +2622,7 @@ def bench_list(
         bool,
         typer.Option("--artifacts", help="Only show runs with remote artifact metadata"),
     ] = False,
+    limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
  ) -> None:
     """List historical bench runs from the launch state file."""
     from mcode.bench.cancel import list_runs
@@ -2631,6 +2632,7 @@ def bench_list(
         benchmark=benchmark,
         status=status,
         artifacts_only=artifacts_only,
+        limit=limit,
     )
     if rc != 0:
         raise typer.Exit(rc)

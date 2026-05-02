@@ -39,6 +39,7 @@ def test_cli_bench_list_help() -> None:
     assert "benchmark" in option_names
     assert "status" in option_names
     assert "artifacts_only" in option_names
+    assert "limit" in option_names
     assert "json_mode" in option_names
 
 

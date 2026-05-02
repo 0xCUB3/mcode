@@ -34,6 +34,7 @@ def list_runs(
     benchmark: str | None = None,
     status: str | None = None,
     artifacts_only: bool = False,
+    limit: int | None = None,
  ) -> int:
     """Print known runs, optionally filtered."""
     s = launch_state.load()
@@ -44,6 +45,9 @@ def list_runs(
         runs = [run for run in runs if run.status.value == status]
     if artifacts_only:
         runs = [run for run in runs if (run.remote or {}).get("remote_artifact_dir")]
+    runs.sort(key=lambda run: float(run.started_at or 0.0), reverse=True)
+    if limit is not None:
+        runs = runs[:limit]
     if json_mode:
         import json
 

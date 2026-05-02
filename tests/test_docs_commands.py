@@ -8,6 +8,7 @@ def test_command_docs_cover_sampling_and_compare() -> None:
     assert "uv run mcode bench swebench-lite" in command_docs
     assert "uv run mcode bench suite" in command_docs
     assert "uv run mcode bench list [--json] [--benchmark NAME]" in command_docs
+    assert "[--limit N]" in command_docs
     assert "uv run mcode bench artifacts-list" in command_docs
     assert "--task-id python/affine-cipher --phase evaluate --json" in command_docs
     assert "uv run mcode bench artifacts-patch" in command_docs

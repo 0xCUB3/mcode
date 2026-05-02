@@ -92,6 +92,34 @@ def test_list_runs_filters_benchmark_status_and_artifacts(
     assert [row["id"] for row in payload] == ["r1"]
 
 
+def test_list_runs_limit_returns_latest_first(isolated_state: Path, capsys) -> None:
+    _put(
+        RunRecord(
+            id="older",
+            target=Target.LOCAL_VLLM,
+            benchmark="smoke",
+            status=RunStatus.DONE,
+            started_at=1.0,
+        )
+    )
+    _put(
+        RunRecord(
+            id="newer",
+            target=Target.LOCAL_VLLM,
+            benchmark="smoke",
+            status=RunStatus.DONE,
+            started_at=2.0,
+        )
+    )
+    rc = cancel_mod.list_runs(json_mode=True, limit=1)
+    assert rc == 0
+    out = capsys.readouterr().out
+    import json
+
+    payload = json.loads(out)
+    assert [row["id"] for row in payload] == ["newer"]
+
+
 def test_cancel_unknown_run_raises(isolated_state: Path) -> None:
     with pytest.raises(MCodeError, match="no run with id"):
         cancel_mod.cancel_run("nope")
