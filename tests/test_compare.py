@@ -185,3 +185,29 @@ def test_results_cli_json_includes_generated_counts(tmp_path: Path) -> None:
     payload = json.loads(res.stdout)
     assert payload[0]["artifact_generated_tasks"] == 1
     assert payload[0]["artifact_evaluated_tasks"] == 0
+
+
+def test_compare_runs_accepts_db_file_inputs(tmp_path: Path) -> None:
+    baseline_db = tmp_path / "baseline.db"
+    candidate_db = tmp_path / "candidate.db"
+
+    _write_compare_db(
+        baseline_db,
+        suite_entry_name="polyglot-python",
+        results={"python/affine-cipher": False},
+    )
+    _write_compare_db(
+        candidate_db,
+        suite_entry_name="polyglot-python",
+        results={"python/affine-cipher": True},
+    )
+
+    report = compare_runs(
+        str(baseline_db),
+        str(candidate_db),
+        suite_name="tiny-polyglot-suite",
+        suite_entry_name="polyglot-python",
+    )
+
+    assert report["gained"] == ["python/affine-cipher"]
+    assert report["candidate_passed"] == 1

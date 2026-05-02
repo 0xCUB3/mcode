@@ -99,7 +99,9 @@ def _load_results_from_dir(
     suite_entry_name: str | None = None,
  ) -> dict[str, bool]:
     results: dict[str, bool] = {}
-    for db_file in sorted(Path(dir_path).glob("*.db")):
+    root = Path(dir_path)
+    db_paths = [root] if root.is_file() else sorted(root.glob("*.db"))
+    for db_file in db_paths:
         results.update(
             _load_results(
                 str(db_file),

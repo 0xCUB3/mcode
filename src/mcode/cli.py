@@ -606,8 +606,14 @@ def results(
 
 @app.command("compare")
 def compare(
-    baseline_dir: Annotated[Path, typer.Option("--baseline-dir", help="Baseline DB directory")],
-    candidate_dir: Annotated[Path, typer.Option("--candidate-dir", help="Candidate DB directory")],
+    baseline_dir: Annotated[
+        Path,
+        typer.Option("--baseline-dir", help="Baseline DB file or directory"),
+    ],
+    candidate_dir: Annotated[
+        Path,
+        typer.Option("--candidate-dir", help="Candidate DB file or directory"),
+    ],
     task_ids: Annotated[
         str | None,
         typer.Option(
