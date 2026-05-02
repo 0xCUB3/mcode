@@ -46,6 +46,8 @@ def list_runs(*, json_mode: bool = False) -> int:
                 "db_path": r.db_path,
                 "progress": r.progress,
                 "cancel_reason": (r.metadata or {}).get("cancel_reason"),
+                "artifacts_fetchable": bool((r.remote or {}).get("remote_artifact_dir")),
+                "local_artifact_dir": (r.remote or {}).get("local_artifact_dir"),
             }
             for r in s.runs
         ]
@@ -64,6 +66,7 @@ def list_runs(*, json_mode: bool = False) -> int:
     table.add_column("target")
     table.add_column("status")
     table.add_column("shards", justify="right")
+    table.add_column("artifacts")
     table.add_column("started")
     table.add_column("progress")
     for r in s.runs:
@@ -73,7 +76,17 @@ def list_runs(*, json_mode: bool = False) -> int:
         status = r.status.value
         if (r.metadata or {}).get("cancel_reason"):
             status = f"{status} ({r.metadata['cancel_reason']})"
-        table.add_row(r.id, r.benchmark, r.target.value, status, str(shards), started, progress)
+        artifacts = "yes" if (r.remote or {}).get("remote_artifact_dir") else "-"
+        table.add_row(
+            r.id,
+            r.benchmark,
+            r.target.value,
+            status,
+            str(shards),
+            artifacts,
+            started,
+            progress,
+        )
     console.print(table)
     return 0
 
