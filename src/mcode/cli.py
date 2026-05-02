@@ -2841,6 +2841,10 @@ def bench_artifacts_show(
         int | None,
         typer.Option("--run-id", help="Run id (defaults to latest run)"),
     ] = None,
+    candidate_index: Annotated[
+        int | None,
+        typer.Option("--candidate-index", help="Show only one candidate entry"),
+    ] = None,
  ) -> None:
     """Show one task artifact manifest."""
     with ResultsDB(db) as rdb:
@@ -2852,6 +2856,18 @@ def bench_artifacts_show(
             f"No artifact manifest for task {task_id!r} in run {resolved_run_id}"
         )
     manifest = read_task_manifest(Path(str(row["manifest_path"])))
+    if candidate_index is not None:
+        candidate = next(
+            (item for item in manifest.candidates if item.candidate_index == candidate_index),
+            None,
+        )
+        if candidate is None:
+            raise typer.BadParameter(
+                f"No candidate index {candidate_index} for task {task_id!r} "
+                f"in run {resolved_run_id}"
+            )
+        console.print_json(data=asdict(candidate))
+        return
     console.print(json.dumps(asdict(manifest), indent=2, sort_keys=True, default=str))
 @bench_app.command("artifacts-replay")
 def bench_artifacts_replay(

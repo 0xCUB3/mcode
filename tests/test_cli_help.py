@@ -129,6 +129,7 @@ def test_cli_bench_artifacts_help() -> None:
     assert "json_mode" in fetch_options
     assert "db" in show_options
     assert "run_id" in show_options
+    assert "candidate_index" in show_options
     assert "db" in patch_options
     assert "run_id" in patch_options
     assert "candidate_index" in patch_options

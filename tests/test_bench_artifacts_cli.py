@@ -142,6 +142,26 @@ def test_bench_artifacts_list_and_show(tmp_path: Path) -> None:
     assert patch_res.exit_code == 0
     assert "+x = 2" in patch_res.stdout
 
+    candidate_show_res = runner.invoke(
+        app,
+        [
+            "bench",
+            "artifacts-show",
+            task_id,
+            "--db",
+            str(db_path),
+            "--run-id",
+            str(run_id),
+            "--candidate-index",
+            "0",
+        ],
+        color=False,
+    )
+    assert candidate_show_res.exit_code == 0
+    candidate_payload = json.loads(candidate_show_res.stdout)
+    assert candidate_payload["candidate_index"] == 0
+    assert candidate_payload["selected"] is True
+
     show_res = runner.invoke(
         app,
         ["bench", "artifacts-show", task_id, "--db", str(db_path), "--run-id", str(run_id)],
