@@ -107,11 +107,13 @@ def test_cli_bench_suite_help() -> None:
 
 def test_cli_bench_artifacts_help() -> None:
     list_options = _command_option_names("bench", "artifacts-list")
+    fetch_options = _command_option_names("bench", "artifacts-fetch")
     show_options = _command_option_names("bench", "artifacts-show")
     patch_options = _command_option_names("bench", "artifacts-patch")
     replay_options = _command_option_names("bench", "artifacts-replay")
     assert "db" in list_options
     assert "run_id" in list_options
+    assert "dest" in fetch_options
     assert "db" in show_options
     assert "run_id" in show_options
     assert "db" in patch_options

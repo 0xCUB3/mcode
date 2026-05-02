@@ -2713,6 +2713,35 @@ def bench_artifacts_list(
     console.print(table)
 
 
+@bench_app.command("artifacts-fetch")
+def bench_artifacts_fetch(
+    run_id: Annotated[str, typer.Argument(..., help="Remote run id from `mcode bench list`")],
+    dest: Annotated[
+        Path | None,
+        typer.Option("--dest", help="Override the local artifact directory destination"),
+    ] = None,
+ ) -> None:
+    """Fetch a remote artifact directory for a finished Blue Vela run."""
+    from mcode.launch import state as launch_state
+    from mcode.launch.ssh import SshClient
+
+    run = launch_state.load().run(run_id)
+    if run is None:
+        raise typer.BadParameter(f"No run with id {run_id!r}")
+    login = str(run.remote.get("login") or "")
+    remote_artifact_dir = str(run.remote.get("remote_artifact_dir") or "")
+    local_artifact_dir = (
+        Path(dest) if dest is not None else Path(str(run.remote.get("local_artifact_dir") or ""))
+    )
+    if not login or not remote_artifact_dir or not str(local_artifact_dir):
+        raise typer.BadParameter(
+            f"Run {run_id!r} does not have remote artifact metadata to fetch"
+        )
+    ssh = SshClient(login)
+    ssh.download_tree(remote_artifact_dir, local_artifact_dir, timeout=300)
+    console.print(f"fetched artifacts to {local_artifact_dir}")
+
+
 @bench_app.command("artifacts-show")
 def bench_artifacts_show(
     task_id: Annotated[str, typer.Argument(..., help="Task id to inspect")],

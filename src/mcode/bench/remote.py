@@ -467,6 +467,14 @@ exit $rc
     # Wrapped in try/finally so unexpected exceptions (parse failure, SSH I/O,
     # download error) close the run instead of leaving it RUNNING forever.
     benchmark_name = bench_argv[0] if bench_argv else "unknown"
+    remote_artifact_metadata: dict[str, str] = {}
+    if local_artifact_fetch is not None:
+        remote_artifact_dir, local_artifact_dir = local_artifact_fetch
+        remote_artifact_metadata = {
+            "remote_artifact_dir": remote_artifact_dir,
+            "local_artifact_dir": str(local_artifact_dir),
+        }
+
     _upsert_run(
         run_id=run_id,
         benchmark=benchmark_name,
@@ -480,6 +488,7 @@ exit $rc
             "exit_sentinel": exit_sentinel,
             "podman_svc_log": svc_log,
             "remote_script": remote_script_path,
+            **remote_artifact_metadata,
         },
         db_path=str(local_db),
         started_at=time.time(),
@@ -520,6 +529,7 @@ exit $rc
                 "exit_sentinel": exit_sentinel,
                 "podman_svc_log": svc_log,
                 "remote_script": remote_script_path,
+                **remote_artifact_metadata,
             },
             log_paths=[remote_log],
         )

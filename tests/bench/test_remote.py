@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from typer.testing import CliRunner
+
 from mcode.bench import remote
+from mcode.cli import app
 from mcode.launch import config as launch_config
 from mcode.launch import state as launch_state
+from mcode.launch.models import RunRecord, RunStatus, Target
 
 
 class _FakeResult:
@@ -513,3 +517,46 @@ def test_bluevela_bench_waits_for_lsf_exit_before_bkill(tmp_path, monkeypatch) -
     assert ssh is not None
     assert any(cmd.startswith("STAT=$(bjobs -noheader -o stat ") for cmd in ssh.commands)
     assert not any(cmd.startswith("bkill ") for cmd in ssh.commands)
+
+
+def test_bench_artifacts_fetch_downloads_saved_remote_dir(tmp_path, monkeypatch) -> None:
+    state_path = tmp_path / "state.json"
+    monkeypatch.setenv("MCODE_LAUNCH_STATE", str(state_path))
+    launch_state.update(
+        None,
+        lambda s: s.upsert_run(
+            RunRecord(
+                id="run-1",
+                target=Target.BLUEVELA,
+                benchmark="suite",
+                status=RunStatus.DONE,
+                remote={
+                    "login": "skula@login3.bluevela.rmf.ibm.com",
+                    "remote_artifact_dir": "/remote/artifacts",
+                    "local_artifact_dir": "experiments/results/fetched-artifacts",
+                },
+            )
+        ),
+    )
+    monkeypatch.setattr("mcode.cli.SshClient", _FakeSshClient, raising=False)
+    monkeypatch.setattr("mcode.launch.ssh.SshClient", _FakeSshClient)
+    runner = CliRunner()
+
+    res = runner.invoke(
+        app,
+        [
+            "bench",
+            "artifacts-fetch",
+            "run-1",
+            "--dest",
+            str(tmp_path / "override-artifacts"),
+        ],
+        color=False,
+    )
+
+    assert res.exit_code == 0
+    ssh = _FakeSshClient.last
+    assert ssh is not None
+    assert ssh.download_trees == [
+        ("/remote/artifacts", tmp_path / "override-artifacts", 300)
+    ]
