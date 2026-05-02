@@ -48,7 +48,11 @@ class _FakeSshClient:
         self.uploads.append((src.read_text(), dst, timeout))
 
 
-def _bluevela_cfg() -> launch_config.LaunchConfig:
+def _bluevela_cfg(
+    *,
+    graphroot_base: str | None = None,
+    runroot_base: str | None = None,
+ ) -> launch_config.LaunchConfig:
     return launch_config.LaunchConfig(
         bluevela=launch_config.BluevelaConfig(
             login="skula@login3.bluevela.rmf.ibm.com",
@@ -56,6 +60,10 @@ def _bluevela_cfg() -> launch_config.LaunchConfig:
             shared_root="/u/skula/mcode-shared",
             group="grp_runtime",
             hf_env="/u/skula/.config/mcode/hf-env.sh",
+            podman=launch_config.BluevelaPodmanConfig(
+                graphroot_base=graphroot_base,
+                runroot_base=runroot_base,
+            ),
         )
     )
 
@@ -127,28 +135,63 @@ def test_bluevela_bench_submits_lsf_job_with_podman_on_compute(tmp_path, monkeyp
     assert 'if [ -z "${LSB_JOBID:-}" ]; then' in script_text
     assert "refusing to start podman outside an LSF compute job" in script_text
     assert f"export XDG_RUNTIME_DIR=/u/skula/mcode-shared/podman-runtime/{run_id}" in script_text
-    assert f"WORKSPACE_TMP=/u/skula/mcode-shared/podman-tmp/{run_id}" in script_text
-    assert 'GRAPHROOT="$XDG_RUNTIME_DIR/graphroot"' in script_text
-    assert 'RUNROOT="$XDG_RUNTIME_DIR/runroot"' in script_text
+    assert f"export WORKSPACE_TMP=/u/skula/mcode-shared/podman-tmp/{run_id}" in script_text
+    assert 'export TMPDIR="$WORKSPACE_TMP"' in script_text
+    assert 'GRAPHROOT_BASE=/u/skula/mcode-shared/podman-graphroot' in script_text
+    assert 'RUNROOT_BASE=/u/skula/mcode-shared/podman-runroot' in script_text
+    assert 'LOCKROOT_BASE="$GRAPHROOT_BASE/locks"' in script_text
+    assert 'HOST_TAG="$(hostname -s)"' in script_text
+    assert 'GRAPHROOT="$GRAPHROOT_BASE/$HOST_TAG"' in script_text
+    assert 'RUNROOT="$RUNROOT_BASE/$HOST_TAG"' in script_text
     assert 'CONTAINERS_CONF="$XDG_RUNTIME_DIR/containers.conf"' in script_text
     assert "keyring=false" in script_text
     assert "export CONTAINERS_CONF" in script_text
+    assert 'cleanup_dir() {' in script_text
     assert 'cleanup_runtime_dir() {' in script_text
-    assert 'cleanup_target="$XDG_RUNTIME_DIR.stale.${LSB_JOBID:-0}.$$.$(date +%s)"' in script_text
-    assert 'run_with_timeout 5 mv "$XDG_RUNTIME_DIR" "$cleanup_target"' in script_text
+    assert 'cleanup_dir "$XDG_RUNTIME_DIR" "runtime"' in script_text
+    assert 'cleanup_dir "$GRAPHROOT" "graphroot"' in script_text
+    assert 'cleanup_dir "$RUNROOT" "runroot"' in script_text
+    assert 'run_with_timeout 5 mv "$target" "$cleanup_target"' in script_text
     assert 'run_with_timeout 20 rm -rf "$cleanup_target"' in script_text
     assert 'run_with_timeout 20 podman unshare rm -rf "$cleanup_target"' in script_text
     assert 'wait "$PODMAN_PID"' not in script_text
-    assert 'setsid podman \\' in script_text
+    assert 'setsid podman' in script_text
     assert 'kill -TERM -- "-$pid"' in script_text
     assert 'kill -KILL -- "-$pid"' in script_text
     assert "trap cleanup EXIT" in script_text
-    assert 'export MCODE_PODMAN_LOCK_DIR="$XDG_RUNTIME_DIR"' in script_text
-    assert "max_infra_retries=1" in script_text
+    assert 'reset_persistent_podman_store() {' in script_text
+    assert 'grep -q "database configuration mismatch"' in script_text
+    assert 'podman store mismatch under $GRAPHROOT, clearing persistent store once' in script_text
     assert 'if [ "$rc" = "86" ]' in script_text
-    assert "resetting runtime" in script_text
+    assert 'resetting runtime' in script_text
     assert f"/u/skula/mcode-shared/podman-runtime/{run_id}" in script_text
     assert 'REGISTRY_AUTH_FILE=/u/skula/mcode-shared/containers-auth.json' in script_text
+    assert "/tmp" not in script_text
+
+
+def test_bluevela_bench_uses_graphroot_override(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        remote.launch_config,
+        "load",
+        lambda: _bluevela_cfg(graphroot_base="/proj/custom/podman-graphroot"),
+    )
+    monkeypatch.setattr(remote.launch_config, "validate_for_bluevela", lambda cfg: [])
+    monkeypatch.setattr(remote, "_resolve_endpoint", lambda model, cfg: "http://host:8321/v1")
+    monkeypatch.setattr(remote, "SshClient", _FakeSshClient)
+    monkeypatch.setattr(remote, "_stream_remote_log", _ignore_stream)
+    _set_attempt_context(monkeypatch, timestamp=1777000000.5)
+
+    remote.run_bench_on_bluevela(
+        bench_argv=["smoke", "--model", "Qwen/Qwen3.5-35B-A3B"],
+        model="Qwen/Qwen3.5-35B-A3B",
+        local_db=tmp_path / "results.db",
+    )
+
+    ssh = _FakeSshClient.last
+    assert ssh is not None
+    script_text = ssh.uploads[0][0]
+    assert 'GRAPHROOT_BASE=/proj/custom/podman-graphroot' in script_text
+    assert 'GRAPHROOT="$GRAPHROOT_BASE/$HOST_TAG"' in script_text
 
 
 def test_run_bench_on_bluevela_forwards_context_env(tmp_path, monkeypatch) -> None:
@@ -329,6 +372,7 @@ def test_run_bench_on_bluevela_bkills_lingering_lsf_job(tmp_path, monkeypatch) -
     monkeypatch.setattr(remote, "_resolve_endpoint", lambda model, cfg: "http://host:8321/v1")
     monkeypatch.setattr(remote, "SshClient", _LingeringJobSshClient)
     monkeypatch.setattr(remote, "_stream_remote_log", _ignore_stream)
+    monkeypatch.setattr(remote.time, "sleep", lambda _seconds: None)
     _set_attempt_context(monkeypatch, timestamp=1777000005.0)
 
     exit_code = remote.run_bench_on_bluevela(
@@ -340,7 +384,7 @@ def test_run_bench_on_bluevela_bkills_lingering_lsf_job(tmp_path, monkeypatch) -
     assert exit_code == 0
     ssh = _LingeringJobSshClient.last
     assert ssh is not None
-    assert any(cmd.startswith("bkill 4242") for cmd in ssh.commands)
+    assert not any(cmd.startswith("bkill 4242") for cmd in ssh.commands)
     assert ssh.active_checks == 2
 
 
@@ -383,3 +427,49 @@ def test_stream_remote_log_stops_after_sentinel_even_if_bjob_stays_running(monke
     assert 'SENTINEL_SEEN=1' in remote_cmd
     assert 'WARNING: benchmark finished but LSF job 4242 is still $STAT; ' in remote_cmd
     assert f'"inspect {remote_log}" >&2' in remote_cmd
+
+def test_bluevela_bench_waits_for_lsf_exit_before_bkill(tmp_path, monkeypatch) -> None:
+    class SettlingSsh(_FakeSshClient):
+        def __init__(self, login: str) -> None:
+            super().__init__(login)
+            self.active_checks = 0
+
+        def run(self, cmd: str, *, timeout: float = 60.0):
+            del timeout
+            self.commands.append(cmd)
+            if cmd.startswith("mkdir -p "):
+                return _FakeResult()
+            if cmd.startswith("bsub -G "):
+                return _FakeResult(stdout="Job <4242> is submitted to queue <normal>.\n")
+            if cmd.startswith("cat "):
+                return _FakeResult(stdout="0\n")
+            if cmd.startswith("test -f "):
+                return _FakeResult(stdout="128\n")
+            if cmd.startswith("STAT=$(bjobs -noheader -o stat "):
+                self.active_checks += 1
+                if self.active_checks == 1:
+                    return _FakeResult(ok=False)
+                return _FakeResult(ok=True)
+            if cmd.startswith("bkill "):
+                return _FakeResult(stdout="Job <4242> is being terminated\n")
+            raise AssertionError(f"unexpected ssh command: {cmd}")
+
+    monkeypatch.setattr(remote.launch_config, "load", lambda: _bluevela_cfg())
+    monkeypatch.setattr(remote.launch_config, "validate_for_bluevela", lambda cfg: [])
+    monkeypatch.setattr(remote, "_resolve_endpoint", lambda model, cfg: "http://host:8321/v1")
+    monkeypatch.setattr(remote, "SshClient", SettlingSsh)
+    monkeypatch.setattr(remote, "_stream_remote_log", _ignore_stream)
+    monkeypatch.setattr(remote.time, "sleep", lambda _seconds: None)
+    _set_attempt_context(monkeypatch, timestamp=1777000002.0)
+
+    exit_code = remote.run_bench_on_bluevela(
+        bench_argv=["smoke", "--model", "Qwen/Qwen3.5-35B-A3B"],
+        model="Qwen/Qwen3.5-35B-A3B",
+        local_db=tmp_path / "results.db",
+    )
+
+    assert exit_code == 0
+    ssh = SettlingSsh.last
+    assert ssh is not None
+    assert any(cmd.startswith("STAT=$(bjobs -noheader -o stat ") for cmd in ssh.commands)
+    assert not any(cmd.startswith("bkill ") for cmd in ssh.commands)

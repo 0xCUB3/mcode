@@ -1,0 +1,76 @@
+{
+  "entries": [
+    {
+      "name": "verified-smoke-16",
+      "benchmark": "swebench-lite",
+      "dataset": "princeton-nlp/SWE-bench_Verified",
+      "split": "test",
+      "task_ids": [
+        "astropy__astropy-12907",
+        "astropy__astropy-13033",
+        "astropy__astropy-13236",
+        "astropy__astropy-13398",
+        "astropy__astropy-13453",
+        "astropy__astropy-13579",
+        "astropy__astropy-13977",
+        "astropy__astropy-14096",
+        "astropy__astropy-14182",
+        "astropy__astropy-14309",
+        "django__django-11211",
+        "matplotlib__matplotlib-25775",
+        "pylint-dev__pylint-4551",
+        "scikit-learn__scikit-learn-13328",
+        "sphinx-doc__sphinx-8120",
+        "sympy__sympy-13877"
+      ]
+    },
+    {
+      "name": "live-verified-slice",
+      "benchmark": "swebench-live",
+      "split": "verified",
+      "limit": 1
+    },
+    {
+      "name": "polyglot-python-slice",
+      "benchmark": "aider-polyglot",
+      "language": "python",
+      "limit": 1,
+      "benchmark_root": "benchmarks/polyglot-benchmark"
+    },
+    {
+      "name": "polyglot-go-slice",
+      "benchmark": "aider-polyglot",
+      "language": "go",
+      "limit": 1,
+      "benchmark_root": "benchmarks/polyglot-benchmark"
+    },
+    {
+      "name": "polyglot-rust-slice",
+      "benchmark": "aider-polyglot",
+      "language": "rust",
+      "limit": 1,
+      "benchmark_root": "benchmarks/polyglot-benchmark"
+    },
+    {
+      "name": "polyglot-javascript-slice",
+      "benchmark": "aider-polyglot",
+      "language": "javascript",
+      "limit": 1,
+      "benchmark_root": "benchmarks/polyglot-benchmark"
+    },
+    {
+      "name": "polyglot-cpp-slice",
+      "benchmark": "aider-polyglot",
+      "language": "cpp",
+      "limit": 1,
+      "benchmark_root": "benchmarks/polyglot-benchmark"
+    },
+    {
+      "name": "polyglot-java-slice",
+      "benchmark": "aider-polyglot",
+      "language": "java",
+      "limit": 1,
+      "benchmark_root": "benchmarks/polyglot-benchmark"
+    }
+  ]
+}

@@ -10,6 +10,14 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from mcode.bench.artifacts import (
+    TaskArtifactManifest,
+    TaskArtifactStore,
+    VerificationEvidence,
+    iso_utc_now,
+    make_task_digest,
+    read_task_manifest,
+)
 from mcode.bench.results import ResultsDB, RunSummary
 from mcode.execution.sandbox import DockerUnavailableError
 from mcode.llm.session import LLMSession
@@ -38,6 +46,8 @@ class BenchConfig:
     task_shard_count: int | None = None
     task_shard_index: int | None = None
     cache_dir: Path = field(default_factory=_default_cache_dir)
+    phase: str = "run"
+    artifact_dir: Path | None = None
     swebench_split: str = "test"
     swebench_namespace: str | None = "swebench"
     swebench_arch: str | None = None
@@ -46,6 +56,7 @@ class BenchConfig:
     swebench_mem_limit: str = "4g"
     swebench_pids_limit: int = 512
     swebench_cpu_limit: float | None = None
+    swebench_check_image_digests: bool = False
     swebench_dataset: str = "SWE-bench/SWE-bench_Lite"
     aider_polyglot_root: Path | None = None
     aider_polyglot_language: str = "all"
@@ -56,12 +67,15 @@ class BenchConfig:
     sampling_budget: int | None = None
     selection_attempts: int = 1
     diagnostic_traces: bool = False
+    suite_name: str | None = None
+    suite_entry_name: str | None = None
 
 
 @dataclass(frozen=True)
 class _RunResume:
     run_id: int
     existing_rows: dict[str, dict[str, object]]
+    existing_artifacts: dict[str, dict[str, object]]
     retry_task_ids: set[str]
 
 
@@ -81,6 +95,21 @@ def _coerce_patch_repo_context(repo_context: object) -> PatchRepoContext:
         command_fn=command_fn,
         visible_repo_root=visible_repo_root,
     )
+
+
+@dataclass(frozen=True)
+class _BenchmarkAdapter:
+    benchmark: str
+    load_tasks: Callable[[int | None, list[str] | None], list[object]]
+    task_id: Callable[[object], str]
+    dataset_metadata: Callable[[], dict[str, object]]
+    prepare_environment: Callable[[list[object]], object | None]
+    run_task: Callable[[object, object | None, int], dict[str, object] | None]
+    cleanup_task: Callable[[object, object | None], None]
+
+
+def _noop_cleanup(_task: object, _environment: object | None) -> None:
+    return None
 
 
 class BenchmarkRunner:
@@ -106,18 +135,29 @@ class BenchmarkRunner:
         run_id = self.results_db.find_latest_run_by_config(benchmark, config)
         if run_id is None:
             run_id = self.results_db.start_run(benchmark, config)
-            return _RunResume(run_id=run_id, existing_rows={}, retry_task_ids=set())
+            return _RunResume(
+                run_id=run_id,
+                existing_rows={},
+                existing_artifacts={},
+                retry_task_ids=set(),
+            )
         existing_rows = self.results_db.task_terminal_rows(run_id)
+        existing_artifacts = self.results_db.task_artifact_rows(run_id)
         retry_task_ids = {
             task_id for task_id, row in existing_rows.items() if _is_retryable_task_row(row)
         }
         return _RunResume(
             run_id=run_id,
             existing_rows=existing_rows,
+            existing_artifacts=existing_artifacts,
             retry_task_ids=retry_task_ids,
         )
 
     def _should_run_task(self, resume: _RunResume, task_id: str) -> bool:
+        if self.config.phase == "generate":
+            return task_id not in resume.existing_artifacts
+        if self.config.phase == "evaluate":
+            return task_id not in resume.existing_rows or task_id in resume.retry_task_ids
         return task_id not in resume.existing_rows or task_id in resume.retry_task_ids
 
     def _save_task_result(self, run_id: int, result: dict[str, object]) -> None:
@@ -128,6 +168,313 @@ class BenchmarkRunner:
             base_sleep_s=0.05,
             max_sleep_s=0.5,
         )
+
+    def _save_task_artifact_manifest(
+        self,
+        run_id: int,
+        manifest: TaskArtifactManifest,
+        *,
+        manifest_path: Path,
+    ) -> None:
+        with_backoff(
+            lambda: self.results_db.save_task_artifact_manifest(
+                run_id,
+                manifest,
+                manifest_path=manifest_path,
+            ),
+            is_retryable=_is_retryable_sqlite_lock,
+            max_attempts=5,
+            base_sleep_s=0.05,
+            max_sleep_s=0.5,
+        )
+        if self.config.phase == "generate":
+            with_backoff(
+                lambda: self.results_db.delete_task_result(run_id, manifest.task.task_id),
+                is_retryable=_is_retryable_sqlite_lock,
+                max_attempts=5,
+                base_sleep_s=0.05,
+                max_sleep_s=0.5,
+            )
+
+    def _artifact_root(self) -> Path:
+        artifact_dir = self.config.artifact_dir
+        if artifact_dir is None:
+            artifact_dir = self.results_db.path.parent / f"{self.results_db.path.stem}-artifacts"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        return artifact_dir
+
+    def _task_artifact_store(self, *, benchmark: str, task_id: str) -> TaskArtifactStore:
+        return TaskArtifactStore.from_task(
+            artifact_dir=self._artifact_root(),
+            benchmark=benchmark,
+            task_id=task_id,
+        )
+
+    def _task_metadata(self, task: object) -> dict[str, object]:
+        metadata: dict[str, object] = {}
+        for name in (
+            "repo",
+            "base_commit",
+            "problem_statement",
+            "hints_text",
+            "version",
+            "language",
+            "exercise",
+        ):
+            value = getattr(task, name, None)
+            if value not in (None, ""):
+                metadata[name] = value
+        raw_instance = getattr(task, "raw_instance", None)
+        if raw_instance is not None:
+            metadata["raw_instance"] = raw_instance
+        test_cmds = getattr(task, "test_cmds", None)
+        if test_cmds is not None and "test_cmds" not in metadata:
+            metadata["test_cmds"] = test_cmds
+        return metadata
+
+    def _task_repo_id(self, *, benchmark: str, task: object, task_id: str) -> str:
+        repo = getattr(task, "repo", None)
+        if isinstance(repo, str) and repo:
+            return repo
+        return f"{benchmark}/{task_id}"
+
+    def _run_config_digest(self) -> str:
+        return hashlib.sha256(
+            json.dumps(asdict(self.config), sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+
+    def _artifact_failure_counters(self, metrics: dict[str, object] | None) -> dict[str, int]:
+        counters: dict[str, int] = {}
+        if metrics is None:
+            return counters
+        for key in (
+            "malformed_tool_call_recoveries",
+            "invalid_tool_call_count",
+            "blocked_finalizer_count",
+            "repeated_failed_run_test_count",
+            "post_edit_exploration_count",
+        ):
+            value = metrics.get(key)
+            if isinstance(value, bool):
+                counters[key] = int(value)
+            elif isinstance(value, int):
+                counters[key] = value
+        return counters
+
+    def _verification_evidence(self, items: object) -> list[VerificationEvidence]:
+        if not isinstance(items, list):
+            return []
+        evidence_list: list[VerificationEvidence] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            evidence_list.append(
+                VerificationEvidence(
+                    verifier_name=str(item.get("verifier_name", "run_tests")),
+                    command_label=str(item.get("command_label", "default")),
+                    command_digest=str(item.get("command_digest", "")),
+                    status=str(item.get("status", "UNKNOWN")),
+                    counted_as_verification=bool(item.get("counted_as_verification", False)),
+                    output_digest=str(item.get("output_digest", "")),
+                    output_preview_path=None,
+                    execution_time_ms=_coerce_optional_int(item.get("execution_time_ms")),
+                    started_at=_coerce_optional_str(item.get("started_at")),
+                    ended_at=_coerce_optional_str(item.get("ended_at")),
+                    timed_out=bool(item.get("timed_out", False)),
+                    metadata={
+                        key: value
+                        for key, value in item.items()
+                        if key
+                        not in {
+                            "verifier_name",
+                            "command_label",
+                            "command_digest",
+                            "status",
+                            "counted_as_verification",
+                            "output_digest",
+                            "execution_time_ms",
+                            "started_at",
+                            "ended_at",
+                            "timed_out",
+                        }
+                    },
+                )
+            )
+        return evidence_list
+
+    def _candidate_metrics_from_manifest(self, manifest: TaskArtifactManifest) -> dict[str, object]:
+        if not manifest.candidates:
+            return _scaffold_metrics(None)
+        candidate = next(
+            (item for item in manifest.candidates if item.selected),
+            manifest.candidates[-1],
+        )
+        metadata = candidate.metadata if isinstance(candidate.metadata, dict) else {}
+        return {
+            "terminal_reason": candidate.terminal_reason,
+            "turns_to_first_edit": _coerce_optional_int(metadata.get("turns_to_first_edit")),
+            "turns_to_first_verification": _coerce_optional_int(
+                metadata.get("turns_to_first_verification")
+            ),
+            "zero_edit": candidate.zero_edit,
+            "zero_verification": candidate.zero_verification,
+            "verification_succeeded": candidate.verification_succeeded,
+            "prompt_snapshot": None,
+            "prompt_tokens": candidate.prompt_tokens,
+            "completion_tokens": candidate.completion_tokens,
+            "total_tokens": candidate.total_tokens,
+            "provider": candidate.provider,
+            "response_model": candidate.response_model,
+            "submission_json": candidate.submission_json,
+            "validation_passed_count": candidate.validation_passed_count,
+            "validation_failed_count": candidate.validation_failed_count,
+            **candidate.failure_counters,
+        }
+
+    def _write_generation_manifest(
+        self,
+        *,
+        run_id: int,
+        benchmark: str,
+        task_id: str,
+        task: object,
+        patch: str,
+        metrics: dict[str, object] | None,
+    ) -> TaskArtifactManifest:
+        store = self._task_artifact_store(benchmark=benchmark, task_id=task_id)
+        metadata = self._task_metadata(task)
+        repo_id = self._task_repo_id(benchmark=benchmark, task=task, task_id=task_id)
+        task_ref = store.build_task_ref(
+            repo_id=repo_id,
+            task_digest=make_task_digest(
+                benchmark=benchmark,
+                task_id=task_id,
+                repo_id=repo_id,
+                metadata=metadata,
+            ),
+            metadata=metadata,
+        )
+        normalized_metrics = _scaffold_metrics(metrics)
+        candidate = store.write_candidate(
+            candidate_index=0,
+            patch=patch,
+            terminal_reason=_coerce_optional_str(normalized_metrics.get("terminal_reason")),
+            selected=True,
+            submission_json=_coerce_optional_str(normalized_metrics.get("submission_json")),
+            generation_time_ms=_coerce_optional_int(
+                normalized_metrics.get("generation_latency_ms")
+            ),
+            prompt_tokens=_coerce_optional_int(normalized_metrics.get("prompt_tokens")),
+            completion_tokens=_coerce_optional_int(normalized_metrics.get("completion_tokens")),
+            total_tokens=_coerce_optional_int(normalized_metrics.get("total_tokens")),
+            provider=_coerce_optional_str(normalized_metrics.get("provider")),
+            response_model=_coerce_optional_str(normalized_metrics.get("response_model")),
+            validation_passed_count=_coerce_optional_int(
+                normalized_metrics.get("validation_passed_count")
+            ),
+            validation_failed_count=_coerce_optional_int(
+                normalized_metrics.get("validation_failed_count")
+            ),
+            zero_edit=bool(normalized_metrics.get("zero_edit", True)),
+            zero_verification=bool(normalized_metrics.get("zero_verification", True)),
+            verification_succeeded=bool(normalized_metrics.get("verification_succeeded", False)),
+            trace_events=(
+                normalized_metrics.get("diagnostic_events")
+                if isinstance(normalized_metrics.get("diagnostic_events"), list)
+                else None
+            ),
+            verification_evidence=self._verification_evidence(
+                normalized_metrics.get("verification_evidence")
+            ),
+            failure_counters=self._artifact_failure_counters(normalized_metrics),
+            metadata={
+                "phase": self.config.phase,
+                "turns_to_first_edit": normalized_metrics.get("turns_to_first_edit"),
+                "turns_to_first_verification": normalized_metrics.get(
+                    "turns_to_first_verification"
+                ),
+            },
+        )
+        manifest = TaskArtifactManifest(
+            schema_version=task_ref.artifact_version,
+            phase=self.config.phase,
+            generated_at=iso_utc_now(),
+            run_config_digest=self._run_config_digest(),
+            code_sha=_runtime_metadata().get("mcode_git_sha"),
+            model_id=self.config.model_id,
+            backend_name=self.config.backend_name,
+            task=task_ref,
+            candidates=(candidate,),
+            evaluations=(),
+            metadata={"phase": self.config.phase},
+        )
+        manifest_path = store.write_manifest(manifest)
+        self._save_task_artifact_manifest(run_id, manifest, manifest_path=manifest_path)
+        return manifest
+
+    def _load_task_manifest(
+        self, *, benchmark: str, task_id: str
+    ) -> tuple[TaskArtifactStore, TaskArtifactManifest]:
+        store = self._task_artifact_store(benchmark=benchmark, task_id=task_id)
+        if not store.manifest_path.exists():
+            raise FileNotFoundError(
+                f"artifact manifest not found for {benchmark}:{task_id}: {store.manifest_path}"
+            )
+        return store, read_task_manifest(store.manifest_path)
+
+    def _selected_candidate_patch(
+        self, manifest: TaskArtifactManifest, store: TaskArtifactStore
+    ) -> tuple[int, str]:
+        if not manifest.candidates:
+            raise RuntimeError(f"artifact manifest has no candidates for {manifest.task.task_id}")
+        for candidate in manifest.candidates:
+            if candidate.selected:
+                return candidate.candidate_index, (
+                    store.task_root / candidate.patch_path
+                ).read_text(encoding="utf-8")
+        candidate = manifest.candidates[-1]
+        return candidate.candidate_index, (store.task_root / candidate.patch_path).read_text(
+            encoding="utf-8"
+        )
+
+    def _append_evaluation_manifest(
+        self,
+        *,
+        run_id: int,
+        store: TaskArtifactStore,
+        manifest: TaskArtifactManifest,
+        candidate_index: int,
+        evaluation: _TaskEvaluation,
+    ) -> TaskArtifactManifest:
+        evaluation_artifact = store.write_evaluation(
+            source_candidate_index=candidate_index,
+            evaluator_name=evaluation.evaluator_name,
+            passed=evaluation.passed,
+            timed_out=evaluation.timed_out,
+            exit_code=evaluation.exit_code,
+            report=evaluation.report,
+            stdout=evaluation.stdout,
+            stderr=evaluation.stderr,
+            error_class=evaluation.error,
+            runtime_ms=evaluation.runtime_ms,
+            metadata={"phase": self.config.phase},
+        )
+        updated = TaskArtifactManifest(
+            schema_version=manifest.schema_version,
+            phase=self.config.phase,
+            generated_at=iso_utc_now(),
+            run_config_digest=self._run_config_digest(),
+            code_sha=_runtime_metadata().get("mcode_git_sha"),
+            model_id=self.config.model_id,
+            backend_name=self.config.backend_name,
+            task=manifest.task,
+            candidates=manifest.candidates,
+            evaluations=tuple([*manifest.evaluations, evaluation_artifact]),
+            metadata=dict(manifest.metadata),
+        )
+        manifest_path = store.write_manifest(updated)
+        self._save_task_artifact_manifest(run_id, updated, manifest_path=manifest_path)
+        return updated
 
     def _record_preflight_infra_failure(
         self,
@@ -157,60 +504,165 @@ class BenchmarkRunner:
         limit: int | None = None,
         task_ids: list[str] | None = None,
     ) -> RunSummary:
+        adapter = self._adapter_for(benchmark)
+        if self.config.phase in {"run", "generate"}:
+            self.llm.check_available()
+        return self._run_adapter(adapter, limit=limit, task_ids=task_ids)
+
+    def _adapter_for(self, benchmark: str) -> _BenchmarkAdapter:
         name = benchmark.lower().strip()
         if name in {"swebench-lite", "swebench_lite"}:
-            self.llm.check_available()
-            return self._run_swebench_lite(limit=limit, task_ids=task_ids)
+            from mcode.bench.swebench_lite import load_swebench_lite
+            from mcode.execution.swebench import SWEbenchSandbox
+
+            def load_tasks(limit: int | None, task_ids: list[str] | None) -> list[object]:
+                return load_swebench_lite(
+                    self.config.cache_dir,
+                    split=self.config.swebench_split,
+                    limit=limit,
+                    instance_ids=task_ids,
+                    dataset_name=self.config.swebench_dataset,
+                )
+
+            def dataset_metadata() -> dict[str, object]:
+                return {
+                    "name": self.config.swebench_dataset.split("/")[-1],
+                    "hf_dataset": self.config.swebench_dataset,
+                    "split": self.config.swebench_split,
+                }
+
+            def prepare_environment(tasks: list[object]) -> SWEbenchSandbox:
+                sandbox = SWEbenchSandbox(
+                    namespace=self.config.swebench_namespace,
+                    arch=self.config.swebench_arch,
+                    max_workers=self.config.swebench_max_workers,
+                    mem_limit=self.config.swebench_mem_limit,
+                    pids_limit=self.config.swebench_pids_limit,
+                    cpu_limit=self.config.swebench_cpu_limit,
+                    force_rebuild=self.config.swebench_force_rebuild,
+                    check_image_digests=self.config.swebench_check_image_digests,
+                )
+                sandbox.prepare_images([task.raw_instance for task in tasks])
+                return sandbox
+
+            return _BenchmarkAdapter(
+                benchmark="swebench-lite",
+                load_tasks=load_tasks,
+                task_id=lambda task: str(getattr(task, "instance_id")),
+                dataset_metadata=dataset_metadata,
+                prepare_environment=prepare_environment,
+                run_task=lambda task, sandbox, run_id: self._run_swebench_task(
+                    task,
+                    swe_sandbox=sandbox,
+                    run_id=run_id,
+                ),
+                cleanup_task=_noop_cleanup,
+            )
+
         if name in {"swebench-live", "swebench_live"}:
-            self.llm.check_available()
-            return self._run_swebench_live(limit=limit, task_ids=task_ids)
+            from mcode.bench.swebench_live import load_swebench_live
+            from mcode.execution.swebench_live import SWEbenchLiveSandbox
+
+            def load_tasks(limit: int | None, task_ids: list[str] | None) -> list[object]:
+                return load_swebench_live(
+                    self.config.cache_dir,
+                    split=self.config.swebench_split,
+                    limit=limit,
+                    instance_ids=task_ids,
+                )
+
+            def prepare_environment(tasks: list[object]) -> SWEbenchLiveSandbox:
+                sandbox = SWEbenchLiveSandbox(
+                    mem_limit=self.config.swebench_mem_limit,
+                    pids_limit=self.config.swebench_pids_limit,
+                    cpu_limit=self.config.swebench_cpu_limit,
+                    check_image_digests=self.config.swebench_check_image_digests,
+                )
+                sandbox.prepare_images(tasks)
+                return sandbox
+
+            def cleanup_task(task: object, environment: object | None) -> None:
+                if os.environ.get("MCODE_KEEP_IMAGES") or environment is None:
+                    return
+                environment.remove_image(task)
+
+            return _BenchmarkAdapter(
+                benchmark="swebench-live",
+                load_tasks=load_tasks,
+                task_id=lambda task: str(getattr(task, "instance_id")),
+                dataset_metadata=lambda: {
+                    "name": "SWE-bench-Live",
+                    "hf_dataset": "SWE-bench-Live/SWE-bench-Live",
+                    "split": self.config.swebench_split,
+                },
+                prepare_environment=prepare_environment,
+                run_task=lambda task, sandbox, run_id: self._run_swebench_live_task(
+                    task,
+                    live_sandbox=sandbox,
+                    run_id=run_id,
+                ),
+                cleanup_task=cleanup_task,
+            )
+
         if name in {"aider-polyglot", "aider_polyglot"}:
-            self.llm.check_available()
-            return self._run_aider_polyglot(limit=limit, task_ids=task_ids)
+            from mcode.bench.aider_polyglot import load_aider_polyglot
+
+            return _BenchmarkAdapter(
+                benchmark="aider-polyglot",
+                load_tasks=lambda limit, task_ids: load_aider_polyglot(
+                    self.config.aider_polyglot_root,
+                    language=self.config.aider_polyglot_language,
+                    limit=limit,
+                    task_ids=task_ids,
+                ),
+                task_id=lambda task: str(getattr(task, "task_id")),
+                dataset_metadata=lambda: {
+                    "name": "Aider Polyglot",
+                    "root": (
+                        str(self.config.aider_polyglot_root)
+                        if self.config.aider_polyglot_root
+                        else None
+                    ),
+                    "language": self.config.aider_polyglot_language,
+                    "retry": self.config.aider_polyglot_retry,
+                    "retry_loop_budget": self.config.aider_polyglot_retry_loop_budget,
+                },
+                prepare_environment=lambda _tasks: None,
+                run_task=lambda task, _environment, run_id: self._run_aider_polyglot_task(
+                    task,
+                    run_id=run_id,
+                ),
+                cleanup_task=_noop_cleanup,
+            )
+
         raise ValueError(f"Unknown benchmark: {benchmark}")
 
-    def _run_swebench_lite(
+    def _run_adapter(
         self,
+        adapter: _BenchmarkAdapter,
         *,
         limit: int | None,
-        task_ids: list[str] | None = None,
+        task_ids: list[str] | None,
     ) -> RunSummary:
-        from mcode.bench.swebench_lite import load_swebench_lite
-        from mcode.execution.swebench import SWEbenchSandbox
-
-        tasks = load_swebench_lite(
-            self.config.cache_dir,
-            split=self.config.swebench_split,
-            limit=limit,
-            instance_ids=task_ids,
-            dataset_name=self.config.swebench_dataset,
+        tasks = adapter.load_tasks(limit, task_ids)
+        tasks = _apply_task_shard(
+            tasks,
+            self.config.task_shard_count,
+            self.config.task_shard_index,
         )
-        tasks = _apply_task_shard(tasks, self.config.task_shard_count, self.config.task_shard_index)
         config = _augment_run_config(asdict(self.config))
         config["planned_task_count"] = len(tasks)
-        config["dataset"] = {
-            "name": self.config.swebench_dataset.split("/")[-1],
-            "hf_dataset": self.config.swebench_dataset,
-            "split": self.config.swebench_split,
-        }
-
-        resume = self._start_or_resume_run("swebench-lite", config)
-        pending_tasks = [task for task in tasks if self._should_run_task(resume, task.instance_id)]
+        config["dataset"] = adapter.dataset_metadata()
+        resume = self._start_or_resume_run(adapter.benchmark, config)
+        pending_tasks = [
+            task for task in tasks if self._should_run_task(resume, adapter.task_id(task))
+        ]
         if not pending_tasks:
             return self.results_db.run_summary(resume.run_id)
 
-        swe_sandbox = SWEbenchSandbox(
-            namespace=self.config.swebench_namespace,
-            arch=self.config.swebench_arch,
-            max_workers=self.config.swebench_max_workers,
-            mem_limit=self.config.swebench_mem_limit,
-            pids_limit=self.config.swebench_pids_limit,
-            cpu_limit=self.config.swebench_cpu_limit,
-            force_rebuild=self.config.swebench_force_rebuild,
-        )
         try:
-            with_backoff(
-                lambda: swe_sandbox.prepare_images([t.raw_instance for t in pending_tasks]),
+            environment = with_backoff(
+                lambda: adapter.prepare_environment(pending_tasks),
                 is_retryable=_is_retryable_infra_error,
                 max_attempts=2,
                 base_sleep_s=0.1,
@@ -228,127 +680,22 @@ class BenchmarkRunner:
         with choose_task_reporter() as reporter:
             reporter.total(len(pending_tasks))
             for task in pending_tasks:
-                result = self._run_swebench_task(
-                    task, swe_sandbox=swe_sandbox, run_id=resume.run_id
-                )
-                self._save_task_result(resume.run_id, result)
-                detail = f"{task.instance_id} {'ok' if result['passed'] else 'fail'}"
+                result = adapter.run_task(task, environment, resume.run_id)
+                if result is not None:
+                    self._save_task_result(resume.run_id, result)
+                    detail = f"{adapter.task_id(task)} {'ok' if result['passed'] else 'fail'}"
+                else:
+                    detail = f"{adapter.task_id(task)} generated"
+                adapter.cleanup_task(task, environment)
                 reporter.advance(detail=detail)
 
         return self.results_db.run_summary(resume.run_id)
 
-    def _run_swebench_live(
-        self,
-        *,
-        limit: int | None,
-        task_ids: list[str] | None = None,
-    ) -> RunSummary:
-        from mcode.bench.swebench_live import load_swebench_live
-        from mcode.execution.swebench_live import SWEbenchLiveSandbox
-
-        tasks = load_swebench_live(
-            self.config.cache_dir,
-            split=self.config.swebench_split,
-            limit=limit,
-            instance_ids=task_ids,
-        )
-        tasks = _apply_task_shard(tasks, self.config.task_shard_count, self.config.task_shard_index)
-        config = _augment_run_config(asdict(self.config))
-        config["planned_task_count"] = len(tasks)
-        config["dataset"] = {
-            "name": "SWE-bench-Live",
-            "hf_dataset": "SWE-bench-Live/SWE-bench-Live",
-            "split": self.config.swebench_split,
-        }
-
-        resume = self._start_or_resume_run("swebench-live", config)
-        pending_tasks = [task for task in tasks if self._should_run_task(resume, task.instance_id)]
-        if not pending_tasks:
-            return self.results_db.run_summary(resume.run_id)
-
-        live_sandbox = SWEbenchLiveSandbox(
-            mem_limit=self.config.swebench_mem_limit,
-            pids_limit=self.config.swebench_pids_limit,
-            cpu_limit=self.config.swebench_cpu_limit,
-        )
-        try:
-            with_backoff(
-                lambda: live_sandbox.prepare_images(pending_tasks),
-                is_retryable=_is_retryable_infra_error,
-                max_attempts=2,
-                base_sleep_s=0.1,
-                max_sleep_s=0.5,
-            )
-        except Exception as exc:
-            if not _is_retryable_infra_error(exc):
-                raise
-            return self._record_preflight_infra_failure(
-                resume=resume,
-                tasks=pending_tasks,
-                error=exc,
-            )
-
-        with choose_task_reporter() as reporter:
-            reporter.total(len(pending_tasks))
-            for task in pending_tasks:
-                result = self._run_swebench_live_task(
-                    task,
-                    live_sandbox=live_sandbox,
-                    run_id=resume.run_id,
-                )
-                self._save_task_result(resume.run_id, result)
-                if not os.environ.get("MCODE_KEEP_IMAGES"):
-                    live_sandbox.remove_image(task)
-                detail = f"{task.instance_id} {'ok' if result['passed'] else 'fail'}"
-                reporter.advance(detail=detail)
-
-        return self.results_db.run_summary(resume.run_id)
-
-    def _run_aider_polyglot(
-        self,
-        *,
-        limit: int | None,
-        task_ids: list[str] | None = None,
-    ) -> RunSummary:
-        from mcode.bench.aider_polyglot import load_aider_polyglot
-
-        tasks = load_aider_polyglot(
-            self.config.aider_polyglot_root,
-            language=self.config.aider_polyglot_language,
-            limit=limit,
-            task_ids=task_ids,
-        )
-        tasks = _apply_task_shard(tasks, self.config.task_shard_count, self.config.task_shard_index)
-        config = _augment_run_config(asdict(self.config))
-        config["planned_task_count"] = len(tasks)
-        config["dataset"] = {
-            "name": "Aider Polyglot",
-            "root": (
-                str(self.config.aider_polyglot_root) if self.config.aider_polyglot_root else None
-            ),
-            "language": self.config.aider_polyglot_language,
-            "retry": self.config.aider_polyglot_retry,
-            "retry_loop_budget": self.config.aider_polyglot_retry_loop_budget,
-        }
-        resume = self._start_or_resume_run("aider-polyglot", config)
-        pending_tasks = [task for task in tasks if self._should_run_task(resume, task.task_id)]
-        if not pending_tasks:
-            return self.results_db.run_summary(resume.run_id)
-
-        with choose_task_reporter() as reporter:
-            reporter.total(len(pending_tasks))
-            for task in pending_tasks:
-                result = self._run_aider_polyglot_task(task)
-                self._save_task_result(resume.run_id, result)
-                detail = f"{task.task_id} {'ok' if result['passed'] else 'fail'}"
-                reporter.advance(detail=detail)
-
-        return self.results_db.run_summary(resume.run_id)
-
-    def _run_aider_polyglot_task(self, task) -> dict[str, object]:
+    def _run_aider_polyglot_task(self, task, *, run_id: int) -> dict[str, object] | None:
         from pathlib import Path
 
         from mcode.bench.aider_polyglot import (
+            apply_patch_to_prepared_task,
             cleanup_prepared_task,
             prepare_task,
             run_test_commands,
@@ -361,7 +708,6 @@ class BenchmarkRunner:
         final_metrics: dict[str, object] | None = None
         first_pass_snapshot = None
         final_pass_snapshot = None
-        evaluation = None
         attempts_used = 0
         try:
             prepared = prepare_task(task, benchmark_root=self.config.aider_polyglot_root)
@@ -370,12 +716,86 @@ class BenchmarkRunner:
                     f"benchmark task {task.task_id} is missing stubs or tests after preparation"
                 )
 
+            if self.config.phase == "evaluate":
+                store, manifest = self._load_task_manifest(
+                    benchmark=task.benchmark,
+                    task_id=task.task_id,
+                )
+                candidate_index, patch = self._selected_candidate_patch(manifest, store)
+                scaffold_result = self._candidate_metrics_from_manifest(manifest)
+                apply_outcome = apply_patch_to_prepared_task(prepared, patch)
+                if apply_outcome.passed:
+                    evaluation = run_test_commands(prepared)
+                    error = None if evaluation.passed else "Tests failed"
+                    stderr = None
+                else:
+                    evaluation = apply_outcome
+                    error = "Patch did not apply"
+                    stderr = None
+                eval_detail = _TaskEvaluation(
+                    evaluator_name="aider-polyglot",
+                    passed=evaluation.passed and apply_outcome.passed,
+                    timed_out=evaluation.timed_out,
+                    stdout=_truncate(evaluation.output),
+                    stderr=stderr,
+                    error=error,
+                    exit_code=evaluation.exit_code,
+                    report={
+                        "apply_patch_output": _truncate(apply_outcome.output),
+                        "apply_patch_passed": apply_outcome.passed,
+                        "tests_output": _truncate(evaluation.output),
+                    },
+                    runtime_ms=int((time.time() - start) * 1000),
+                )
+                if eval_detail.passed:
+                    scaffold_result["terminal_reason"] = "submitted"
+                elif scaffold_result.get("verification_succeeded"):
+                    scaffold_result["terminal_reason"] = "wrong_patch_after_verification"
+                _append_terminal_diagnostic(scaffold_result, eval_detail)
+                self._append_evaluation_manifest(
+                    run_id=run_id,
+                    store=store,
+                    manifest=manifest,
+                    candidate_index=candidate_index,
+                    evaluation=eval_detail,
+                )
+                return {
+                    "task_id": task.task_id,
+                    "passed": eval_detail.passed,
+                    "attempts_used": 1,
+                    "time_ms": int((time.time() - start) * 1000),
+                    "exit_code": eval_detail.exit_code,
+                    "timed_out": eval_detail.timed_out,
+                    "stdout": eval_detail.stdout,
+                    "stderr": eval_detail.stderr,
+                    "error": eval_detail.error,
+                    "code_sha256": hashlib.sha256(
+                        patch.encode("utf-8", errors="ignore")
+                    ).hexdigest()
+                    if patch
+                    else None,
+                    **scaffold_result,
+                }
+
             first_metrics, first_pass_snapshot = self._run_aider_polyglot_attempt(
                 task=task,
                 prepared=prepared,
                 prompt=prepared.build_first_prompt(),
                 loop_budget=self.config.loop_budget,
             )
+            attempts_used = 1
+            diff = get_git_diff(str(prepared.work_dir))
+            if self.config.phase == "generate":
+                self._write_generation_manifest(
+                    run_id=run_id,
+                    benchmark=task.benchmark,
+                    task_id=task.task_id,
+                    task=task,
+                    patch=diff,
+                    metrics=first_metrics,
+                )
+                return None
+
             evaluation = run_test_commands(prepared)
             if not evaluation.passed and first_pass_snapshot is not None:
                 restore_repo_snapshot(
@@ -383,7 +803,6 @@ class BenchmarkRunner:
                     Path(first_pass_snapshot.name) / "snapshot",
                 )
                 evaluation = run_test_commands(prepared)
-            attempts_used = 1
 
             if not evaluation.passed and self.config.aider_polyglot_retry:
                 final_metrics, final_pass_snapshot = self._run_aider_polyglot_attempt(
@@ -403,9 +822,7 @@ class BenchmarkRunner:
             else:
                 final_metrics = first_metrics
 
-            terminal_reason = None
-            if evaluation.passed:
-                terminal_reason = "submitted"
+            terminal_reason = "submitted" if evaluation.passed else None
             metrics = _merge_polyglot_metrics(
                 first=first_metrics,
                 second=final_metrics if attempts_used > 1 else None,
@@ -413,6 +830,32 @@ class BenchmarkRunner:
                 terminal_reason=terminal_reason,
             )
             diff = get_git_diff(str(prepared.work_dir))
+            manifest = self._write_generation_manifest(
+                run_id=run_id,
+                benchmark=task.benchmark,
+                task_id=task.task_id,
+                task=task,
+                patch=diff,
+                metrics=metrics,
+            )
+            eval_detail = _TaskEvaluation(
+                evaluator_name="aider-polyglot",
+                passed=evaluation.passed,
+                timed_out=evaluation.timed_out,
+                stdout=_truncate(evaluation.output),
+                stderr=None,
+                error=None if evaluation.passed else "Tests failed",
+                exit_code=evaluation.exit_code,
+                report={"tests_output": _truncate(evaluation.output)},
+                runtime_ms=int((time.time() - start) * 1000),
+            )
+            self._append_evaluation_manifest(
+                run_id=run_id,
+                store=self._task_artifact_store(benchmark=task.benchmark, task_id=task.task_id),
+                manifest=manifest,
+                candidate_index=0,
+                evaluation=eval_detail,
+            )
             sha = (
                 hashlib.sha256(diff.encode("utf-8", errors="ignore")).hexdigest() if diff else None
             )
@@ -453,10 +896,10 @@ class BenchmarkRunner:
         loop_budget: int,
     ) -> tuple[dict[str, object] | None, object | None]:
         import shutil
-        from tempfile import TemporaryDirectory
 
         from mcode.agent.tooling import format_tool_result
         from mcode.bench.aider_polyglot import run_command_sequence, run_single_command
+        from mcode.util import temporary_directory
 
         llm = self._build_llm(loop_budget=loop_budget)
         pass_snapshot = None
@@ -466,7 +909,7 @@ class BenchmarkRunner:
             nonlocal pass_snapshot
             if pass_snapshot is not None:
                 return
-            pass_snapshot = TemporaryDirectory(prefix="mcode-polyglot-pass-")
+            pass_snapshot = temporary_directory(prefix="mcode-polyglot-pass-")
             snapshot_dir = Path(pass_snapshot.name) / "snapshot"
             shutil.copytree(
                 prepared.work_dir,
@@ -545,6 +988,7 @@ class BenchmarkRunner:
 
     def _run_swebench_live_task(self, task, *, live_sandbox, run_id: int) -> dict:
         return self._run_task(
+            run_id=run_id,
             task_id=task.instance_id,
             generation_task=task,
             repo_context_factory=lambda: live_sandbox.repo_context(task),
@@ -559,6 +1003,7 @@ class BenchmarkRunner:
 
     def _run_swebench_task(self, task, *, swe_sandbox, run_id: int) -> dict:
         return self._run_task(
+            run_id=run_id,
             task_id=task.instance_id,
             generation_task=task,
             repo_context_factory=lambda: swe_sandbox.repo_context(task.raw_instance),
@@ -575,17 +1020,76 @@ class BenchmarkRunner:
     def _run_task(
         self,
         *,
+        run_id: int = 0,
         task_id: str,
         generation_task,
         repo_context_factory: Callable[[], object],
         evaluate_patch: Callable[[str], _TaskEvaluation],
-    ) -> dict:
+    ) -> dict[str, object] | None:
+        benchmark = str(getattr(generation_task, "benchmark", ""))
         start = time.time()
+        attempts_used = 0
+        elapsed_ms = 0
+
+        if self.config.phase == "evaluate":
+            try:
+                store, manifest = self._load_task_manifest(
+                    benchmark=benchmark,
+                    task_id=task_id,
+                )
+                scaffold_result = self._candidate_metrics_from_manifest(manifest)
+                candidate_index, patch = self._selected_candidate_patch(manifest, store)
+                if patch.strip():
+                    eval_detail = evaluate_patch(patch)
+                else:
+                    eval_detail = _TaskEvaluation(
+                        evaluator_name=benchmark or "artifact-eval",
+                        passed=False,
+                        timed_out=False,
+                        stdout=None,
+                        stderr=None,
+                        error="No patch candidate found",
+                    )
+                if eval_detail.passed:
+                    scaffold_result["terminal_reason"] = "submitted"
+                elif scaffold_result.get("verification_succeeded"):
+                    scaffold_result["terminal_reason"] = "wrong_patch_after_verification"
+                _append_terminal_diagnostic(scaffold_result, eval_detail)
+                self._append_evaluation_manifest(
+                    run_id=run_id,
+                    store=store,
+                    manifest=manifest,
+                    candidate_index=candidate_index,
+                    evaluation=eval_detail,
+                )
+                elapsed_ms = int((time.time() - start) * 1000)
+                return {
+                    "task_id": task_id,
+                    "passed": eval_detail.passed,
+                    "attempts_used": 1,
+                    "time_ms": elapsed_ms,
+                    "code_sha256": hashlib.sha256(
+                        patch.encode("utf-8", errors="ignore")
+                    ).hexdigest()
+                    if patch
+                    else None,
+                    **eval_detail.as_result_dict(),
+                    **scaffold_result,
+                }
+            except Exception as e:
+                return _task_error_result(
+                    task_id=task_id,
+                    start_time=start,
+                    error=e,
+                    scaffold_metrics=None,
+                    attempts_used=attempts_used,
+                )
+
         patch = ""
         scaffold_metrics: dict[str, object] | None = None
         scaffold_result: dict[str, object] | None = None
         eval_detail: _TaskEvaluation | None = None
-        attempts_used = 0
+        manifest: TaskArtifactManifest | None = None
         for attempts_used in range(1, 3):
             try:
                 with repo_context_factory() as repo_context:
@@ -599,6 +1103,16 @@ class BenchmarkRunner:
                         )
                         elapsed_ms = int((time.time() - start) * 1000)
                         scaffold_result = _scaffold_metrics(scaffold_metrics)
+                        manifest = self._write_generation_manifest(
+                            run_id=run_id,
+                            benchmark=benchmark,
+                            task_id=task_id,
+                            task=generation_task,
+                            patch=patch,
+                            metrics=scaffold_metrics,
+                        )
+                        if self.config.phase == "generate":
+                            return None
                     if patch.strip():
                         eval_detail = evaluate_patch(patch)
                         if eval_detail.passed:
@@ -619,6 +1133,15 @@ class BenchmarkRunner:
 
         if scaffold_result is not None:
             _append_terminal_diagnostic(scaffold_result, eval_detail)
+        if manifest is not None and eval_detail is not None:
+            store = self._task_artifact_store(benchmark=benchmark, task_id=task_id)
+            self._append_evaluation_manifest(
+                run_id=run_id,
+                store=store,
+                manifest=manifest,
+                candidate_index=0,
+                evaluation=eval_detail,
+            )
         sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest() if patch else None
         return {
             "task_id": task_id,
@@ -627,7 +1150,7 @@ class BenchmarkRunner:
             "time_ms": elapsed_ms,
             "code_sha256": sha,
             **(eval_detail.as_result_dict() if eval_detail is not None else {}),
-            **scaffold_result,
+            **(scaffold_result or _scaffold_metrics(scaffold_metrics)),
         }
 
 
@@ -638,10 +1161,14 @@ class _TaskEvaluation:
     stdout: str | None
     stderr: str | None
     error: str | None
+    evaluator_name: str = ""
+    exit_code: int | None = None
+    report: dict[str, object] | None = None
+    runtime_ms: int | None = None
 
     def as_result_dict(self) -> dict[str, object]:
         return {
-            "exit_code": None,
+            "exit_code": self.exit_code,
             "timed_out": self.timed_out,
             "stdout": self.stdout,
             "stderr": self.stderr,
@@ -664,11 +1191,14 @@ def _evaluate_live_patch(
         timeout_s=timeout_s,
     )
     return _TaskEvaluation(
+        evaluator_name="swebench-live",
         passed=run.resolved,
         timed_out=run.timed_out,
         stdout=_truncate(run.test_output),
         stderr=json.dumps(run.report, sort_keys=True),
         error=None if run.resolved else "Not resolved",
+        report=run.report,
+        runtime_ms=int(float(getattr(run, "runtime_s", 0.0) or 0.0) * 1000),
     )
 
 
@@ -690,11 +1220,14 @@ def _evaluate_lite_patch(
     )
     inst_report = run.report.get(task.instance_id, {})
     return _TaskEvaluation(
+        evaluator_name="swebench-lite",
         passed=run.resolved,
         timed_out=run.timed_out,
         stdout=_truncate(run.test_output),
         stderr=json.dumps(inst_report, sort_keys=True),
         error=None if run.resolved else "Not resolved",
+        report=inst_report,
+        runtime_ms=int(float(getattr(run, "runtime_s", 0.0) or 0.0) * 1000),
     )
 
 
@@ -864,6 +1397,16 @@ def _merge_polyglot_metrics(
     ):
         if second_metrics.get(key) is not None:
             merged[key] = second_metrics[key]
+    for key in ("diagnostic_events", "verification_evidence"):
+        merged[key] = _merge_list_metric(merged.get(key), second_metrics.get(key))
+    merged["validation_passed_count"] = _sum_metric(
+        merged.get("validation_passed_count"),
+        second_metrics.get("validation_passed_count"),
+    )
+    merged["validation_failed_count"] = _sum_metric(
+        merged.get("validation_failed_count"),
+        second_metrics.get("validation_failed_count"),
+    )
     if terminal_reason is not None:
         merged["terminal_reason"] = terminal_reason
     return merged
@@ -877,6 +1420,20 @@ def _merge_polyglot_turn(*, first: object, second: object, offset: int) -> int |
     return None
 
 
+def _coerce_optional_int(value: object) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    return text if text else None
+
+
 def _sum_metric(left: object, right: object) -> int | None:
     total = 0
     seen = False
@@ -885,6 +1442,15 @@ def _sum_metric(left: object, right: object) -> int | None:
             total += value
             seen = True
     return total if seen else None
+
+
+def _merge_list_metric(left: object, right: object) -> list[object] | None:
+    merged: list[object] = []
+    if isinstance(left, list):
+        merged.extend(left)
+    if isinstance(right, list):
+        merged.extend(right)
+    return merged or None
 
 
 def _allowed_polyglot_test_commands(prepared) -> set[str]:
@@ -986,9 +1552,10 @@ def _runtime_metadata() -> dict[str, str]:
 
 
 def _generation_result(session: LLMSession) -> dict[str, object] | None:
-    result = session.last_solve_result
-    if result is None:
+    solve_result = session.solve_result
+    if solve_result is None:
         return None
-    if session.last_submission:
-        result["submission_json"] = json.dumps(session.last_submission, sort_keys=True)
+    result = solve_result.as_metrics_dict()
+    if solve_result.submission is not None:
+        result["submission_json"] = solve_result.submission.model_dump_json()
     return result

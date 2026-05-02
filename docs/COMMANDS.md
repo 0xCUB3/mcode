@@ -93,9 +93,10 @@ mcode bench swebench-live   --model M  [flags]
 mcode bench swebench-lite   --model M  [flags]
 mcode bench aider-polyglot  --model M  [flags]
 mcode bench smoke           --model M  [flags]
+mcode bench suite          --model M  [flags]
 ```
 
-### Common flags (`swebench-live` / `swebench-lite` / `aider-polyglot` / `smoke`)
+### Common flags (`swebench-live` / `swebench-lite` / `aider-polyglot` / `smoke` / `suite`)
 
 - `--model M` — Mellea model id (required)
 - `--backend B` — Mellea backend: `ollama` (default for swebench), `openai` (default for smoke / aider)
@@ -106,6 +107,8 @@ mcode bench smoke           --model M  [flags]
 - `--limit N` — run the first N tasks
 - `--task-ids X` — comma-separated ids or path to JSON / text file
 - `--db PATH` — SQLite results DB path
+- `--phase {run,generate,evaluate}` — `run` generates and evaluates in one pass; `generate` writes task artifacts only; `evaluate` loads those artifacts and records eval rows
+- `--artifact-dir DIR` — directory for generated task artifacts; defaults next to `--db` as `<db-stem>-artifacts`
 - `--shards N` — run N shard workers, merge per-shard DBs into `--db`
 - `--shard-count C / --shard-index I` — manual single-shard mode
 - `--on {local,bluevela}` — where to run (default `local`)
@@ -114,6 +117,52 @@ mcode bench smoke           --model M  [flags]
 - `--json` — machine-readable event stream (one JSON object per line, monotonic `seq`)
 
 Re-running the same bench command against the same `--db` resumes the matching run. Completed task rows are skipped, retryable infra rows are retried, and sharded runs reuse stable shard DBs before merging whatever completed rows exist.
+
+### Artifact-backed phases
+
+Use `--phase generate` when you want to produce patch artifacts without running official evaluation yet. Reuse the same `--artifact-dir` with `--phase evaluate` to load the saved candidates and write results to the DB. The default `--phase run` keeps the old one-command path and still writes artifacts as it goes.
+
+```bash
+uv run mcode bench swebench-lite \
+  --backend openai --model granite4 --limit 16 --shards 4 \
+  --db experiments/results/lite-split.db \
+  --artifact-dir experiments/results/lite-split-artifacts \
+  --phase generate
+
+uv run mcode bench swebench-lite \
+  --backend openai --model granite4 --limit 16 --shards 4 \
+  --db experiments/results/lite-split.db \
+  --artifact-dir experiments/results/lite-split-artifacts \
+  --phase evaluate
+```
+
+### `suite`
+
+The mixed suite runs several benchmark slices through the same phase runner and writes all runs into one DB. Use it when you want a small, broader regression sweep instead of another SWE-only pass.
+
+```bash
+uv run mcode bench suite \
+  --backend openai --model granite4 \
+  --db experiments/results/mixed-suite.db \
+  --phase run
+
+uv run mcode bench suite \
+  --backend openai --model granite4 \
+  --db experiments/results/mixed-suite.db \
+  --artifact-dir experiments/results/mixed-suite-artifacts \
+  --phase generate
+
+uv run mcode bench suite \
+  --backend openai --model granite4 \
+  --db experiments/results/mixed-suite-eval.db \
+  --artifact-dir experiments/results/mixed-suite-artifacts \
+  --phase evaluate
+```
+
+- `--suite-file PATH` — optional JSON manifest overriding the bundled suite
+- `--shards N` — run N suite shard workers and merge all run DBs back into `--db`
+- `--shard-count C / --shard-index I` — manual shard mode for the whole suite; each slice applies the same shard split
+- `--retry-loop-budget N` — Aider Polyglot retry budget inside the suite
 
 ### `swebench-live` / `swebench-lite` extras
 
@@ -143,7 +192,7 @@ Re-running the same bench command against the same `--db` resumes the matching r
 
 ### `smoke`
 
-A 16-task SWE-bench Verified diagnostic slice (astropy + 6 projects). Runs `swebench-lite` under the hood with a bundled task-id list and sensible defaults.
+A 16-task SWE-bench Verified diagnostic slice (astropy + 6 projects). It runs `swebench-lite` under the hood with a bundled task-id list and sensible defaults, so the common phase and artifact flags apply there too.
 
 ### JSON event stream
 

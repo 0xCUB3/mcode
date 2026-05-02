@@ -9,7 +9,6 @@ import re
 import shlex
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -17,6 +16,7 @@ from mcode.launch import config as launch_config
 from mcode.launch import state as launch_state
 from mcode.launch.models import Target
 from mcode.launch.ssh import SshClient
+from mcode.util import temporary_directory
 
 
 class RemoteBenchError(RuntimeError):
@@ -202,6 +202,8 @@ def run_bench_on_bluevela(
     # filesystem is the only place large image pulls and benchmark repos fit.
     runtime_dir = f"{bv.shared_root}/podman-runtime/{run_id}"
     tmp_dir = f"{bv.shared_root}/podman-tmp/{run_id}"
+    graphroot_base = bv.podman.graphroot_base or f"{bv.shared_root}/podman-graphroot"
+    runroot_base = bv.podman.runroot_base or f"{bv.shared_root}/podman-runroot"
     shared_auth = f"{bv.shared_root}/containers-auth.json"
     forwarded_exports = "".join(
         f"export {name}={shlex.quote(value)}\n" for name, value in forwarded_env.items()
@@ -237,12 +239,17 @@ fi
 cd {shlex.quote(bv.workspace_root)}
 [ -f {shlex.quote(hf_env)} ] && source {shlex.quote(hf_env)}
 export XDG_RUNTIME_DIR={shlex.quote(runtime_dir)}
-WORKSPACE_TMP={shlex.quote(tmp_dir)}
-GRAPHROOT="$XDG_RUNTIME_DIR/graphroot"
-RUNROOT="$XDG_RUNTIME_DIR/runroot"
+export WORKSPACE_TMP={shlex.quote(tmp_dir)}
+export TMPDIR="$WORKSPACE_TMP"
+GRAPHROOT_BASE={shlex.quote(graphroot_base)}
+RUNROOT_BASE={shlex.quote(runroot_base)}
+LOCKROOT_BASE="$GRAPHROOT_BASE/locks"
+HOST_TAG="$(hostname -s)"
+GRAPHROOT="$GRAPHROOT_BASE/$HOST_TAG"
+RUNROOT="$RUNROOT_BASE/$HOST_TAG"
 CONTAINERS_CONF="$XDG_RUNTIME_DIR/containers.conf"
 SOCK="$XDG_RUNTIME_DIR/podman.sock"
-export MCODE_PODMAN_LOCK_DIR="$XDG_RUNTIME_DIR"
+export MCODE_PODMAN_LOCK_DIR="$LOCKROOT_BASE/$HOST_TAG"
 # Use shared docker.io creds if present so we get the higher pull rate limit
 # (~200/6h vs ~100/6h for anonymous on the cluster's shared egress IP). The
 # launcher never reads login-node home paths during remote bench startup.
@@ -282,31 +289,36 @@ run_with_timeout() {{
   return 124
 }}
 
-cleanup_runtime_dir() {{
-  local cleanup_target="$XDG_RUNTIME_DIR"
-  if [ ! -e "$cleanup_target" ]; then
+cleanup_dir() {{
+  local target="$1"
+  local label="$2"
+  local cleanup_target
+  if [ ! -e "$target" ]; then
     return 0
   fi
-  cleanup_target="$XDG_RUNTIME_DIR.stale.${{LSB_JOBID:-0}}.$$.$(date +%s)"
-  if ! run_with_timeout 5 mv "$XDG_RUNTIME_DIR" "$cleanup_target"; then
-    echo "runtime rename did not finish, cleaning in place" >&2
-    cleanup_target="$XDG_RUNTIME_DIR"
+  cleanup_target="$target.stale.${{LSB_JOBID:-0}}.$$.$(date +%s)"
+  if ! run_with_timeout 5 mv "$target" "$cleanup_target"; then
+    echo "$label rename did not finish, cleaning in place" >&2
+    cleanup_target="$target"
   fi
   if run_with_timeout 20 rm -rf "$cleanup_target"; then
     return 0
   fi
-  echo "plain runtime cleanup did not finish, trying podman unshare" >&2
+  echo "plain $label cleanup did not finish, trying podman unshare" >&2
   if run_with_timeout 20 podman unshare rm -rf "$cleanup_target"; then
     return 0
   fi
-  echo "runtime cleanup still not finished for $cleanup_target" >&2
+  echo "$label cleanup still not finished for $cleanup_target" >&2
+}}
+
+cleanup_runtime_dir() {{
+  cleanup_dir "$XDG_RUNTIME_DIR" "runtime"
 }}
 
 prepare_runtime() {{
-  mkdir -p "$XDG_RUNTIME_DIR" "$WORKSPACE_TMP" "$GRAPHROOT" "$RUNROOT"
+  mkdir -p "$XDG_RUNTIME_DIR" "$WORKSPACE_TMP" "$GRAPHROOT" "$RUNROOT" "$MCODE_PODMAN_LOCK_DIR"
   printf '[containers]\nkeyring=false\n' > "$CONTAINERS_CONF"
   export CONTAINERS_CONF
-  export TMPDIR="$WORKSPACE_TMP"
   rm -rf "$WORKSPACE_TMP"/* 2>/dev/null || true
   rm -f "$SOCK"
 }}
@@ -337,13 +349,20 @@ reset_podman_runtime() {{
   prepare_runtime
 }}
 
+reset_persistent_podman_store() {{
+  stop_podman
+  cleanup_dir "$GRAPHROOT" "graphroot"
+  cleanup_dir "$RUNROOT" "runroot"
+  prepare_runtime
+}}
+
 start_podman() {{
   prepare_runtime
-  setsid podman \\
-    --cgroup-manager=cgroupfs --storage-driver=overlay \\
-    --root "$GRAPHROOT" --runroot "$RUNROOT" \\
-    --storage-opt ignore_chown_errors=true \\
-    system service --time=0 "unix://$SOCK" \\
+  setsid podman \
+    --cgroup-manager=cgroupfs --storage-driver=overlay \
+    --root "$GRAPHROOT" --runroot "$RUNROOT" \
+    --storage-opt ignore_chown_errors=true \
+    system service --time=0 "unix://$SOCK" \
     >{shlex.quote(svc_log)} 2>&1 &
   PODMAN_PID=$!
   svc_ready=0
@@ -357,6 +376,10 @@ start_podman() {{
   if [ "$svc_ready" != "1" ]; then
     echo "✗ podman socket did not come up at $SOCK" >&2
     tail -n 40 {shlex.quote(svc_log)} >&2 || true
+    if grep -q "database configuration mismatch" {shlex.quote(svc_log)}; then
+      echo "podman store mismatch under $GRAPHROOT, clearing persistent store once" >&2
+      return 86
+    fi
     return 97
   fi
 }}
@@ -367,8 +390,23 @@ cleanup() {{
 }}
 trap cleanup EXIT
 
-start_podman || {{ rc=97; echo "$rc" > {shlex.quote(exit_sentinel)}; exit "$rc"; }}
+set +e
+start_podman
+rc=$?
+set -e
+if [ "$rc" = "86" ]; then
+  reset_persistent_podman_store
+  set +e
+  start_podman
+  rc=$?
+  set -e
+fi
+if [ "$rc" != "0" ]; then
+  echo "$rc" > {shlex.quote(exit_sentinel)}
+  exit "$rc"
+fi
 export DOCKER_HOST="unix://$SOCK"
+echo "podman storage host=$HOST_TAG graphroot=$GRAPHROOT runroot=$RUNROOT"
 export OPENAI_BASE_URL={shlex.quote(endpoint)}
 export OPENAI_API_KEY={shlex.quote(api_key)}
 {forwarded_exports}\
@@ -420,7 +458,7 @@ exit $rc
     cancel_reason: str | None = None
     exit_code = 1
     try:
-        with tempfile.TemporaryDirectory() as tmp_dir_local:
+        with temporary_directory(prefix="mcode-remote-script-") as tmp_dir_local:
             local_script = Path(tmp_dir_local) / Path(remote_script_path).name
             local_script.write_text(remote_script + "\n", encoding="utf-8")
             ssh.upload(local_script, remote_script_path, timeout=60)
@@ -506,7 +544,9 @@ exit $rc
 
         if sentinel_ok:
             try:
-                if _lsf_job_is_active(ssh, job_id):
+                if _wait_for_lsf_job_inactive(ssh, job_id, timeout_s=15):
+                    pass
+                elif _lsf_job_is_active(ssh, job_id):
                     print(
                         f"⚠ benchmark finished but LSF job {job_id} is still active; "
                         "sending bkill"
@@ -514,11 +554,9 @@ exit $rc
                     kill_r = ssh.run(f"bkill {shlex.quote(job_id)}", timeout=10)
                     if not kill_r.ok:
                         detail = (kill_r.stderr or kill_r.stdout or "bkill failed").strip()
-                        print(
-                            f"⚠ failed to clean up lingering LSF job {job_id}: {detail}"
-                        )
+                        print(f"⚠ failed to clean up lingering LSF job {job_id}: {detail}")
                     else:
-                        time.sleep(2)
+                        time.sleep(10)
                         if _lsf_job_is_active(ssh, job_id):
                             print(
                                 f"⚠ lingering LSF job {job_id} is still active after bkill; "
@@ -594,6 +632,15 @@ def _upsert_run(
         s.upsert_run(existing)
 
     launch_state.update(None, _mutator)
+
+
+def _wait_for_lsf_job_inactive(ssh: SshClient, job_id: str, *, timeout_s: int) -> bool:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if not _lsf_job_is_active(ssh, job_id):
+            return True
+        time.sleep(1)
+    return not _lsf_job_is_active(ssh, job_id)
 
 
 def _lsf_job_is_active(ssh: SshClient, job_id: str) -> bool:

@@ -1,0 +1,18 @@
+{
+  "entries": [
+    {
+      "name": "polyglot-python",
+      "benchmark": "aider-polyglot",
+      "language": "python",
+      "limit": 1,
+      "benchmark_root": "benchmarks/polyglot-benchmark"
+    },
+    {
+      "name": "polyglot-go",
+      "benchmark": "aider-polyglot",
+      "language": "go",
+      "limit": 1,
+      "benchmark_root": "benchmarks/polyglot-benchmark"
+    }
+  ]
+}

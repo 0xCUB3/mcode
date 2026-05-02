@@ -19,7 +19,7 @@ from mcode.agent.verification import (
 )
 from mcode.llm.react_driver import SolveTraceCollector, SolveTracePlugin, run_react_loop
 from mcode.llm.repo_state import get_git_diff, repo_snapshot, restore_repo_snapshot
-from mcode.mellea_compat import apply_provider_compatibility_patches, hooks_available
+from mcode.mellea_compat import apply_provider_compatibility_patches
 
 
 class PatchSubmission(BaseModel):
@@ -46,6 +46,7 @@ class SolveResult:
     generation_latency_ms: int | None = None
     validation_passed_count: int | None = None
     validation_failed_count: int | None = None
+    verification_evidence: list[dict[str, object]] | None = None
     diagnostic_events: list[dict[str, object]] | None = None
 
     def as_metrics_dict(self) -> dict[str, object]:
@@ -66,9 +67,19 @@ class SolveResult:
             "validation_passed_count": self.validation_passed_count,
             "validation_failed_count": self.validation_failed_count,
         }
+        if self.verification_evidence is not None:
+            metrics["verification_evidence"] = self.verification_evidence
         if self.diagnostic_events is not None:
             metrics["diagnostic_events"] = self.diagnostic_events
         return metrics
+
+
+def hooks_available() -> bool:
+    try:
+        import cpex.framework.base  # noqa: F401
+    except Exception:
+        return False
+    return True
 
 
 def _resolve_launch_endpoint(model_id: str) -> str | None:
@@ -183,6 +194,9 @@ class McodeSolverPowerup:
             generation_latency_ms=_none_if_zero(collector.generation_latency_ms),
             validation_passed_count=collector.validation_passed_count,
             validation_failed_count=collector.validation_failed_count,
+            verification_evidence=(
+                list(collector.verification_evidence) if collector.verification_evidence else None
+            ),
             diagnostic_events=(
                 list(collector.diagnostic_events) if collector.diagnostic_enabled else None
             ),
@@ -283,45 +297,8 @@ class LLMSession:
                 self._m = None
 
     @property
-    def last_patch_metrics(self) -> dict[str, object] | None:
-        if self._last_result is None:
-            return None
-        return {
-            "turns_to_first_edit": self._last_result.turns_to_first_edit,
-            "turns_to_first_verification": self._last_result.turns_to_first_verification,
-            "zero_edit": self._last_result.zero_edit,
-            "zero_verification": self._last_result.zero_verification,
-            "verification_succeeded": self._last_result.verification_succeeded,
-            "terminal_reason": self._last_result.terminal_reason,
-        }
-
-    @property
-    def last_submission(self) -> dict[str, object] | None:
-        if self._last_result is None or self._last_result.submission is None:
-            return None
-        return self._last_result.submission.model_dump()
-
-    @property
-    def last_generation_trace(self) -> dict[str, object] | None:
-        if self._last_result is None:
-            return None
-        return {
-            "prompt_snapshot": self._last_result.prompt_snapshot,
-            "prompt_tokens": self._last_result.prompt_tokens,
-            "completion_tokens": self._last_result.completion_tokens,
-            "total_tokens": self._last_result.total_tokens,
-            "provider": self._last_result.provider,
-            "response_model": self._last_result.response_model,
-        }
-
-    @property
-    def last_solve_result(self) -> dict[str, object] | None:
-        if self._last_result is None:
-            return None
-        result = self._last_result.as_metrics_dict()
-        if self._last_result.submission is not None:
-            result["submission_json"] = self._last_result.submission.model_dump_json()
-        return result
+    def solve_result(self) -> SolveResult | None:
+        return self._last_result
 
     def generate_patch(
         self,

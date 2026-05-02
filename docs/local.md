@@ -52,8 +52,12 @@ uv run mcode bench smoke --backend openai --model granite4 --shards 4
 # SWE-bench Lite, first 16 tasks
 uv run mcode bench swebench-lite --backend openai --model granite4 --limit 16 --shards 4
 
+# Mixed suite
+uv run mcode bench suite --backend openai --model granite4
+
 # Aider Polyglot
 uv run mcode bench aider-polyglot --backend openai --model granite4
+
 ```
 
 Useful flags:
@@ -63,6 +67,9 @@ Useful flags:
 - `--loop-budget N` — agent retry budget per task (default 15)
 - `--sampling {none,multiturn}` — Mellea sampling strategy
 - `--selection-attempts N` — independent full-budget trajectories; pick one patch per task
+- `--phase {run,generate,evaluate}` — split generation from evaluation, or use the default `run` to do both
+- `--artifact-dir DIR` — where generated task artifacts are written and read back during `evaluate`
+- `--suite-file PATH` — override the bundled mixed-suite manifest
 - `--json` — emit one JSON object per state change with strictly monotonic `seq`
 
 Bench runs resume automatically when you rerun the same command with the same `--db`. Completed tasks are skipped, retryable infra failures are retried, and sharded runs reuse their shard DBs under `<db-stem>-shards/`.

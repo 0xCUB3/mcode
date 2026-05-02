@@ -25,11 +25,6 @@ def test_build_coding_agent_assembles_prompt_and_tools(tmp_path):
     session._m = SimpleNamespace(backend=object())
 
     with (
-        patch("mcode.agent.coding_agent.build_repo_map", return_value="repo map"),
-        patch(
-            "mcode.agent.coding_agent.build_candidate_files",
-            return_value="Likely files to inspect first:\nfoo.py",
-        ),
         patch("mcode.agent.coding_agent.make_agent_tools", return_value=["tool-a"]),
         patch(
             "mcode.agent.coding_agent.collect_workspace_context",
@@ -48,11 +43,9 @@ def test_build_coding_agent_assembles_prompt_and_tools(tmp_path):
         )
 
     assert assembly.tools == ["tool-a"]
-    assert "repo map" in assembly.goal
     assert "Hint text" in assembly.goal
     assert 'test_cmd="default"' in assembly.goal
-    assert "Local workspace context:" in assembly.goal
-    assert "Use project docs." in assembly.goal
+    assert "Local workspace context:" not in assembly.goal
     assert assembly.model_options[ModelOption.TEMPERATURE] == 0.25
     assert assembly.model_options[ModelOption.SEED] == 7
     assert assembly.loop_budget == 9
@@ -141,3 +134,27 @@ def test_make_agent_tools_uses_native_mellea_tools(tmp_path):
 
     assert callable(tools["read_file"].run)
     assert tools["list_dir"].run()
+    assert tools["read_file"].as_json_tool["function"]["parameters"]["required"] == ["path"]
+    assert tools["list_dir"].as_json_tool["function"]["parameters"].get("required") == []
+
+
+def test_make_agent_tools_normalizes_visible_repo_paths(tmp_path):
+    target = tmp_path / "pkg"
+    target.mkdir()
+    (target / "mod.py").write_text("value = 1\n")
+    policy = build_verification_policy(test_cmds=[])
+    tools = {
+        tool.name: tool
+        for tool in make_agent_tools(
+            str(tmp_path),
+            verification_policy=policy,
+            visible_repo_root="/testbed",
+        )
+    }
+
+    assert "value = 1" in tools["read_file"].run("/testbed/pkg/mod.py")
+    assert "pkg" in tools["list_dir"].run("/testbed")
+    result = tools["edit"].run("c:/users/user/tmp/repo/pkg/mod.py", "value = 1", "value = 2")
+
+    assert "APPLIED" in result
+    assert (target / "mod.py").read_text() == "value = 2\n"

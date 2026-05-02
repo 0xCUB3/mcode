@@ -15,6 +15,7 @@ from mcode.llm.session import PatchSubmission
 from mcode.mellea_compat import (
     acall_tools_with_arg_compat,
     apply_provider_compatibility_patches,
+    inspect_tool_call_arg_compat,
 )
 
 
@@ -108,6 +109,71 @@ def test_run_tests_success_requires_test_like_command_for_verification():
     assert event["payload"]["counts_as_verification"] is True
 
 
+def test_run_tests_event_marks_repeated_failure_suppression():
+    collector = SolveTraceCollector(diagnostic_enabled=True)
+    collector.note_turn(2)
+
+    collector.note_tool(
+        tool_name="run_tests",
+        output=(
+            "$ python -m pytest tests/test_foo.py\n"
+            "SKIPPED\n"
+            "Previous run_tests already returned FAILED with no edit since then. "
+            "Edit the code before rerunning the same tests.\n"
+        ),
+        success=True,
+        tool_args={"test_cmd": "python -m pytest tests/test_foo.py"},
+    )
+
+    event = collector.diagnostic_events[-1]
+    assert event["event_type"] == "run_tests"
+    assert event["payload"]["repeated_failed_run_suppressed"] is True
+
+
+def test_inspect_tool_call_arg_compat_counts_recoverable_raw_args(tmp_path):
+    tool = build_run_tests_tool(
+        repo_root=str(tmp_path),
+        verification_policy=build_verification_policy(test_cmds=["python -m pytest"]),
+    )
+    assert tool is not None
+
+    stats = inspect_tool_call_arg_compat(
+        {
+            "run_tests": SimpleNamespace(args="default", func=tool),
+            "edit": SimpleNamespace(args={"path": "foo.py"}, func=tool),
+        }
+    )
+
+    assert stats == {"raw_arg_call_count": 1, "recoverable_call_count": 1}
+
+
+
+def test_provider_patch_fills_missing_final_answer_text():
+    import mellea.helpers.openai_compatible_helpers as helpers
+
+    apply_provider_compatibility_patches()
+    tool = MelleaTool.from_callable(lambda answer: answer, name="final_answer")
+
+    assert helpers.validate_tool_arguments(tool, {}, strict=False) == {"answer": "Done."}
+
+
+def test_provider_patch_maps_run_tests_alias_args(tmp_path):
+    import mellea.helpers.openai_compatible_helpers as helpers
+
+    apply_provider_compatibility_patches()
+    tool = build_run_tests_tool(
+        repo_root=str(tmp_path),
+        verification_policy=build_verification_policy(test_cmds=["python -m pytest"]),
+    )
+    assert tool is not None
+
+    assert helpers.validate_tool_arguments(
+        tool,
+        {"test_cmd": "default", "timeout": 45, "max_output": 1200},
+        strict=False,
+    ) == {"test_cmd": "default", "timeout_s": 45, "max_output_chars": 1200}
+
+
 def test_solve_trace_plugin_records_sanitized_diagnostic_events():
     collector = SolveTraceCollector(diagnostic_enabled=True)
     plugin = SolveTracePlugin(collector)
@@ -157,6 +223,7 @@ def test_solve_trace_plugin_records_sanitized_diagnostic_events():
     assert edit_result["path"] == "foo.py"
     assert edit_result["status"] == "APPLIED"
     assert "old_str" not in edit_result
+
 
 
 def test_run_react_loop_returns_structured_submission(monkeypatch):
@@ -366,6 +433,53 @@ def test_run_react_loop_retries_missing_required_args(monkeypatch):
     )
 
 
+def test_run_react_loop_nudges_when_budget_spent_without_edit(monkeypatch):
+    seen_user_messages: list[list[str]] = []
+    outputs = iter(
+        (SimpleNamespace(tool_calls=None), ChatContext()) for _ in range(6)
+    )
+
+    async def fake_aact(*args, **kwargs):
+        del args
+        context = kwargs["context"]
+        seen_user_messages.append(
+            [
+                str(message.content)
+                for message in context.as_list()
+                if getattr(message, "role", None) == "user"
+            ]
+        )
+        return next(outputs)
+
+    session = SimpleNamespace(ctx=ChatContext(), backend=object())
+    monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
+
+    submission, terminal_reason = asyncio.run(
+        run_react_loop(
+            session,
+            goal="Fix it",
+            tools=[SimpleNamespace(name="run_tests")],
+            model_options={},
+            loop_budget=6,
+            timeout_s=5,
+            submission_format=None,
+            collector=SolveTraceCollector(),
+            turn_requirements=lambda turn, budget, state: [],
+            submission_requirements=[],
+            strategy_for_requirements=lambda requirements: None,
+            hooks_enabled=False,
+        )
+    )
+
+    assert submission is None
+    assert terminal_reason == "budget_exhausted"
+    assert any(
+        "Stop browsing and call edit" in message
+        for messages in seen_user_messages
+        for message in messages
+    )
+
+
 def test_run_react_loop_executes_valid_calls_when_batch_has_malformed_finalizer(monkeypatch):
     edit_tool = MelleaTool.from_callable(
         lambda path, old_str, new_str: path,
@@ -517,6 +631,7 @@ def test_run_react_loop_blocks_final_answer_until_verification_succeeds(monkeypa
     assert executed == ["run_tests", "final_answer"]
 
 
+
 def test_run_react_loop_reminds_to_verify_after_edit(monkeypatch):
     seen_user_messages: list[list[str]] = []
     edit_tool = MelleaTool.from_callable(
@@ -583,6 +698,7 @@ def test_run_react_loop_reminds_to_verify_after_edit(monkeypatch):
     assert any(
         'Call run_tests with test_cmd="default"' in message for message in seen_user_messages[-1]
     )
+
 
 
 def test_run_react_loop_autofills_verified_finalizer(monkeypatch):

@@ -85,14 +85,24 @@ uv run mcode bench swebench-lite \
   --timeout 300 --mem-limit 8g --pids-limit 512 \
   --on bluevela --shards 4 \
   --db research/$(date +%F)-swebench-verified/results.db
-
 # Aider Polyglot, 225 tasks
 uv run mcode bench aider-polyglot \
   --model Qwen/Qwen3.6-35B-A3B --backend openai \
   --on bluevela --shards 4
+
+# Mixed suite
+uv run mcode bench suite \
+  --model Qwen/Qwen3.6-35B-A3B --backend openai \
+  --phase generate \
+  --artifact-dir research/mixed-suite/artifacts \
+  --db research/mixed-suite/generate.db \
+  --shards 4 \
+  --on bluevela
 ```
 
-Add `--json` to any bench command to get a strictly-monotonic event stream you can pipe to `jq`. Add `--fetch-db / --no-fetch-db` to control whether the DB is rsync'd back when the run ends.
+Add `--json` to any bench command to get a strictly-monotonic event stream you can pipe to `jq`. Add `--fetch-db / --no-fetch-db` to control whether the DB is rsync'd back when the run ends. The benchmark phase split also works remotely: use `--phase generate` with an explicit `--artifact-dir DIR`, then rerun with `--phase evaluate` and the same artifact directory. The mixed suite command supports the same phase split, and it now supports both auto-merged `--shards` and manual `--shard-count / --shard-index`.
+
+
 
 Remote bench run directories are stable for the same model, local DB path, bench argv, and forwarded MCODE context env. If log streaming or DB fetch drops after the remote process finished, rerun the same command to resume remotely and fetch the existing DB metadata instead of starting from scratch.
 

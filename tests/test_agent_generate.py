@@ -84,26 +84,28 @@ def test_generate_patch_returns_verified_diff(tmp_path, monkeypatch):
     )
 
     assert "+x = 2" in patch_text
-    assert session.last_patch_metrics == {
+    assert session.solve_result is not None
+    assert session.solve_result.as_metrics_dict() == {
+        "terminal_reason": "submitted",
         "turns_to_first_edit": 1,
         "turns_to_first_verification": 2,
         "zero_edit": False,
         "zero_verification": False,
         "verification_succeeded": True,
-        "terminal_reason": "submitted",
-    }
-    assert session.last_submission == {
-        "summary": "Updated foo.py",
-        "tests_ran": ["default"],
-    }
-    assert session.last_generation_trace == {
         "prompt_snapshot": "final prompt",
         "prompt_tokens": 11,
         "completion_tokens": 7,
         "total_tokens": 18,
         "provider": "openai",
         "response_model": "test-model",
+        "generation_latency_ms": None,
+        "validation_passed_count": None,
+        "validation_failed_count": None,
     }
+    assert session.solve_result.submission == PatchSubmission(
+        summary="Updated foo.py",
+        tests_ran=["default"],
+    )
 
 
 def test_generate_patch_discards_unverified_diff(tmp_path, monkeypatch):
@@ -146,13 +148,13 @@ def test_generate_patch_discards_unverified_diff(tmp_path, monkeypatch):
     )
 
     assert patch_text == ""
-    assert session.last_patch_metrics is not None
-    assert session.last_patch_metrics["verification_succeeded"] is False
-    assert session.last_patch_metrics["terminal_reason"] == "unverified_diff_discarded"
-    assert session.last_submission == {
-        "summary": "Changed foo.py",
-        "tests_ran": [],
-    }
+    assert session.solve_result is not None
+    assert session.solve_result.verification_succeeded is False
+    assert session.solve_result.terminal_reason == "unverified_diff_discarded"
+    assert session.solve_result.submission == PatchSubmission(
+        summary="Changed foo.py",
+        tests_ran=[],
+    )
 
 
 def test_coerce_submission_accepts_json_string():
@@ -222,10 +224,11 @@ def test_generate_patch_retries_outer_samples_until_verified(tmp_path, monkeypat
 
     assert attempts["count"] == 2
     assert "+x = 2" in patch_text
-    assert session.last_submission == {
-        "summary": "Attempt two",
-        "tests_ran": ["default"],
-    }
+    assert session.solve_result is not None
+    assert session.solve_result.submission == PatchSubmission(
+        summary="Attempt two",
+        tests_ran=["default"],
+    )
 
 
 def test_generate_patch_disables_outer_retry_when_sampling_enabled(tmp_path, monkeypatch):
@@ -338,10 +341,11 @@ def test_selection_attempts_runs_sampling_trajectories_and_selects_best(tmp_path
     assert attempts["count"] == 3
     assert captured == ["multiturn", "multiturn", "multiturn"]
     assert "+x = 3" in patch_text
-    assert session.last_submission == {
-        "summary": "Attempt three",
-        "tests_ran": ["default"],
-    }
+    assert session.solve_result is not None
+    assert session.solve_result.submission == PatchSubmission(
+        summary="Attempt three",
+        tests_ran=["default"],
+    )
 
 
 def test_generate_patch_retries_from_clean_repo_snapshot(tmp_path, monkeypatch):
@@ -720,10 +724,114 @@ def test_solve_result_carries_diagnostic_events_only_when_enabled(tmp_path, monk
     )
 
     assert captured["diagnostic_enabled"] is True
-    assert session.last_solve_result is not None
-    assert session.last_solve_result["diagnostic_events"] == [
+    assert session.solve_result is not None
+    assert session.solve_result.diagnostic_events == [
         {"turn": 1, "event_type": "turn_start", "payload": {"turn": 1}}
     ]
 
     disabled_result = SolveResult().as_metrics_dict()
     assert "diagnostic_events" not in disabled_result
+
+
+def test_run_task_generate_then_evaluate_uses_artifacts(tmp_path):
+    results_db = ResultsDB(tmp_path / "results.db")
+    task = SimpleNamespace(
+        benchmark="swebench-lite",
+        instance_id="task-artifact",
+        repo="test/repo",
+        problem_statement="Fix the bug",
+        hints_text="",
+        raw_instance={"instance_id": "task-artifact", "test_cmds": ["pytest -q"]},
+    )
+
+    @contextmanager
+    def repo_context():
+        yield SimpleNamespace(
+            repo_root=str(tmp_path),
+            command_fn=None,
+            visible_repo_root="/testbed",
+        )
+
+    generate_runner = BenchmarkRunner(
+        config=BenchConfig(model_id="test-model", backend_name="ollama", phase="generate"),
+        results_db=results_db,
+    )
+    generate_runner._generate_task_patch = lambda *args, **kwargs: (  # type: ignore[method-assign]
+        "diff --git a/foo.py b/foo.py\n+x = 2\n",
+        {
+            "terminal_reason": "submitted",
+            "turns_to_first_edit": 1,
+            "turns_to_first_verification": 2,
+            "zero_edit": False,
+            "zero_verification": False,
+            "verification_succeeded": True,
+            "submission_json": '{"summary":"done"}',
+        },
+    )
+    generate_run_id = results_db.start_run(
+        "swebench-lite",
+        {
+            "backend_name": "ollama",
+            "model_id": "test-model",
+            "loop_budget": 15,
+            "timeout_s": 60,
+            "phase": "generate",
+        },
+    )
+    generated = generate_runner._run_task(
+        run_id=generate_run_id,
+        task_id=task.instance_id,
+        generation_task=task,
+        repo_context_factory=repo_context,
+        evaluate_patch=lambda _patch: (_ for _ in ()).throw(AssertionError("no eval")),
+    )
+    assert generated is None
+    artifact_rows = results_db.task_artifact_rows(generate_run_id)
+    assert artifact_rows[task.instance_id]["candidate_count"] == 1
+
+    evaluate_runner = BenchmarkRunner(
+        config=BenchConfig(model_id="test-model", backend_name="ollama", phase="evaluate"),
+        results_db=results_db,
+    )
+    evaluate_runner._generate_task_patch = lambda *args, **kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("solver should not run in evaluate phase")
+    )
+    evaluate_run_id = results_db.start_run(
+        "swebench-lite",
+        {
+            "backend_name": "ollama",
+            "model_id": "test-model",
+            "loop_budget": 15,
+            "timeout_s": 60,
+            "phase": "evaluate",
+        },
+    )
+    seen: dict[str, str] = {}
+
+    def evaluate_patch(patch: str) -> runner_module._TaskEvaluation:
+        seen["patch"] = patch
+        return runner_module._TaskEvaluation(
+            passed=True,
+            timed_out=False,
+            stdout="ok",
+            stderr="",
+            error=None,
+            evaluator_name="swebench-lite",
+            report={"resolved": True},
+        )
+
+    result = evaluate_runner._run_task(
+        run_id=evaluate_run_id,
+        task_id=task.instance_id,
+        generation_task=task,
+        repo_context_factory=repo_context,
+        evaluate_patch=evaluate_patch,
+    )
+    assert result is not None
+    assert result["passed"] is True
+    assert "+x = 2" in seen["patch"]
+    eval_count = results_db.conn.execute(
+        "SELECT COUNT(*) FROM artifact_evaluations WHERE run_id = ?",
+        (evaluate_run_id,),
+    ).fetchone()[0]
+    assert eval_count == 1

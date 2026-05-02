@@ -25,6 +25,8 @@ from mcode.agent.verification import (
 )
 from mcode.agent.workspace_context import collect_workspace_context
 
+_LEGACY_PROMPT_SCOUTS = (build_candidate_files, build_repo_map, collect_workspace_context)
+
 
 @dataclass(frozen=True)
 class CodingAgentAssembly:
@@ -62,7 +64,6 @@ def build_coding_agent(
     test_fn=None,
     command_fn: Callable[[str], str] | None = None,
 ) -> CodingAgentAssembly:
-    del visible_repo_root
 
     budget = max(1, session.loop_budget)
     timeout_s = int(os.environ.get("MCODE_REACT_TIMEOUT", str(budget * 30)))
@@ -72,36 +73,19 @@ def build_coding_agent(
         command_fn=command_fn,
     )
 
-    repo_map_text = ""
-    try:
-        repo_map_text = build_repo_map(repo_root, problem_statement, max_tokens=4096)
-    except Exception as e:
-        print(f"  [repo_map] failed: {e}", flush=True)
-
-    candidate_files_text = ""
-    try:
-        candidate_files_text = build_candidate_files(repo_root, problem_statement, top_n=6)
-    except Exception as e:
-        print(f"  [localization] failed: {e}", flush=True)
-
-    workspace_context_text = ""
-    try:
-        workspace_context_text = collect_workspace_context(repo_root, problem_statement).text
-    except Exception as e:
-        print(f"  [workspace_context] failed: {e}", flush=True)
-
     repo_customization = load_repo_customization(repo_root)
     coding_policy = build_coding_policy(
         repo=repo,
         problem_statement=problem_statement,
         hints_text=hints_text,
-        repo_map_text=repo_map_text,
-        candidate_files_text=candidate_files_text,
         repo_customization_text=repo_customization.text,
-        workspace_context_text=workspace_context_text,
         verification_prompt=verification_policy.prompt_block,
     )
-    tools = make_agent_tools(repo_root, verification_policy=verification_policy)
+    tools = make_agent_tools(
+        repo_root,
+        verification_policy=verification_policy,
+        visible_repo_root=visible_repo_root,
+    )
 
     return CodingAgentAssembly(
         repo=repo,
@@ -115,10 +99,28 @@ def build_coding_agent(
     )
 
 
+_VISIBLE_REPO_ALIASES = ("/testbed", "/home/user/repo", "c:/users/user/tmp/repo")
+
+
+def _normalize_tool_path(path: str, *, visible_repo_root: str | None) -> str:
+    text = path.strip()
+    aliases = [alias for alias in (visible_repo_root, *_VISIBLE_REPO_ALIASES) if alias]
+    lowered = text.lower()
+    for alias in aliases:
+        normalized_alias = alias.rstrip("/")
+        alias_lower = normalized_alias.lower()
+        if lowered == alias_lower:
+            return "."
+        if lowered.startswith(alias_lower + "/"):
+            return text[len(normalized_alias) + 1 :]
+    return path
+
+
 def make_agent_tools(
     repo_root: str,
     *,
     verification_policy: VerificationPolicy,
+    visible_repo_root: str | None = None,
 ):
     progress = VerificationProgress()
 
@@ -126,19 +128,32 @@ def make_agent_tools(
         return search_code(query, repo_root=repo_root)
 
     def _edit(path: str, old_str: str, new_str: str) -> str:
-        result = str_replace_edit(path, old_str, new_str, repo_root=repo_root)
+        result = str_replace_edit(
+            _normalize_tool_path(path, visible_repo_root=visible_repo_root),
+            old_str,
+            new_str,
+            repo_root=repo_root,
+        )
         if "APPLIED" in result:
             progress.note_edit_applied()
         return result
 
-    def _read(path: str, start_line: int = 1, end_line: int | None = None) -> str:
-        return read_file(path, start_line, end_line, repo_root=repo_root)
+    def _read(path: str, start_line: int | None = None, end_line: int | None = None) -> str:
+        return read_file(
+            _normalize_tool_path(path, visible_repo_root=visible_repo_root),
+            start_line or 1,
+            end_line,
+            repo_root=repo_root,
+        )
 
     def _find(pattern: str) -> str:
         return find_file(pattern, repo_root=repo_root)
 
-    def _list(path: str = ".") -> str:
-        return list_dir(path, repo_root=repo_root)
+    def _list(path: str | None = None) -> str:
+        return list_dir(
+            _normalize_tool_path(path or ".", visible_repo_root=visible_repo_root),
+            repo_root=repo_root,
+        )
 
     tools = [
         MelleaTool.from_callable(_search, name="search_code"),

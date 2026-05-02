@@ -6,7 +6,6 @@ import os
 import sqlite3
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from contextlib import contextmanager
@@ -26,14 +25,27 @@ from mcode.bench.results import (
     export_csv as export_csv_results,
 )
 from mcode.bench.runner import BenchConfig, BenchmarkRunner
+from mcode.bench.suite import SuiteEntry, load_suite_manifest, task_ids_arg
 from mcode.ui.console import configure_logging as _configure_logging
 from mcode.ui.console import console
 from mcode.ui.flags import JsonFlag
+from mcode.util import temporary_directory
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 bench_app = typer.Typer(add_completion=False, no_args_is_help=True)
 deps_app = typer.Typer(add_completion=False, no_args_is_help=True)
 DEFAULT_DB_PATH = Path("experiments/results/results.db")
+DEFAULT_ARTIFACT_DIR_NAME = "artifacts"
+
+
+def _default_artifact_dir(db: Path) -> Path:
+    return db.parent / db.stem / DEFAULT_ARTIFACT_DIR_NAME
+
+
+def _resolve_artifact_dir(db: Path, artifact_dir: Path | None) -> Path:
+    if artifact_dir is not None:
+        return artifact_dir
+    return _default_artifact_dir(db)
 
 
 def _configure_mellea_logging(verbose: bool) -> None:
@@ -131,7 +143,7 @@ def _open_results_view(db_paths: tuple[Path, ...] | list[Path]):
             rdb.close()
         return
 
-    with tempfile.TemporaryDirectory(prefix="mcode-results-") as td:
+    with temporary_directory(prefix="mcode-results-") as td:
         merged_path = Path(td) / "merged.db"
         rdb = ResultsDB(merged_path)
         try:
@@ -354,7 +366,13 @@ def results(
     ] = False,
 ) -> None:
     """Query pass rates from the results DB."""
-    group_by_config = ("backend_name", "timeout_s", "loop_budget")
+    group_by_config = (
+        "suite_name",
+        "suite_entry_name",
+        "backend_name",
+        "timeout_s",
+        "loop_budget",
+    )
 
     db_paths = _expand_db_paths(db=db, db_glob=db_glob, db_dir=db_dir)
     with _open_results_view(db_paths) as rdb:
@@ -375,6 +393,8 @@ def results(
                 )
                 table = Table(title="Pass rates + time (grouped)")
                 table.add_column("benchmark")
+                table.add_column("suite")
+                table.add_column("entry")
                 table.add_column("backend")
                 table.add_column("model")
                 table.add_column("budget", justify="right")
@@ -390,9 +410,20 @@ def results(
                 table.add_column("tok/task", justify="right")
                 table.add_column("sec/solve", justify="right")
                 table.add_column("solves/hr", justify="right")
+                table.add_column("z_edit", justify="right")
+                table.add_column("z_ver", justify="right")
+                table.add_column("wrong", justify="right")
+                table.add_column("bad_calls", justify="right")
+                table.add_column("arg_fix", justify="right")
+                table.add_column("blocked_fin", justify="right")
+                table.add_column("repeat_rt", justify="right")
+                table.add_column("post_edit", justify="right")
+                table.add_column("edit_gap", justify="right")
                 for row in rows:
                     table.add_row(
                         row["benchmark"],
+                        str(row.get("suite_name") or "-"),
+                        str(row.get("suite_entry_name") or "-"),
                         row["backend_name"],
                         row["model_id"],
                         str(row.get("loop_budget", "")),
@@ -412,6 +443,18 @@ def results(
                         if row.get("sec_per_solve") is not None
                         else "-",
                         f"{row['solves_per_hour']:.2f}",
+                        str(row.get("zero_edit", 0)),
+                        str(row.get("zero_verification", 0)),
+                        str(row.get("wrong_patch_after_verification", 0)),
+                        str(row.get("invalid_tool_call_count", 0)),
+                        str(row.get("malformed_tool_call_recoveries", 0)),
+                        str(row.get("blocked_finalizer_count", 0)),
+                        str(row.get("repeated_failed_run_test_count", 0)),
+                        str(row.get("post_edit_exploration_count", 0)),
+                        f"{row['turns_after_first_edit_before_first_verification_avg']:.2f}"
+                        if row.get("turns_after_first_edit_before_first_verification_avg")
+                        is not None
+                        else "-",
                     )
                 console.print(table)
                 return
@@ -426,6 +469,8 @@ def results(
             )
             table = Table(title="Pass rates by config")
             table.add_column("benchmark")
+            table.add_column("suite")
+            table.add_column("entry")
             table.add_column("backend")
             table.add_column("model")
             table.add_column("budget", justify="right")
@@ -436,6 +481,8 @@ def results(
             for row in rows:
                 table.add_row(
                     row["benchmark"],
+                    str(row.get("suite_name") or "-"),
+                    str(row.get("suite_entry_name") or "-"),
                     row["backend_name"],
                     row["model_id"],
                     str(row.get("loop_budget", "")),
@@ -461,6 +508,8 @@ def results(
             table.add_column("run_id", justify="right")
             table.add_column("timestamp")
             table.add_column("benchmark")
+            table.add_column("suite")
+            table.add_column("entry")
             table.add_column("backend")
             table.add_column("model")
             table.add_column("budget", justify="right")
@@ -475,11 +524,22 @@ def results(
             table.add_column("tok/task", justify="right")
             table.add_column("sec/solve", justify="right")
             table.add_column("solves/hr", justify="right")
+            table.add_column("z_edit", justify="right")
+            table.add_column("z_ver", justify="right")
+            table.add_column("wrong", justify="right")
+            table.add_column("bad_calls", justify="right")
+            table.add_column("arg_fix", justify="right")
+            table.add_column("blocked_fin", justify="right")
+            table.add_column("repeat_rt", justify="right")
+            table.add_column("post_edit", justify="right")
+            table.add_column("edit_gap", justify="right")
             for row in rows:
                 table.add_row(
                     str(row["run_id"]),
                     row["timestamp"],
                     row["benchmark"],
+                    str(row.get("suite_name") or "-"),
+                    str(row.get("suite_entry_name") or "-"),
                     row["backend_name"],
                     row["model_id"],
                     str(row.get("loop_budget", "")),
@@ -496,6 +556,18 @@ def results(
                     else "-",
                     f"{row['sec_per_solve']:.2f}" if row.get("sec_per_solve") is not None else "-",
                     f"{row['solves_per_hour']:.2f}",
+                    str(row.get("zero_edit", 0)),
+                    str(row.get("zero_verification", 0)),
+                    str(row.get("wrong_patch_after_verification", 0)),
+                    str(row.get("invalid_tool_call_count", 0)),
+                    str(row.get("malformed_tool_call_recoveries", 0)),
+                    str(row.get("blocked_finalizer_count", 0)),
+                    str(row.get("repeated_failed_run_test_count", 0)),
+                    str(row.get("post_edit_exploration_count", 0)),
+                    f"{row['turns_after_first_edit_before_first_verification_avg']:.2f}"
+                    if row.get("turns_after_first_edit_before_first_verification_avg")
+                    is not None
+                    else "-",
                 )
             console.print(table)
             return
@@ -829,6 +901,8 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
 
       const CONFIG_FIELDS = [
         ["benchmark", "Benchmark"],
+        ["suite_name", "Suite"],
+        ["suite_entry_name", "Entry"],
         ["backend_name", "Backend"],
         ["model_id", "Model"],
         ["loop_budget", "Budget"],
@@ -1142,6 +1216,15 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
           r.time_s_avg,
           r.time_s_p50,
           r.time_s_p95,
+          (r.zero_edit ?? 0),
+          (r.zero_verification ?? 0),
+          (r.wrong_patch_after_verification ?? 0),
+          (r.invalid_tool_call_count ?? 0),
+          (r.malformed_tool_call_recoveries ?? 0),
+          (r.blocked_finalizer_count ?? 0),
+          (r.repeated_failed_run_test_count ?? 0),
+          (r.post_edit_exploration_count ?? 0),
+          r.turns_after_first_edit_before_first_verification_avg,
         ];
         const hover =
           "%{{text}}" +
@@ -1152,6 +1235,14 @@ def _render_report_html(rows: list[dict], *, title: str) -> str:
           "<br>p95_s=%{{customdata[6]:.2f}}" +
           "<br>passed=%{{customdata[1]}}/%{{customdata[0]}}" +
           "<br>timed_out=%{{customdata[2]}}/%{{customdata[0]}} (%{{customdata[3]:.1%}})" +
+          "<br>zero_edit=%{{customdata[7]}} zero_verification=%{{customdata[8]}}" +
+          "<br>wrong_patch_after_verification=%{{customdata[9]}}" +
+          "<br>invalid_tool_calls=%{{customdata[10]}} recovered_tool_args=%{{customdata[11]}}" +
+          (
+            "<br>blocked_finalizers=%{{customdata[12]}} " +
+            "repeated_failed_run_tests=%{{customdata[13]}}"
+          ) +
+          "<br>post_edit_exploration=%{{customdata[14]}} edit_gap_avg=%{{customdata[15]:.2f}}" +
           "<extra></extra>";
 
         if (!colorBy || colorBy === "none") {{
@@ -1695,13 +1786,45 @@ def _latest_run_summary(db: Path) -> RunSummary:
     )
 
 
-def _merge_into_results_db(*, db: Path, shard_paths: list[Path]) -> RunSummary:
-    with tempfile.TemporaryDirectory(prefix="mcode-merge-") as td:
+def _full_db_summary(db: Path) -> RunSummary:
+    with ResultsDB(db) as rdb:
+        row = rdb.conn.execute(
+            """
+            SELECT
+              COALESCE(MAX(r.id), 0) AS run_id,
+              COUNT(tr.id) AS total,
+              COALESCE(SUM(tr.passed), 0) AS passed
+            FROM runs r
+            LEFT JOIN task_results tr ON tr.run_id = r.id
+            """
+        ).fetchone()
+    if row is None:
+        raise RuntimeError(f"No runs found in {db}")
+    return RunSummary(
+        run_id=int(row["run_id"] or 0),
+        total=int(row["total"] or 0),
+        passed=int(row["passed"] or 0),
+    )
+
+
+def _merge_into_results_db(
+    *,
+    db: Path,
+    shard_paths: list[Path],
+    merge_mode: Literal["single_run", "full_db"] = "single_run",
+ ) -> RunSummary:
+    with temporary_directory(prefix="mcode-merge-") as td:
         merged = Path(td) / "merged.db"
-        merge_shard_dbs(out_path=merged, shard_paths=shard_paths, force=True)
+        if merge_mode == "single_run":
+            merge_shard_dbs(out_path=merged, shard_paths=shard_paths, force=True)
+        else:
+            with ResultsDB(merged) as merged_db:
+                merged_db.merge_from(shard_paths)
         with ResultsDB(db) as out_db:
             out_db.merge_from([merged])
-    return _latest_run_summary(db)
+    if merge_mode == "single_run":
+        return _latest_run_summary(db)
+    return _full_db_summary(db)
 
 
 SHARDED_INFRA_EXIT_CODE = 86
@@ -1763,12 +1886,20 @@ def _shard_db_has_rows(shard_db: Path) -> bool:
     try:
         conn = sqlite3.connect(f"file:{shard_db}?mode=ro", uri=True, timeout=1)
         try:
-            row = conn.execute("SELECT COUNT(*) FROM task_results").fetchone()
+            task_rows = conn.execute("SELECT COUNT(*) FROM task_results").fetchone()
+            artifact_rows = None
+            artifact_exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'artifact_tasks'"
+            ).fetchone()
+            if artifact_exists is not None:
+                artifact_rows = conn.execute("SELECT COUNT(*) FROM artifact_tasks").fetchone()
         finally:
             conn.close()
     except sqlite3.Error:
         return False
-    return bool(row and int(row[0]) > 0)
+    task_count = int(task_rows[0]) if task_rows else 0
+    artifact_count = int(artifact_rows[0]) if artifact_rows else 0
+    return task_count > 0 or artifact_count > 0
 
 
 def _stop_running_shards(
@@ -1819,7 +1950,8 @@ def _run_sharded_benchmark(
     loop_budget: int,
     timeout_s: int,
     json_mode: bool = False,
-) -> None:
+    merge_mode: Literal["single_run", "full_db"] = "single_run",
+ ) -> None:
     from mcode.bench import runstate
     from mcode.launch.models import RunStatus, Target
     from mcode.ui.dashboard import open_dashboard
@@ -1997,7 +2129,11 @@ def _run_sharded_benchmark(
             if not shard_paths:
                 raise typer.Exit(1)
 
-            summary = _merge_into_results_db(db=db, shard_paths=shard_paths)
+            summary = _merge_into_results_db(
+                db=db,
+                shard_paths=shard_paths,
+                merge_mode=merge_mode,
+            )
             dashboard.post("merged", db=str(db))
             final_status = RunStatus.DONE
         # _print_run_summary lives outside the dashboard so its Rich Table
@@ -2018,6 +2154,176 @@ def _run_sharded_benchmark(
             runstate.close_run(run_id=run_id, status=final_status, cancel_reason=cancel_reason)
         except Exception:
             pass
+
+
+def _suite_cli_args(
+    *,
+    model: str,
+    backend: str,
+    loop_budget: int,
+    retry_loop_budget: int,
+    timeout_s: int,
+    mem_limit: str,
+    pids_limit: int,
+    cpu_limit: float | None,
+    suite_file: Path | None,
+    phase: str,
+    artifact_dir: Path,
+    diagnostic_traces: bool,
+    check_image_digests: bool,
+ ) -> list[str]:
+    argv = [
+        "--model",
+        model,
+        "--backend",
+        backend,
+        "--loop-budget",
+        str(loop_budget),
+        "--retry-loop-budget",
+        str(retry_loop_budget),
+        "--timeout",
+        str(timeout_s),
+        "--mem-limit",
+        mem_limit,
+        "--pids-limit",
+        str(pids_limit),
+        "--phase",
+        phase,
+        "--artifact-dir",
+        str(artifact_dir),
+    ]
+    _append_option(argv, "--suite-file", suite_file)
+    _append_option(argv, "--cpu-limit", cpu_limit)
+    if diagnostic_traces:
+        argv.append("--diagnostic-traces")
+    if not check_image_digests:
+        argv.append("--no-check-image-digests")
+    return argv
+
+
+def _suite_entry_timeout(entry: SuiteEntry, swebench_timeout_s: int) -> int:
+    return 300 if entry.benchmark == "aider-polyglot" else swebench_timeout_s
+
+
+def _suite_entry_loop_budget(
+    entry: SuiteEntry, *, loop_budget: int, retry_loop_budget: int
+ ) -> int:
+    if entry.benchmark != "aider-polyglot":
+        return loop_budget
+    return loop_budget + (0 if entry.no_retry else retry_loop_budget)
+
+
+def _resolve_suite_polyglot_root(entry: SuiteEntry) -> Path | None:
+    if entry.benchmark != "aider-polyglot":
+        return None
+    if entry.benchmark_root:
+        candidate = Path(entry.benchmark_root)
+        if candidate.is_dir():
+            return candidate
+    bundled_root = Path("benchmarks/polyglot-benchmark")
+    if bundled_root.is_dir():
+        return bundled_root
+    return None
+
+
+def _run_suite_entry(
+    *,
+    suite_name: str,
+    entry: SuiteEntry,
+    model: str,
+    backend: str,
+    loop_budget: int,
+    retry_loop_budget: int,
+    timeout_s: int,
+    mem_limit: str,
+    pids_limit: int,
+    cpu_limit: float | None,
+    check_image_digests: bool,
+    phase: str,
+    artifact_dir: Path,
+    db: Path,
+    shard_count: int | None,
+    shard_index: int | None,
+    diagnostic_traces: bool,
+ ) -> None:
+    task_ids = task_ids_arg(entry)
+    entry_timeout = _suite_entry_timeout(entry, timeout_s)
+    entry_loop_budget = _suite_entry_loop_budget(
+        entry,
+        loop_budget=loop_budget,
+        retry_loop_budget=retry_loop_budget,
+    )
+    if entry.benchmark == "swebench-lite":
+        config = BenchConfig(
+            backend_name=backend,
+            model_id=model,
+            loop_budget=loop_budget,
+            timeout_s=entry_timeout,
+            phase=phase,
+            artifact_dir=artifact_dir,
+            swebench_split=entry.split or "test",
+            swebench_namespace="swebench",
+            swebench_mem_limit=mem_limit,
+            swebench_pids_limit=pids_limit,
+            swebench_cpu_limit=cpu_limit,
+            swebench_check_image_digests=check_image_digests,
+            task_shard_count=shard_count,
+            task_shard_index=shard_index,
+            swebench_dataset=entry.dataset or "SWE-bench/SWE-bench_Lite",
+            diagnostic_traces=diagnostic_traces,
+            suite_name=suite_name,
+            suite_entry_name=entry.name,
+        )
+    elif entry.benchmark == "swebench-live":
+        config = BenchConfig(
+            backend_name=backend,
+            model_id=model,
+            loop_budget=loop_budget,
+            timeout_s=entry_timeout,
+            phase=phase,
+            artifact_dir=artifact_dir,
+            swebench_split=entry.split or "verified",
+            swebench_mem_limit=mem_limit,
+            swebench_pids_limit=pids_limit,
+            swebench_cpu_limit=cpu_limit,
+            swebench_check_image_digests=check_image_digests,
+            task_shard_count=shard_count,
+            task_shard_index=shard_index,
+            diagnostic_traces=diagnostic_traces,
+            suite_name=suite_name,
+            suite_entry_name=entry.name,
+        )
+    elif entry.benchmark == "aider-polyglot":
+        config = BenchConfig(
+            backend_name=backend,
+            model_id=model,
+            loop_budget=loop_budget,
+            timeout_s=entry_timeout,
+            phase=phase,
+            artifact_dir=artifact_dir,
+            aider_polyglot_root=_resolve_suite_polyglot_root(entry),
+            aider_polyglot_language=entry.language or "all",
+            aider_polyglot_retry=not entry.no_retry,
+            aider_polyglot_retry_loop_budget=retry_loop_budget,
+            task_shard_count=shard_count,
+            task_shard_index=shard_index,
+            diagnostic_traces=diagnostic_traces,
+            suite_name=suite_name,
+            suite_entry_name=entry.name,
+        )
+    else:
+        raise typer.BadParameter(f"unsupported suite benchmark {entry.benchmark!r}")
+    _run_single_benchmark(
+        benchmark=entry.benchmark,
+        config=config,
+        db=db,
+        limit=entry.limit,
+        task_ids=task_ids,
+        backend=backend,
+        model=model,
+        loop_budget=entry_loop_budget,
+        timeout_s=entry_timeout,
+    )
 
 
 def _run_single_benchmark(
@@ -2111,7 +2417,10 @@ def _swebench_live_cli_args(
     selection_attempts: int,
     task_ids: str | None,
     diagnostic_traces: bool,
-) -> list[str]:
+    check_image_digests: bool,
+    phase: str,
+    artifact_dir: Path,
+ ) -> list[str]:
     argv = [
         "--model",
         model,
@@ -2131,6 +2440,10 @@ def _swebench_live_cli_args(
         str(n_samples),
         "--sampling",
         sampling,
+        "--phase",
+        phase,
+        "--artifact-dir",
+        str(artifact_dir),
     ]
     _append_option(argv, "--temperature", temperature)
     _append_option(argv, "--seed", seed)
@@ -2140,6 +2453,8 @@ def _swebench_live_cli_args(
         _append_option(argv, "--selection-attempts", selection_attempts)
     _append_option(argv, "--task-ids", task_ids)
     _append_option(argv, "--cpu-limit", cpu_limit)
+    if not check_image_digests:
+        argv.append("--no-check-image-digests")
     if diagnostic_traces:
         argv.append("--diagnostic-traces")
     return argv
@@ -2169,6 +2484,9 @@ def _swebench_lite_cli_args(
     task_ids: str | None,
     dataset: str,
     diagnostic_traces: bool,
+    check_image_digests: bool,
+    phase: str,
+    artifact_dir: Path,
 ) -> list[str]:
     argv = [
         "--model",
@@ -2197,6 +2515,10 @@ def _swebench_lite_cli_args(
         sampling,
         "--dataset",
         dataset,
+        "--phase",
+        phase,
+        "--artifact-dir",
+        str(artifact_dir),
     ]
     _append_option(argv, "--temperature", temperature)
     _append_option(argv, "--seed", seed)
@@ -2208,6 +2530,8 @@ def _swebench_lite_cli_args(
     _append_option(argv, "--cpu-limit", cpu_limit)
     if force_rebuild:
         argv.append("--force-rebuild")
+    if not check_image_digests:
+        argv.append("--no-check-image-digests")
     if diagnostic_traces:
         argv.append("--diagnostic-traces")
     return argv
@@ -2227,6 +2551,8 @@ def _aider_polyglot_cli_args(
     limit: int | None,
     no_retry: bool,
     task_ids: str | None,
+    phase: str,
+    artifact_dir: Path,
 ) -> list[str]:
     argv = [
         "--model",
@@ -2241,6 +2567,10 @@ def _aider_polyglot_cli_args(
         str(benchmark_root),
         "--language",
         language,
+        "--phase",
+        phase,
+        "--artifact-dir",
+        str(artifact_dir),
     ]
     _append_option(argv, "--temperature", temperature)
     _append_option(argv, "--seed", seed)
@@ -2268,7 +2598,7 @@ def bench_cancel(
 ) -> None:
     """Cancel a running bench. Terminates shard pids (local) or SSH-kills the
     remote process group (Blue Vela). In-process single runs are not
-    cancellable from another shell — Ctrl+C in the running terminal."""
+    cancellable from another shell, use Ctrl+C in the running terminal."""
     from mcode.bench.cancel import cancel_run
     from mcode.ui.errors import handle_errors
 
@@ -2325,6 +2655,14 @@ def bench_swebench_live(
             envvar="MCODE_SWEBENCH_CPU_LIMIT",
         ),
     ] = None,
+    check_image_digests: Annotated[
+        bool,
+        typer.Option(
+            "--check-image-digests/--no-check-image-digests",
+            help="Check registry digests before reusing cached task images",
+            envvar="MCODE_SWEBENCH_CHECK_IMAGE_DIGESTS",
+        ),
+    ] = False,
     shards: Annotated[
         int | None,
         typer.Option("--shards", min=1, help="Run N shard workers and merge the DB automatically"),
@@ -2338,6 +2676,14 @@ def bench_swebench_live(
         typer.Option("--shard-index", min=0, help="Manual shard mode: shard index"),
     ] = None,
     db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
+    phase: Annotated[
+        Literal["run", "generate", "evaluate"],
+        typer.Option("--phase", help="Benchmark phase: run, generate, or evaluate"),
+    ] = "run",
+    artifact_dir: Annotated[
+        Path | None,
+        typer.Option("--artifact-dir", help="Directory for generated task artifacts"),
+    ] = None,
     limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
     n_samples: Annotated[
         int,
@@ -2394,6 +2740,7 @@ def bench_swebench_live(
         sampling=sampling,
         sampling_budget=sampling_budget,
     )
+    resolved_artifact_dir = _resolve_artifact_dir(db, artifact_dir)
     if on == "bluevela":
         argv = _swebench_live_cli_args(
             model=model,
@@ -2413,6 +2760,9 @@ def bench_swebench_live(
             selection_attempts=selection_attempts,
             task_ids=task_ids,
             diagnostic_traces=diagnostic_traces,
+            check_image_digests=check_image_digests,
+            phase=phase,
+            artifact_dir=resolved_artifact_dir,
         )
         _append_option(argv, "--shards", shards)
         _append_option(argv, "--shard-count", shard_count)
@@ -2450,6 +2800,9 @@ def bench_swebench_live(
                 selection_attempts=selection_attempts,
                 task_ids=task_ids,
                 diagnostic_traces=diagnostic_traces,
+                check_image_digests=check_image_digests,
+                phase=phase,
+                artifact_dir=resolved_artifact_dir,
             ),
             shards=shards,
             db=db,
@@ -2475,10 +2828,13 @@ def bench_swebench_live(
         temperature=temperature,
         seed=seed,
         timeout_s=timeout_s,
+        phase=phase,
+        artifact_dir=resolved_artifact_dir,
         swebench_split=split,
         swebench_mem_limit=mem_limit,
         swebench_pids_limit=pids_limit,
         swebench_cpu_limit=cpu_limit,
+        swebench_check_image_digests=check_image_digests,
         task_shard_count=shard_count,
         task_shard_index=shard_index,
         n_samples=n_samples,
@@ -2563,6 +2919,14 @@ def bench_swebench_lite(
             envvar="MCODE_SWEBENCH_CPU_LIMIT",
         ),
     ] = None,
+    check_image_digests: Annotated[
+        bool,
+        typer.Option(
+            "--check-image-digests/--no-check-image-digests",
+            help="Check registry digests before reusing cached task images",
+            envvar="MCODE_SWEBENCH_CHECK_IMAGE_DIGESTS",
+        ),
+    ] = False,
     shards: Annotated[
         int | None,
         typer.Option("--shards", min=1, help="Run N shard workers and merge the DB automatically"),
@@ -2576,6 +2940,14 @@ def bench_swebench_lite(
         typer.Option("--shard-index", min=0, help="Manual shard mode: shard index"),
     ] = None,
     db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
+    phase: Annotated[
+        Literal["run", "generate", "evaluate"],
+        typer.Option("--phase", help="Benchmark phase: run, generate, or evaluate"),
+    ] = "run",
+    artifact_dir: Annotated[
+        Path | None,
+        typer.Option("--artifact-dir", help="Directory for generated task artifacts"),
+    ] = None,
     limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
     n_samples: Annotated[
         int,
@@ -2634,6 +3006,7 @@ def bench_swebench_lite(
         sampling=sampling,
         sampling_budget=sampling_budget,
     )
+    resolved_artifact_dir = _resolve_artifact_dir(db, artifact_dir)
     if on == "bluevela":
         argv = _swebench_lite_cli_args(
             model=model,
@@ -2658,6 +3031,9 @@ def bench_swebench_lite(
             task_ids=task_ids,
             dataset=dataset,
             diagnostic_traces=diagnostic_traces,
+            check_image_digests=check_image_digests,
+            phase=phase,
+            artifact_dir=resolved_artifact_dir,
         )
         _append_option(argv, "--shards", shards)
         _append_option(argv, "--shard-count", shard_count)
@@ -2700,6 +3076,9 @@ def bench_swebench_lite(
                 task_ids=task_ids,
                 dataset=dataset,
                 diagnostic_traces=diagnostic_traces,
+                check_image_digests=check_image_digests,
+                phase=phase,
+                artifact_dir=resolved_artifact_dir,
             ),
             shards=shards,
             db=db,
@@ -2725,6 +3104,8 @@ def bench_swebench_lite(
         temperature=temperature,
         seed=seed,
         timeout_s=timeout_s,
+        phase=phase,
+        artifact_dir=resolved_artifact_dir,
         swebench_split=split,
         swebench_namespace=_optional_str(namespace),
         swebench_arch=None if arch == "auto" else arch,
@@ -2733,6 +3114,7 @@ def bench_swebench_lite(
         swebench_mem_limit=mem_limit,
         swebench_pids_limit=pids_limit,
         swebench_cpu_limit=cpu_limit,
+        swebench_check_image_digests=check_image_digests,
         task_shard_count=shard_count,
         task_shard_index=shard_index,
         n_samples=n_samples,
@@ -2818,6 +3200,14 @@ def bench_aider_polyglot(
         Path,
         typer.Option("--db", help="SQLite results DB path"),
     ] = Path("experiments/results/aider-polyglot.db"),
+    phase: Annotated[
+        Literal["run", "generate", "evaluate"],
+        typer.Option("--phase", help="Benchmark phase: run, generate, or evaluate"),
+    ] = "run",
+    artifact_dir: Annotated[
+        Path | None,
+        typer.Option("--artifact-dir", help="Directory for generated task artifacts"),
+    ] = None,
     on: Annotated[
         str,
         typer.Option("--on", help="Where to run the bench: local or bluevela"),
@@ -2837,6 +3227,7 @@ def bench_aider_polyglot(
         shard_count=shard_count,
         shard_index=shard_index,
     )
+    resolved_artifact_dir = _resolve_artifact_dir(db, artifact_dir)
 
     if exercise is not None and language == "all":
         raise typer.BadParameter("--exercise requires a concrete --language")
@@ -2865,6 +3256,8 @@ def bench_aider_polyglot(
             limit=limit,
             no_retry=no_retry,
             task_ids=task_ids,
+            phase=phase,
+            artifact_dir=resolved_artifact_dir,
         )
         _append_option(argv, "--shards", shards)
         _append_option(argv, "--shard-count", shard_count)
@@ -2897,6 +3290,8 @@ def bench_aider_polyglot(
                 limit=limit,
                 no_retry=no_retry,
                 task_ids=task_ids,
+                phase=phase,
+                artifact_dir=resolved_artifact_dir,
             ),
             shards=shards,
             db=db,
@@ -2922,6 +3317,8 @@ def bench_aider_polyglot(
         temperature=temperature,
         seed=seed,
         timeout_s=300,
+        phase=phase,
+        artifact_dir=resolved_artifact_dir,
         aider_polyglot_root=selected_root,
         aider_polyglot_language=language,
         aider_polyglot_retry=not no_retry,
@@ -2942,6 +3339,179 @@ def bench_aider_polyglot(
     )
 
 
+@bench_app.command("suite")
+def bench_suite(
+    model: Annotated[str, typer.Option("--model", help="Mellea model id")],
+    backend: Annotated[str, typer.Option("--backend", help="Mellea backend name")] = "openai",
+    loop_budget: Annotated[
+        int,
+        typer.Option("--loop-budget", min=1, help="Shared generation loop budget"),
+    ] = 15,
+    retry_loop_budget: Annotated[
+        int,
+        typer.Option(
+            "--retry-loop-budget",
+            min=1,
+            help="Aider Polyglot retry loop budget inside the suite",
+        ),
+    ] = 8,
+    timeout_s: Annotated[
+        int,
+        typer.Option("--timeout", min=1, help="Seconds per SWE-bench eval attempt"),
+    ] = 300,
+    mem_limit: Annotated[
+        str, typer.Option("--mem-limit", help="Eval container memory limit")
+    ] = "8g",
+    pids_limit: Annotated[
+        int,
+        typer.Option("--pids-limit", min=64, help="Eval container process limit"),
+    ] = 512,
+    cpu_limit: Annotated[
+        float | None,
+        typer.Option("--cpu-limit", help="Cap each eval container at N cores"),
+    ] = None,
+    check_image_digests: Annotated[
+        bool,
+        typer.Option(
+            "--check-image-digests/--no-check-image-digests",
+            help="Check registry digests before reusing cached task images",
+        ),
+    ] = False,
+    suite_file: Annotated[
+        Path | None,
+        typer.Option("--suite-file", help="JSON suite manifest (default: bundled suite)"),
+    ] = None,
+    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = Path(
+        "experiments/results/suite.db"
+    ),
+    phase: Annotated[
+        Literal["run", "generate", "evaluate"],
+        typer.Option("--phase", help="Benchmark phase: run, generate, or evaluate"),
+    ] = "run",
+    artifact_dir: Annotated[
+        Path | None,
+        typer.Option("--artifact-dir", help="Directory for generated task artifacts"),
+    ] = None,
+    shards: Annotated[
+        int | None,
+        typer.Option("--shards", min=1, help="Run N shard workers and merge the DB automatically"),
+    ] = None,
+    shard_count: Annotated[
+        int | None,
+        typer.Option("--shard-count", min=1, help="Manual shard mode: total shard count"),
+    ] = None,
+    shard_index: Annotated[
+        int | None,
+        typer.Option("--shard-index", min=0, help="Manual shard mode: shard index"),
+    ] = None,
+    on: Annotated[
+        str,
+        typer.Option("--on", help="Where to run the bench: local or bluevela"),
+    ] = "local",
+    fetch_db: Annotated[
+        bool,
+        typer.Option("--fetch-db/--no-fetch-db", help="Rsync DB back when --on bluevela"),
+    ] = True,
+    diagnostic_traces: Annotated[
+        bool,
+        typer.Option(
+            "--diagnostic-traces/--no-diagnostic-traces",
+            help="Persist compact benchmark diagnostic trace events",
+        ),
+    ] = False,
+    json_mode: JsonFlag = False,
+ ) -> None:
+    """Run the bundled mixed benchmark suite through the shared phase runner."""
+    shards, shard_count, shard_index = _validate_shard_options(
+        shards=shards,
+        shard_count=shard_count,
+        shard_index=shard_index,
+    )
+    resolved_artifact_dir = _resolve_artifact_dir(db, artifact_dir)
+    if on == "bluevela":
+        argv = _suite_cli_args(
+            model=model,
+            backend=backend,
+            loop_budget=loop_budget,
+            retry_loop_budget=retry_loop_budget,
+            timeout_s=timeout_s,
+            mem_limit=mem_limit,
+            pids_limit=pids_limit,
+            cpu_limit=cpu_limit,
+            suite_file=suite_file,
+            phase=phase,
+            artifact_dir=resolved_artifact_dir,
+            diagnostic_traces=diagnostic_traces,
+            check_image_digests=check_image_digests,
+        )
+        _append_option(argv, "--shards", shards)
+        _append_option(argv, "--shard-count", shard_count)
+        _append_option(argv, "--shard-index", shard_index)
+        if json_mode:
+            argv.append("--json")
+        _run_bluevela_benchmark(
+            command="suite",
+            argv=argv,
+            model=model,
+            db=db,
+            fetch_db=fetch_db,
+        )
+    if on != "local":
+        typer.echo(f"✗ unknown --on target {on!r}; expected local or bluevela", err=True)
+        raise typer.Exit(2)
+    if shards and shards > 1:
+        _run_sharded_benchmark(
+            command="suite",
+            base_argv=_suite_cli_args(
+                model=model,
+                backend=backend,
+                loop_budget=loop_budget,
+                retry_loop_budget=retry_loop_budget,
+                timeout_s=timeout_s,
+                mem_limit=mem_limit,
+                pids_limit=pids_limit,
+                cpu_limit=cpu_limit,
+                suite_file=suite_file,
+                phase=phase,
+                artifact_dir=resolved_artifact_dir,
+                diagnostic_traces=diagnostic_traces,
+                check_image_digests=check_image_digests,
+            ),
+            shards=shards,
+            db=db,
+            benchmark="suite",
+            backend=backend,
+            model=model,
+            loop_budget=loop_budget + retry_loop_budget,
+            timeout_s=timeout_s,
+            json_mode=json_mode,
+            merge_mode="full_db",
+        )
+        return
+    suite_name = suite_file.stem if suite_file is not None else "default-suite"
+    manifest = load_suite_manifest(suite_file)
+    for entry in manifest.entries:
+        _run_suite_entry(
+            suite_name=suite_name,
+            entry=entry,
+            model=model,
+            backend=backend,
+            loop_budget=loop_budget,
+            retry_loop_budget=retry_loop_budget,
+            timeout_s=timeout_s,
+            mem_limit=mem_limit,
+            pids_limit=pids_limit,
+            cpu_limit=cpu_limit,
+            check_image_digests=check_image_digests,
+            phase=phase,
+            artifact_dir=resolved_artifact_dir,
+            db=db,
+            shard_count=shard_count,
+            shard_index=shard_index,
+            diagnostic_traces=diagnostic_traces,
+        )
+
+
 @bench_app.command("smoke")
 def bench_smoke(
     model: Annotated[str, typer.Option("--model", help="Mellea model id")],
@@ -2949,6 +3519,14 @@ def bench_smoke(
     db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = Path(
         "experiments/results/smoke-16.db"
     ),
+    phase: Annotated[
+        Literal["run", "generate", "evaluate"],
+        typer.Option("--phase", help="Benchmark phase: run, generate, or evaluate"),
+    ] = "run",
+    artifact_dir: Annotated[
+        Path | None,
+        typer.Option("--artifact-dir", help="Directory for generated task artifacts"),
+    ] = None,
     mem_limit: Annotated[
         str, typer.Option("--mem-limit", help="Eval container memory limit")
     ] = "8g",
@@ -2991,6 +3569,14 @@ def bench_smoke(
             envvar="MCODE_SWEBENCH_CPU_LIMIT",
         ),
     ] = None,
+    check_image_digests: Annotated[
+        bool,
+        typer.Option(
+            "--check-image-digests/--no-check-image-digests",
+            help="Check registry digests before reusing cached task images",
+            envvar="MCODE_SWEBENCH_CHECK_IMAGE_DIGESTS",
+        ),
+    ] = False,
     json_mode: JsonFlag = False,
 ) -> None:
     """16-task SWE-bench Verified diagnostic slice (astropy smoke + 6 projects).
@@ -3005,6 +3591,7 @@ def bench_smoke(
         shard_count=shard_count,
         shard_index=shard_index,
     )
+    resolved_artifact_dir = _resolve_artifact_dir(db, artifact_dir)
 
     if on == "bluevela":
         argv = [
@@ -3014,9 +3601,15 @@ def bench_smoke(
             backend,
             "--mem-limit",
             mem_limit,
+            "--phase",
+            phase,
+            "--artifact-dir",
+            str(resolved_artifact_dir),
         ]
         if diagnostic_traces:
             argv.append("--diagnostic-traces")
+        if not check_image_digests:
+            argv.append("--no-check-image-digests")
         _append_option(argv, "--shards", shards)
         _append_option(argv, "--shard-count", shard_count)
         _append_option(argv, "--shard-index", shard_index)
@@ -3051,10 +3644,13 @@ def bench_smoke(
             mem_limit=mem_limit,
             pids_limit=512,
             cpu_limit=cpu_limit,
+            check_image_digests=check_image_digests,
             shards=shards,
             shard_count=shard_count,
             shard_index=shard_index,
             db=db,
+            phase=phase,
+            artifact_dir=resolved_artifact_dir,
             limit=None,
             n_samples=1,
             task_ids=str(task_ids_file),

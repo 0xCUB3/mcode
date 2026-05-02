@@ -49,6 +49,8 @@ def test_cli_bench_swebench_help() -> None:
     assert "on" in option_names
     assert "fetch_db" in option_names
     assert "diagnostic_traces" in option_names
+    assert "phase" in option_names
+    assert "artifact_dir" in option_names
 
 
 def test_cli_report_help() -> None:
@@ -65,6 +67,8 @@ def test_cli_bench_swebench_live_help() -> None:
     assert "on" in option_names
     assert "fetch_db" in option_names
     assert "diagnostic_traces" in option_names
+    assert "phase" in option_names
+    assert "artifact_dir" in option_names
 
 
 def test_cli_bench_aider_polyglot_help() -> None:
@@ -80,6 +84,8 @@ def test_cli_bench_aider_polyglot_help() -> None:
     assert "shards" in option_names
     assert "shard_count" in option_names
     assert "shard_index" in option_names
+    assert "phase" in option_names
+    assert "artifact_dir" in option_names
 
 
 def test_cli_bench_smoke_help() -> None:
@@ -87,6 +93,18 @@ def test_cli_bench_smoke_help() -> None:
     assert "shards" in option_names
 
     assert "diagnostic_traces" in option_names
+    assert "phase" in option_names
+    assert "artifact_dir" in option_names
+
+def test_cli_bench_suite_help() -> None:
+    option_names = _command_option_names("bench", "suite")
+    assert "suite_file" in option_names
+    assert "phase" in option_names
+    assert "artifact_dir" in option_names
+    assert "shards" in option_names
+    assert "shard_count" in option_names
+    assert "shard_index" in option_names
+
 
 
 def test_cli_compare_help() -> None:

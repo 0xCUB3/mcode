@@ -8,13 +8,14 @@ import os
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from mellea.plugins.base import Plugin
 from mellea.plugins.decorators import hook
 from mellea.plugins.types import PluginMode
 
-from mcode.mellea_compat import acall_tools_with_arg_compat
+from mcode.mellea_compat import acall_tools_with_arg_compat, inspect_tool_call_arg_compat
 
 
 @dataclass
@@ -34,6 +35,8 @@ class SolveTraceCollector:
     validation_passed_count: int | None = None
     validation_failed_count: int | None = None
     diagnostic_events: list[dict[str, object]] = field(default_factory=list)
+
+    verification_evidence: list[dict[str, object]] = field(default_factory=list)
 
     def note_event(
         self,
@@ -104,6 +107,8 @@ class SolveTraceCollector:
         error: object | None = None,
     ) -> None:
         turn = max(1, self.current_turn or 1)
+        args = _args_mapping(tool_args)
+        output_text = _safe_text(output)
         if tool_name == "edit" and self.turns_to_first_edit is None:
             self.turns_to_first_edit = turn
         if tool_name == "run_tests" and self.turns_to_first_verification is None:
@@ -111,15 +116,23 @@ class SolveTraceCollector:
         if (
             tool_name == "run_tests"
             and success
-            and _run_tests_succeeded(str(output))
+            and _run_tests_succeeded(output_text)
             and _run_tests_counts_as_verification(tool_args)
         ):
             self.verification_succeeded = True
+        if tool_name == "run_tests":
+            self.verification_evidence.append(
+                _verification_evidence_payload(
+                    args=args,
+                    output_text=output_text,
+                    execution_time_ms=execution_time_ms,
+                )
+            )
         self._note_tool_diagnostics(
             tool_name=tool_name,
-            output=output,
+            output=output_text,
             success=success,
-            tool_args=tool_args,
+            tool_args=args,
             execution_time_ms=execution_time_ms,
             error=error,
         )
@@ -253,6 +266,7 @@ async def run_react_loop(
         has_run_tests_tool = any(getattr(tool, "name", "") == "run_tests" for tool in tools)
         edit_since_verification = False
         reminded_after_edit = False
+        reminded_without_edit = False
         for turn in range(1, loop_budget + 1):
             collector.note_turn(turn)
             FancyLogger.get_logger().info(f"## ReACT TURN NUMBER {turn}")
@@ -278,6 +292,24 @@ async def run_react_loop(
                 )
                 reminded_after_edit = True
 
+            if (
+                has_run_tests_tool
+                and collector.turns_to_first_edit is None
+                and not reminded_without_edit
+                and turn >= max(4, loop_budget // 3)
+            ):
+                context = context.add(
+                    Message(
+                        role="user",
+                        content=(
+                            "You have not edited yet. Stop browsing and call edit on "
+                            "the best candidate source file with the smallest plausible fix now. "
+                            "Do not call final_answer or another search/read before an edit "
+                            "unless the last read failed."
+                        ),
+                    )
+                )
+                reminded_without_edit = True
             requirements = turn_requirements(turn, loop_budget, collector)
             result, next_context = await mfuncs.aact(
                 ReactThought(),
@@ -381,8 +413,12 @@ async def run_react_loop(
                     )
                 if not valid_tool_calls:
                     continue
+
                 if len(valid_tool_calls) != len(result.tool_calls):
                     result.tool_calls = valid_tool_calls
+                compat_stats = inspect_tool_call_arg_compat(result.tool_calls)
+                if compat_stats["raw_arg_call_count"]:
+                    collector.note_event("tool_arg_compat", compat_stats)
                 tool_responses = await acall_tools_with_arg_compat(result, backend=session.backend)
                 for tool_result in tool_responses:
                     if strict_tool_ordering:
@@ -410,6 +446,7 @@ async def run_react_loop(
                     elif tool_result.name == "run_tests":
                         edit_since_verification = False
                         reminded_after_edit = False
+
             finalizer_response = next(
                 (
                     tool_result
@@ -625,9 +662,54 @@ def _run_tests_payload(args: Mapping[str, object], output_text: str) -> dict[str
         "max_output_chars": args.get("max_output_chars"),
         "expanded_command": command_match.group("command") if command_match else None,
         "counts_as_verification": counts_as_verification,
+        "repeated_failed_run_suppressed": _is_repeated_failed_run_suppressed(output_text),
         "status": _parse_status(output_text),
         "output": _text_digest(output_text, max_preview=1000),
     }
+
+
+def _verification_evidence_payload(
+    *,
+    args: Mapping[str, object],
+    output_text: str,
+    execution_time_ms: int | None,
+) -> dict[str, object]:
+    counts_as_verification = _run_tests_counts_as_verification(args)
+    ended_at = datetime.now(UTC)
+    started_at = (
+        ended_at - timedelta(milliseconds=execution_time_ms)
+        if execution_time_ms is not None
+        else None
+    )
+    command_label = str(args.get("test_cmd") or "default")
+    payload = _run_tests_payload(args, output_text)
+    output_digest = _text_digest(output_text, max_preview=1000)
+    expanded_command = payload.get("expanded_command")
+    command_digest_source = expanded_command or command_label
+    return {
+        "verifier_name": "run_tests",
+        "command_label": command_label,
+        "command_digest": hashlib.sha256(
+            str(command_digest_source).encode("utf-8", errors="ignore")
+        ).hexdigest(),
+        "status": payload.get("status") or "UNKNOWN",
+        "counted_as_verification": counts_as_verification,
+        "output_digest": output_digest["sha256"],
+        "output_preview": output_digest["preview"],
+        "execution_time_ms": execution_time_ms,
+        "started_at": started_at.isoformat() if started_at is not None else None,
+        "ended_at": ended_at.isoformat(),
+        "timed_out": payload.get("status") == "TIMEOUT",
+        "expanded_command": expanded_command,
+        "repeated_failed_run_suppressed": payload.get("repeated_failed_run_suppressed", False),
+    }
+
+
+def _is_repeated_failed_run_suppressed(output_text: str) -> bool:
+    return (
+        "Previous run_tests already returned" in output_text
+        and "with no edit since then" in output_text
+    )
 
 
 def _run_tests_counts_as_verification(tool_args: object | None) -> bool:

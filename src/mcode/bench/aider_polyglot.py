@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from mcode.util import temporary_directory
+
 _BENCHMARK_REPO = "https://github.com/Aider-AI/polyglot-benchmark.git"
 _JS_SKIP_MARKER_RE = re.compile(r"\b(xit|xtest|xdescribe)\s*\(")
 _JAVA_DISABLED_RE = re.compile(r"^[ \t]*@Disabled\b.*$", re.MULTILINE)
@@ -145,7 +147,7 @@ def prepare_task(
     root = ensure_benchmark_root(benchmark_root)
     descriptors = _build_language_descriptors(root)
     descriptor = descriptors[task.language]
-    tempdir = TemporaryDirectory(prefix=f"mcode-polyglot-{task.language}-")
+    tempdir = temporary_directory(prefix=f"mcode-polyglot-{task.language}-")
     work_parent = Path(tempdir.name)
     work_dir = work_parent / task.exercise
     stub_paths, test_paths = descriptor.prepare(task.source_dir, work_dir)
@@ -167,6 +169,50 @@ def cleanup_prepared_task(task: PreparedPolyglotTask) -> None:
 
 def run_test_commands(task: PreparedPolyglotTask) -> CommandOutcome:
     return run_command_sequence(task.work_dir, task.test_commands, timeout_s=task.timeout_s)
+
+
+def apply_patch_to_prepared_task(task: PreparedPolyglotTask, patch: str) -> CommandOutcome:
+    if not patch.strip():
+        return CommandOutcome(
+            passed=False,
+            output="No patch candidate found.",
+            exit_code=None,
+            timed_out=False,
+        )
+    patch_file = task.work_dir / ".mcode-candidate.patch"
+    patch_file.write_text(patch, encoding="utf-8")
+    try:
+        outputs: list[str] = []
+        for command in (
+            f"git apply --verbose {patch_file.name}",
+            f"git apply --verbose --reject {patch_file.name}",
+            f"patch --batch --fuzz=5 -p1 -i {patch_file.name}",
+        ):
+            outcome = run_single_command(task.work_dir, command, timeout_s=task.timeout_s)
+            outputs.append(f"$ {command}\n{outcome.output}".strip())
+            if outcome.passed:
+                return CommandOutcome(
+                    passed=True,
+                    output="\n\n".join(part for part in outputs if part),
+                    exit_code=outcome.exit_code,
+                    timed_out=False,
+                )
+            if outcome.timed_out:
+                return CommandOutcome(
+                    passed=False,
+                    output="\n\n".join(part for part in outputs if part),
+                    exit_code=outcome.exit_code,
+                    timed_out=True,
+                )
+        return CommandOutcome(
+            passed=False,
+            output="\n\n".join(part for part in outputs if part),
+            exit_code=1,
+            timed_out=False,
+        )
+    finally:
+        if patch_file.exists():
+            patch_file.unlink()
 
 
 def run_command_sequence(

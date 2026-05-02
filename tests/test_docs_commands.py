@@ -6,10 +6,14 @@ from pathlib import Path
 def test_command_docs_cover_sampling_and_compare() -> None:
     command_docs = Path("docs/COMMANDS.md").read_text()
     assert "uv run mcode bench swebench-lite" in command_docs
+    assert "uv run mcode bench suite" in command_docs
     assert "--shards" in command_docs
     assert "--sampling {none,multiturn}" in command_docs
+    assert "--phase {run,generate,evaluate}" in command_docs
+    assert "--phase generate" in command_docs
+    assert "--phase evaluate" in command_docs
+    assert "--artifact-dir DIR" in command_docs
     assert "uv run mcode compare" in command_docs
-
 
 def test_readmes_match_command_contract() -> None:
     """The README is intentionally a high-level pointer to docs/. Detailed
@@ -29,11 +33,18 @@ def test_readmes_match_command_contract() -> None:
     # Local + Blue Vela docs cover the canonical flags.
     assert "--shards" in local_doc
     assert "--sampling" in local_doc
+    assert "--phase {run,generate,evaluate}" in local_doc
+    assert "--artifact-dir DIR" in local_doc
+    assert "uv run mcode bench suite" in local_doc
     assert "--shards" in bluevela_doc
     assert "--sampling" in bluevela_doc
+    assert "--phase generate" in bluevela_doc
+    assert "--artifact-dir DIR" in bluevela_doc
+    assert "uv run mcode bench suite" in bluevela_doc
 
     # Reference doc covers compare and observability env vars.
     assert "uv run mcode compare" in commands_doc
+    assert "uv run mcode bench suite" in commands_doc
     assert "MELLEA_TRACE_APPLICATION" in commands_doc
 
     # Legacy Blue Vela shell scripts still match their pinned shape.
