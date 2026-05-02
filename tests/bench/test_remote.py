@@ -560,3 +560,64 @@ def test_bench_artifacts_fetch_downloads_saved_remote_dir(tmp_path, monkeypatch)
     assert ssh.download_trees == [
         ("/remote/artifacts", tmp_path / "override-artifacts", 300)
     ]
+
+def test_bench_artifacts_fetch_resolves_latest_run_by_db(tmp_path, monkeypatch) -> None:
+    state_path = tmp_path / "state.json"
+    local_db = tmp_path / "results.db"
+    monkeypatch.setenv("MCODE_LAUNCH_STATE", str(state_path))
+    launch_state.update(
+        None,
+        lambda s: s.upsert_run(
+            RunRecord(
+                id="run-older",
+                target=Target.BLUEVELA,
+                benchmark="suite",
+                status=RunStatus.DONE,
+                started_at=1.0,
+                db_path=str(local_db),
+                remote={
+                    "login": "skula@login3.bluevela.rmf.ibm.com",
+                    "remote_artifact_dir": "/remote/old",
+                    "local_artifact_dir": "artifacts/old",
+                },
+            )
+        ),
+    )
+    launch_state.update(
+        None,
+        lambda s: s.upsert_run(
+            RunRecord(
+                id="run-newer",
+                target=Target.BLUEVELA,
+                benchmark="suite",
+                status=RunStatus.DONE,
+                started_at=2.0,
+                db_path=str(local_db),
+                remote={
+                    "login": "skula@login3.bluevela.rmf.ibm.com",
+                    "remote_artifact_dir": "/remote/new",
+                    "local_artifact_dir": "artifacts/new",
+                },
+            )
+        ),
+    )
+    monkeypatch.setattr("mcode.launch.ssh.SshClient", _FakeSshClient)
+    runner = CliRunner()
+
+    res = runner.invoke(
+        app,
+        [
+            "bench",
+            "artifacts-fetch",
+            "--db",
+            str(local_db),
+            "--dest",
+            str(tmp_path / "chosen"),
+        ],
+        color=False,
+    )
+
+    assert res.exit_code == 0
+    ssh = _FakeSshClient.last
+    assert ssh is not None
+    assert ssh.download_trees == [("/remote/new", tmp_path / "chosen", 300)]
