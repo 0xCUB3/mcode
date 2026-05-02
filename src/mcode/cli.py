@@ -2622,6 +2622,7 @@ def _artifact_replay_config(
     task_id: str,
     candidate_index: int | None,
     benchmark_root: Path | None = None,
+    artifact_dir_override: Path | None = None,
  ) -> tuple[str, BenchConfig, Path]:
     with ResultsDB(source_db) as rdb:
         row = rdb.conn.execute(
@@ -2629,7 +2630,8 @@ def _artifact_replay_config(
             SELECT
               r.benchmark AS benchmark,
               r.config_json AS config_json,
-              at.manifest_path AS manifest_path
+              at.manifest_path AS manifest_path,
+              at.artifact_root AS artifact_root
             FROM artifact_tasks at
             JOIN runs r ON r.id = at.run_id
             WHERE at.run_id = ? AND at.task_id = ?
@@ -2641,8 +2643,10 @@ def _artifact_replay_config(
         raise typer.BadParameter(
             f"No artifact manifest for task {task_id!r} in run {run_id}"
         )
-    manifest = read_task_manifest(Path(str(row["manifest_path"])))
     manifest_path = Path(str(row["manifest_path"]))
+    if artifact_dir_override is not None:
+        manifest_path = artifact_dir_override / str(row["artifact_root"]) / "manifest.json"
+    manifest = read_task_manifest(manifest_path)
     artifact_dir = manifest_path.parent
     for _ in Path(manifest.task.artifact_root).parts:
         artifact_dir = artifact_dir.parent
@@ -2737,6 +2741,13 @@ def bench_artifacts_replay(
             help="Override the saved benchmark root when replaying cross-machine artifacts",
         ),
     ] = None,
+    artifact_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--artifact-dir",
+            help="Override the saved artifact directory when replaying artifacts copied elsewhere",
+        ),
+    ] = None,
  ) -> None:
     """Re-evaluate one saved artifact candidate through the benchmark adapter."""
     with ResultsDB(db) as rdb:
@@ -2747,6 +2758,7 @@ def bench_artifacts_replay(
         task_id=task_id,
         candidate_index=candidate_index,
         benchmark_root=benchmark_root,
+        artifact_dir_override=artifact_dir,
     )
     target_db = out_db if out_db is not None else db.with_name(f"{db.stem}-replay.db")
     _run_single_benchmark(

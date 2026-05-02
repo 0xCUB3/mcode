@@ -136,6 +136,20 @@ def test_bench_artifacts_replay_builds_evaluate_run(monkeypatch, tmp_path: Path)
     monkeypatch.setattr("mcode.cli._run_single_benchmark", fake_run_single_benchmark)
 
     override_root = tmp_path / "polyglot"
+    override_artifacts = tmp_path / "override-artifacts"
+    override_task_dir = override_artifacts / "aider-polyglot" / "python" / "affine-cipher"
+    override_task_dir.mkdir(parents=True)
+    source_manifest = (
+        tmp_path
+        / "artifacts"
+        / "aider-polyglot"
+        / "python"
+        / "affine-cipher"
+        / "manifest.json"
+    )
+    (override_task_dir / "manifest.json").write_text(source_manifest.read_text())
+    (override_task_dir / "patch.diff").write_text("diff --git a/foo.py b/foo.py\n+x = 2\n")
+
     res = runner.invoke(
         app,
         [
@@ -150,6 +164,8 @@ def test_bench_artifacts_replay_builds_evaluate_run(monkeypatch, tmp_path: Path)
             "0",
             "--benchmark-root",
             str(override_root),
+            "--artifact-dir",
+            str(override_artifacts),
         ],
         color=False,
     )
@@ -161,5 +177,5 @@ def test_bench_artifacts_replay_builds_evaluate_run(monkeypatch, tmp_path: Path)
     config = captured["config"]
     assert config.phase == "evaluate"
     assert config.artifact_candidate_index == 0
-    assert config.artifact_dir == tmp_path / "artifacts"
+    assert config.artifact_dir == override_artifacts
     assert config.aider_polyglot_root == override_root
