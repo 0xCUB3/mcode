@@ -70,11 +70,6 @@ def test_generate_patch_returns_verified_diff(tmp_path, monkeypatch):
             SimpleNamespace(backend=object(), solve_patch=fake_solve_patch)
         ),
     )
-    monkeypatch.setattr("mcode.agent.coding_agent.build_repo_map", lambda *args, **kwargs: "")
-    monkeypatch.setattr(
-        "mcode.agent.coding_agent.build_candidate_files",
-        lambda *args, **kwargs: "",
-    )
 
     patch_text = session.generate_patch(
         repo="test/repo",
@@ -133,11 +128,6 @@ def test_generate_patch_discards_unverified_diff(tmp_path, monkeypatch):
         lambda **kwargs: _session_context(
             SimpleNamespace(backend=object(), solve_patch=fake_solve_patch)
         ),
-    )
-    monkeypatch.setattr("mcode.agent.coding_agent.build_repo_map", lambda *args, **kwargs: "")
-    monkeypatch.setattr(
-        "mcode.agent.coding_agent.build_candidate_files",
-        lambda *args, **kwargs: "",
     )
 
     patch_text = session.generate_patch(
@@ -208,11 +198,6 @@ def test_generate_patch_retries_outer_samples_until_verified(tmp_path, monkeypat
             SimpleNamespace(backend=object(), solve_patch=fake_solve_patch)
         ),
     )
-    monkeypatch.setattr("mcode.agent.coding_agent.build_repo_map", lambda *args, **kwargs: "")
-    monkeypatch.setattr(
-        "mcode.agent.coding_agent.build_candidate_files",
-        lambda *args, **kwargs: "",
-    )
 
     patch_text = session.generate_patch(
         repo="test/repo",
@@ -258,11 +243,6 @@ def test_generate_patch_disables_outer_retry_when_sampling_enabled(tmp_path, mon
         lambda **kwargs: _session_context(
             SimpleNamespace(backend=object(), solve_patch=fake_solve_patch)
         ),
-    )
-    monkeypatch.setattr("mcode.agent.coding_agent.build_repo_map", lambda *args, **kwargs: "")
-    monkeypatch.setattr(
-        "mcode.agent.coding_agent.build_candidate_files",
-        lambda *args, **kwargs: "",
     )
 
     session.generate_patch(
@@ -324,11 +304,6 @@ def test_selection_attempts_runs_sampling_trajectories_and_selects_best(tmp_path
             SimpleNamespace(backend=object(), solve_patch=fake_solve_patch)
         ),
     )
-    monkeypatch.setattr("mcode.agent.coding_agent.build_repo_map", lambda *args, **kwargs: "")
-    monkeypatch.setattr(
-        "mcode.agent.coding_agent.build_candidate_files",
-        lambda *args, **kwargs: "",
-    )
 
     patch_text = session.generate_patch(
         repo="test/repo",
@@ -381,11 +356,6 @@ def test_generate_patch_retries_from_clean_repo_snapshot(tmp_path, monkeypatch):
         lambda **kwargs: _session_context(
             SimpleNamespace(backend=object(), solve_patch=fake_solve_patch)
         ),
-    )
-    monkeypatch.setattr("mcode.agent.coding_agent.build_repo_map", lambda *args, **kwargs: "")
-    monkeypatch.setattr(
-        "mcode.agent.coding_agent.build_candidate_files",
-        lambda *args, **kwargs: "",
     )
 
     patch_text = session.generate_patch(
@@ -709,11 +679,6 @@ def test_solve_result_carries_diagnostic_events_only_when_enabled(tmp_path, monk
         lambda **kwargs: _session_context(
             SimpleNamespace(backend=object(), solve_patch=fake_solve_patch)
         ),
-    )
-    monkeypatch.setattr("mcode.agent.coding_agent.build_repo_map", lambda *args, **kwargs: "")
-    monkeypatch.setattr(
-        "mcode.agent.coding_agent.build_candidate_files",
-        lambda *args, **kwargs: "",
     )
 
     session.generate_patch(

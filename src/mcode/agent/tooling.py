@@ -182,6 +182,8 @@ def execute_command(
     )
 
 
+
+
 def search_code(query: str, *, repo_root: str) -> str:
     globs = [f"--glob=!{d}" for d in _SKIP_DIRS]
     cmd = [
@@ -439,69 +441,3 @@ def list_dir(path: str = ".", *, repo_root: str) -> str:
         return f"Error listing {path}: {e}"
     return f"{path}/\n" + "\n".join(entries) if entries else f"{path}/ (empty)"
 
-
-def _query_tokens(query: str) -> list[str]:
-    return [token for token in re.findall(r"[A-Za-z0-9_]+", query.lower()) if len(token) >= 3]
-
-
-def _candidate_files(repo_root: Path) -> list[Path]:
-    candidates: list[Path] = []
-    for path in repo_root.rglob("*"):
-        if not path.is_file():
-            continue
-        if path.suffix.lower() not in _CODE_SUFFIXES:
-            continue
-        if any(part.startswith(".") for part in path.relative_to(repo_root).parts):
-            continue
-        candidates.append(path)
-    return candidates
-
-
-def _rank_candidate_paths(repo_root: Path, query: str) -> list[str]:
-    tokens = _query_tokens(query)
-    ranked: list[tuple[int, str]] = []
-    for path in _candidate_files(repo_root):
-        rel = path.relative_to(repo_root).as_posix()
-        rel_lower = rel.lower()
-        score = sum(rel_lower.count(token) for token in tokens)
-        if score:
-            ranked.append((score, rel))
-    ranked.sort(key=lambda item: (-item[0], item[1]))
-    return [rel for _, rel in ranked]
-
-
-def build_candidate_files(repo_root: str, query: str, *, top_n: int = 6) -> str:
-    root = Path(repo_root)
-    if not root.exists():
-        return ""
-
-    ranked = _rank_candidate_paths(root, query)
-    if not ranked:
-        return ""
-
-    lines = ["Likely files to inspect first:"]
-    for rel in ranked[: max(1, top_n)]:
-        lines.append(f"- {rel}")
-    return "\n".join(lines)
-
-
-def build_repo_map(repo_root: str, query: str, *, max_tokens: int = 4096) -> str:
-    root = Path(repo_root)
-    if not root.exists():
-        return ""
-
-    ranked = _rank_candidate_paths(root, query)
-    if not ranked:
-        ranked = [path.relative_to(root).as_posix() for path in _candidate_files(root)[:40]]
-    if not ranked:
-        return ""
-
-    lines = ["Repository map:"]
-    current_len = len(lines[0]) + 1
-    for rel in ranked:
-        line = f"- {rel}"
-        if current_len + len(line) + 1 > max_tokens:
-            break
-        lines.append(line)
-        current_len += len(line) + 1
-    return "\n".join(lines)

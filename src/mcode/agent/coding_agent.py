@@ -8,24 +8,13 @@ from mellea.backends.tools import MelleaTool
 
 from mcode.agent.coding_policy import CodingPolicy, build_coding_policy
 from mcode.agent.repo_customization import load_repo_customization
-from mcode.agent.tooling import (
-    build_candidate_files,
-    build_repo_map,
-    find_file,
-    list_dir,
-    read_file,
-    search_code,
-    str_replace_edit,
-)
+from mcode.agent.tooling import find_file, list_dir, read_file, search_code, str_replace_edit
 from mcode.agent.verification import (
     VerificationPolicy,
     VerificationProgress,
     build_run_tests_tool,
     build_verification_policy,
 )
-from mcode.agent.workspace_context import collect_workspace_context
-
-_LEGACY_PROMPT_SCOUTS = (build_candidate_files, build_repo_map, collect_workspace_context)
 
 
 @dataclass(frozen=True)

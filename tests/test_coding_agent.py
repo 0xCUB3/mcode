@@ -24,15 +24,7 @@ def test_build_coding_agent_assembles_prompt_and_tools(tmp_path):
     )
     session._m = SimpleNamespace(backend=object())
 
-    with (
-        patch("mcode.agent.coding_agent.make_agent_tools", return_value=["tool-a"]),
-        patch(
-            "mcode.agent.coding_agent.collect_workspace_context",
-            return_value=SimpleNamespace(
-                text="Local workspace context:\n- README.md\nUse project docs.",
-            ),
-        ),
-    ):
+    with patch("mcode.agent.coding_agent.make_agent_tools", return_value=["tool-a"]):
         assembly = build_coding_agent(
             session=session,
             repo="test/repo",
