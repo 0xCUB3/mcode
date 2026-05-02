@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 from mellea.backends.tools import MelleaTool
 
-from mcode.agent.coding_policy import CodingPolicy, build_coding_policy
 from mcode.agent.repo_customization import load_repo_customization
 from mcode.agent.tooling import find_file, list_dir, read_file, search_code, str_replace_edit
 from mcode.agent.verification import (
@@ -15,6 +14,44 @@ from mcode.agent.verification import (
     build_run_tests_tool,
     build_verification_policy,
 )
+
+_BASE_SYSTEM_PROMPT = (
+    "You are an expert software engineer fixing a bug in an open-source repository. "
+    "You MUST edit existing source files to fix the bug. Do NOT create new files. "
+    "Do NOT write test scripts. Only modify the existing code that contains the bug.\n\n"
+    "Use the structured code tools to search, read, edit, and verify. Start narrow, make one "
+    "concrete edit once you have a target, then use `run_tests` before `final_answer`. "
+    "When you call `final_answer`, keep the answer short."
+)
+
+
+@dataclass(frozen=True)
+class CodingPolicy:
+    system_prompt: str
+    goal: str
+
+
+def _build_coding_policy(
+    *,
+    repo: str,
+    problem_statement: str,
+    hints_text: str = "",
+    repo_customization_text: str = "",
+    verification_prompt: str = "",
+) -> CodingPolicy:
+    hints_block = f"\n\nAdditional context:\n{hints_text.strip()}" if hints_text.strip() else ""
+    customization_block = (
+        f"\n\nRepository-specific guidance:\n{repo_customization_text.strip()}"
+        if repo_customization_text.strip()
+        else ""
+    )
+    goal = (
+        f"Fix this bug in {repo} by editing the existing source code.\n\n"
+        f"Issue:\n{problem_statement.strip()}"
+        f"{hints_block}{customization_block}{verification_prompt}\n\n"
+        "Do not open a second solving path. Diagnose, edit, verify, then submit."
+    )
+    return CodingPolicy(system_prompt=_BASE_SYSTEM_PROMPT, goal=goal)
 
 
 @dataclass(frozen=True)
@@ -63,7 +100,7 @@ def build_coding_agent(
     )
 
     repo_customization = load_repo_customization(repo_root)
-    coding_policy = build_coding_policy(
+    coding_policy = _build_coding_policy(
         repo=repo,
         problem_statement=problem_statement,
         hints_text=hints_text,

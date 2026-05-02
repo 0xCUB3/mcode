@@ -1,7 +1,6 @@
 from mcode.agent.coding_agent import CodingAgentAssembly as CodingAgentAssembly
+from mcode.agent.coding_agent import CodingPolicy as CodingPolicy
 from mcode.agent.coding_agent import build_coding_agent as build_coding_agent
-from mcode.agent.coding_policy import CodingPolicy as CodingPolicy
-from mcode.agent.coding_policy import build_coding_policy as build_coding_policy
 from mcode.agent.verification import VerificationPolicy as VerificationPolicy
 from mcode.agent.verification import build_run_tests_tool as build_run_tests_tool
 from mcode.agent.verification import build_verification_policy as build_verification_policy
@@ -16,7 +15,6 @@ __all__ = [
     "VerificationPolicy",
     "build_coding_agent",
     "build_run_tests_tool",
-    "build_coding_policy",
     "build_verification_policy",
     "build_verification_prompt",
     "normalize_verification_commands",
