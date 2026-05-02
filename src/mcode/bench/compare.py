@@ -9,16 +9,39 @@ def compare_run_dirs(
     baseline_dir: str,
     candidate_dir: str,
     task_ids: list[str] | None = None,
-) -> str:
-    report = compare_runs(baseline_dir, candidate_dir, task_ids=task_ids)
+    suite_name: str | None = None,
+    suite_entry_name: str | None = None,
+ ) -> str:
+    report = compare_runs(
+        baseline_dir,
+        candidate_dir,
+        task_ids=task_ids,
+        suite_name=suite_name,
+        suite_entry_name=suite_entry_name,
+    )
     return format_comparison(report)
 
 
 def compare_runs(
-    baseline_dir: str, candidate_dir: str, *, task_ids: list[str] | None = None
-) -> dict[str, object]:
-    baseline = _load_results_from_dir(baseline_dir, task_ids)
-    candidate = _load_results_from_dir(candidate_dir, task_ids)
+    baseline_dir: str,
+    candidate_dir: str,
+    *,
+    task_ids: list[str] | None = None,
+    suite_name: str | None = None,
+    suite_entry_name: str | None = None,
+ ) -> dict[str, object]:
+    baseline = _load_results_from_dir(
+        baseline_dir,
+        task_ids,
+        suite_name=suite_name,
+        suite_entry_name=suite_entry_name,
+    )
+    candidate = _load_results_from_dir(
+        candidate_dir,
+        task_ids,
+        suite_name=suite_name,
+        suite_entry_name=suite_entry_name,
+    )
 
     all_tasks = sorted(set(baseline) | set(candidate))
     gained: list[str] = []
@@ -68,14 +91,33 @@ def format_comparison(report: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
-def _load_results_from_dir(dir_path: str, task_ids: list[str] | None) -> dict[str, bool]:
+def _load_results_from_dir(
+    dir_path: str,
+    task_ids: list[str] | None,
+    *,
+    suite_name: str | None = None,
+    suite_entry_name: str | None = None,
+ ) -> dict[str, bool]:
     results: dict[str, bool] = {}
     for db_file in sorted(Path(dir_path).glob("*.db")):
-        results.update(_load_results(str(db_file), task_ids))
+        results.update(
+            _load_results(
+                str(db_file),
+                task_ids,
+                suite_name=suite_name,
+                suite_entry_name=suite_entry_name,
+            )
+        )
     return results
 
 
-def _load_results(db_path: str, task_ids: list[str] | None) -> dict[str, bool]:
+def _load_results(
+    db_path: str,
+    task_ids: list[str] | None,
+    *,
+    suite_name: str | None = None,
+    suite_entry_name: str | None = None,
+ ) -> dict[str, bool]:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
@@ -88,14 +130,39 @@ def _load_results(db_path: str, task_ids: list[str] | None) -> dict[str, bool]:
         if passed_col is None:
             return {}
 
+        where = ["1=1"]
+        params: list[object] = []
         if task_ids:
             placeholders = ",".join("?" for _ in task_ids)
-            rows = conn.execute(
-                f"SELECT task_id, {passed_col} FROM task_results WHERE task_id IN ({placeholders})",
-                task_ids,
-            ).fetchall()
+            where.append(f"tr.task_id IN ({placeholders})")
+            params.extend(task_ids)
+        run_columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+        join_runs = bool(suite_name or suite_entry_name) and {
+            "suite_name",
+            "suite_entry_name",
+        } <= run_columns
+        if suite_name and join_runs:
+            where.append("r.suite_name = ?")
+            params.append(suite_name)
+        if suite_entry_name and join_runs:
+            where.append("r.suite_entry_name = ?")
+            params.append(suite_entry_name)
+        if suite_name and not join_runs:
+            return {}
+        if suite_entry_name and not join_runs:
+            return {}
+        if join_runs:
+            sql = (
+                f"SELECT tr.task_id, tr.{passed_col} "
+                "FROM task_results tr JOIN runs r ON r.id = tr.run_id "
+                f"WHERE {' AND '.join(where)}"
+            )
         else:
-            rows = conn.execute(f"SELECT task_id, {passed_col} FROM task_results").fetchall()
+            sql = (
+                f"SELECT tr.task_id, tr.{passed_col} "
+                f"FROM task_results tr WHERE {' AND '.join(where)}"
+            )
+        rows = conn.execute(sql, params).fetchall()
         return {row["task_id"]: bool(row[passed_col]) for row in rows}
     finally:
         conn.close()

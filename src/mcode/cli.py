@@ -601,7 +601,9 @@ def compare(
             help="Comma-separated task IDs to compare (or path to JSON/text file)",
         ),
     ] = None,
-) -> None:
+    suite_name: Annotated[str | None, typer.Option("--suite")] = None,
+    suite_entry_name: Annotated[str | None, typer.Option("--suite-entry")] = None,
+ ) -> None:
     from mcode.bench.compare import compare_run_dirs
 
     console.print(
@@ -609,6 +611,8 @@ def compare(
             baseline_dir=str(baseline_dir),
             candidate_dir=str(candidate_dir),
             task_ids=_parse_task_ids(task_ids),
+            suite_name=suite_name,
+            suite_entry_name=suite_entry_name,
         )
     )
 
