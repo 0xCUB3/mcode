@@ -60,10 +60,6 @@ class CodingAgentAssembly:
     loop_budget: int
     timeout_s: int
 
-    @property
-    def verification_cmds(self) -> list[str]:
-        return self.verification_policy.test_cmds
-
 
 def build_coding_agent(
     *,
