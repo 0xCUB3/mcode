@@ -25,20 +25,14 @@ _BASE_SYSTEM_PROMPT = (
 )
 
 
-@dataclass(frozen=True)
-class CodingPolicy:
-    system_prompt: str
-    goal: str
-
-
-def _build_coding_policy(
+def _build_coding_prompt(
     *,
     repo: str,
     problem_statement: str,
     hints_text: str = "",
     repo_customization_text: str = "",
     verification_prompt: str = "",
-) -> CodingPolicy:
+ ) -> tuple[str, str]:
     hints_block = f"\n\nAdditional context:\n{hints_text.strip()}" if hints_text.strip() else ""
     customization_block = (
         f"\n\nRepository-specific guidance:\n{repo_customization_text.strip()}"
@@ -51,27 +45,20 @@ def _build_coding_policy(
         f"{hints_block}{customization_block}{verification_prompt}\n\n"
         "Do not open a second solving path. Diagnose, edit, verify, then submit."
     )
-    return CodingPolicy(system_prompt=_BASE_SYSTEM_PROMPT, goal=goal)
+    return _BASE_SYSTEM_PROMPT, goal
 
 
 @dataclass(frozen=True)
 class CodingAgentAssembly:
     repo: str
     repo_root: str
-    coding_policy: CodingPolicy
+    system_prompt: str
+    goal: str
     verification_policy: VerificationPolicy
     tools: list
     model_options: dict
     loop_budget: int
     timeout_s: int
-
-    @property
-    def system_prompt(self) -> str:
-        return self.coding_policy.system_prompt
-
-    @property
-    def goal(self) -> str:
-        return self.coding_policy.goal
 
     @property
     def verification_cmds(self) -> list[str]:
@@ -100,7 +87,7 @@ def build_coding_agent(
     )
 
     repo_customization = load_repo_customization(repo_root)
-    coding_policy = _build_coding_policy(
+    system_prompt, goal = _build_coding_prompt(
         repo=repo,
         problem_statement=problem_statement,
         hints_text=hints_text,
@@ -116,10 +103,11 @@ def build_coding_agent(
     return CodingAgentAssembly(
         repo=repo,
         repo_root=repo_root,
-        coding_policy=coding_policy,
+        system_prompt=system_prompt,
+        goal=goal,
         verification_policy=verification_policy,
         tools=tools,
-        model_options=session._model_options(system_prompt=coding_policy.system_prompt),
+        model_options=session._model_options(system_prompt=system_prompt),
         loop_budget=budget,
         timeout_s=timeout_s,
     )
