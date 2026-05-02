@@ -2691,11 +2691,16 @@ def bench_artifacts_list(
         int | None,
         typer.Option("--run-id", help="Run id (defaults to latest run)"),
     ] = None,
+    json_mode: JsonFlag = False,
  ) -> None:
     """List artifact-backed tasks for one run."""
     with ResultsDB(db) as rdb:
         resolved_run_id = _resolve_results_run_id(rdb, run_id)
         rows = rdb.task_artifact_rows(resolved_run_id)
+    if json_mode:
+        payload = [{"task_id": task_id, **rows[task_id]} for task_id in sorted(rows)]
+        console.print_json(data=payload)
+        return
     table = Table(title=f"Artifacts for run {resolved_run_id}")
     table.add_column("task_id", no_wrap=True)
     table.add_column("phase")

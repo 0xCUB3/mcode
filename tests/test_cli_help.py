@@ -113,6 +113,7 @@ def test_cli_bench_artifacts_help() -> None:
     replay_options = _command_option_names("bench", "artifacts-replay")
     assert "db" in list_options
     assert "run_id" in list_options
+    assert "json_mode" in list_options
     assert "db" in fetch_options
     assert "dest" in fetch_options
     assert "db" in show_options

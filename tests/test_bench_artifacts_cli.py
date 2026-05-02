@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -96,6 +97,24 @@ def test_bench_artifacts_list_and_show(tmp_path: Path) -> None:
     assert list_res.exit_code == 0
     assert task_id in list_res.stdout
     assert "evaluate" in list_res.stdout
+
+    list_json_res = runner.invoke(
+        app,
+        [
+            "bench",
+            "artifacts-list",
+            "--db",
+            str(db_path),
+            "--run-id",
+            str(run_id),
+            "--json",
+        ],
+        color=False,
+    )
+    assert list_json_res.exit_code == 0
+    payload = json.loads(list_json_res.stdout)
+    assert payload[0]["task_id"] == task_id
+    assert payload[0]["phase"] == "evaluate"
     patch_res = runner.invoke(
         app,
         ["bench", "artifacts-patch", task_id, "--db", str(db_path), "--run-id", str(run_id)],
