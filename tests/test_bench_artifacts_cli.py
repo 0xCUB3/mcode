@@ -135,6 +135,7 @@ def test_bench_artifacts_replay_builds_evaluate_run(monkeypatch, tmp_path: Path)
 
     monkeypatch.setattr("mcode.cli._run_single_benchmark", fake_run_single_benchmark)
 
+    override_root = tmp_path / "polyglot"
     res = runner.invoke(
         app,
         [
@@ -147,6 +148,8 @@ def test_bench_artifacts_replay_builds_evaluate_run(monkeypatch, tmp_path: Path)
             str(run_id),
             "--candidate-index",
             "0",
+            "--benchmark-root",
+            str(override_root),
         ],
         color=False,
     )
@@ -159,3 +162,4 @@ def test_bench_artifacts_replay_builds_evaluate_run(monkeypatch, tmp_path: Path)
     assert config.phase == "evaluate"
     assert config.artifact_candidate_index == 0
     assert config.artifact_dir == tmp_path / "artifacts"
+    assert config.aider_polyglot_root == override_root

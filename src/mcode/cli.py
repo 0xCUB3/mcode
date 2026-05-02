@@ -2621,6 +2621,7 @@ def _artifact_replay_config(
     run_id: int,
     task_id: str,
     candidate_index: int | None,
+    benchmark_root: Path | None = None,
  ) -> tuple[str, BenchConfig, Path]:
     with ResultsDB(source_db) as rdb:
         row = rdb.conn.execute(
@@ -2655,6 +2656,8 @@ def _artifact_replay_config(
     config_kwargs["phase"] = "evaluate"
     config_kwargs["artifact_dir"] = artifact_dir
     config_kwargs["artifact_candidate_index"] = candidate_index
+    if benchmark_root is not None:
+        config_kwargs["aider_polyglot_root"] = benchmark_root
     return str(row["benchmark"]), BenchConfig(**config_kwargs), artifact_dir
 
 
@@ -2727,6 +2730,13 @@ def bench_artifacts_replay(
         int | None,
         typer.Option("--candidate-index", help="Candidate index to replay"),
     ] = None,
+    benchmark_root: Annotated[
+        Path | None,
+        typer.Option(
+            "--benchmark-root",
+            help="Override the saved benchmark root when replaying cross-machine artifacts",
+        ),
+    ] = None,
  ) -> None:
     """Re-evaluate one saved artifact candidate through the benchmark adapter."""
     with ResultsDB(db) as rdb:
@@ -2736,6 +2746,7 @@ def bench_artifacts_replay(
         run_id=resolved_run_id,
         task_id=task_id,
         candidate_index=candidate_index,
+        benchmark_root=benchmark_root,
     )
     target_db = out_db if out_db is not None else db.with_name(f"{db.stem}-replay.db")
     _run_single_benchmark(

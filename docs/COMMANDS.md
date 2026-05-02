@@ -178,7 +178,7 @@ uv run mcode bench artifacts-replay python/affine-cipher --db experiments/result
 - `artifacts-list` shows task ids, phase, candidate count, evaluation count, and manifest path for one run
 - `artifacts-show` prints the saved task manifest JSON for one task
 - `artifacts-patch` prints the selected candidate diff, or `--candidate-index N` for a specific candidate
-- `artifacts-replay` re-evaluates one saved candidate into a fresh DB, optionally with `--candidate-index N` and `--out-db PATH`
+- `artifacts-replay` re-evaluates one saved candidate into a fresh DB, optionally with `--candidate-index N`, `--out-db PATH`, and `--benchmark-root PATH` for cross-machine polyglot artifacts
 
 ### `swebench-live` / `swebench-lite` extras
 
