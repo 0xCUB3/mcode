@@ -133,6 +133,7 @@ def test_cli_bench_artifacts_help() -> None:
     assert "db" in patch_options
     assert "run_id" in patch_options
     assert "candidate_index" in patch_options
+    assert "out" in patch_options
     assert "db" in replay_options
     assert "run_id" in replay_options
     assert "out_db" in replay_options

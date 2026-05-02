@@ -2945,6 +2945,10 @@ def bench_artifacts_patch(
         int | None,
         typer.Option("--candidate-index", help="Candidate index (defaults to selected candidate)"),
     ] = None,
+    out: Annotated[
+        Path | None,
+        typer.Option("--out", help="Write the patch to a file instead of stdout"),
+    ] = None,
  ) -> None:
     """Print one saved candidate patch."""
     with ResultsDB(db) as rdb:
@@ -2970,7 +2974,13 @@ def bench_artifacts_patch(
         )
     manifest_path = Path(str(row["manifest_path"]))
     patch_path = manifest_path.parent / candidate.patch_path
-    typer.echo(patch_path.read_text(encoding="utf-8"))
+    patch_text = patch_path.read_text(encoding="utf-8")
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(patch_text, encoding="utf-8")
+        typer.echo(str(out))
+        return
+    typer.echo(patch_text)
 
 
 

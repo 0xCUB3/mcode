@@ -134,13 +134,24 @@ def test_bench_artifacts_list_and_show(tmp_path: Path) -> None:
     payload = json.loads(list_json_res.stdout)
     assert payload[0]["task_id"] == task_id
     assert payload[0]["phase"] == "evaluate"
+    patch_out = tmp_path / "candidate.patch"
     patch_res = runner.invoke(
         app,
-        ["bench", "artifacts-patch", task_id, "--db", str(db_path), "--run-id", str(run_id)],
+        [
+            "bench",
+            "artifacts-patch",
+            task_id,
+            "--db",
+            str(db_path),
+            "--run-id",
+            str(run_id),
+            "--out",
+            str(patch_out),
+        ],
         color=False,
     )
     assert patch_res.exit_code == 0
-    assert "+x = 2" in patch_res.stdout
+    assert patch_out.read_text() == "diff --git a/foo.py b/foo.py\n+x = 2\n"
 
     candidate_show_res = runner.invoke(
         app,
