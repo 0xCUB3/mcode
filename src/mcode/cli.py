@@ -464,6 +464,8 @@ def results(
             table.add_column("timeout", justify="right")
             table.add_column("total", justify="right")
             table.add_column("passed", justify="right")
+            table.add_column("generated", justify="right")
+            table.add_column("evaluated", justify="right")
             table.add_column("pass_rate", justify="right")
             for row in rows:
                 table.add_row(
@@ -476,6 +478,8 @@ def results(
                     str(row["timeout_s"]),
                     str(row["total"]),
                     str(row["passed"]),
+                    str(row.get("artifact_generated_tasks", 0)),
+                    str(row.get("artifact_evaluated_tasks", 0)),
                     f"{row['pass_rate']:.1%}",
                 )
             console.print(table)
@@ -554,24 +558,32 @@ def results(
         table.add_column("run_id", justify="right")
         table.add_column("timestamp")
         table.add_column("benchmark")
+        table.add_column("suite")
+        table.add_column("entry")
         table.add_column("backend")
         table.add_column("model")
         table.add_column("budget", justify="right")
         table.add_column("timeout", justify="right")
         table.add_column("total", justify="right")
         table.add_column("passed", justify="right")
+        table.add_column("generated", justify="right")
+        table.add_column("evaluated", justify="right")
         table.add_column("pass_rate", justify="right")
         for row in rows:
             table.add_row(
                 str(row["run_id"]),
                 row["timestamp"],
                 row["benchmark"],
+                str(row.get("suite_name") or "-"),
+                str(row.get("suite_entry_name") or "-"),
                 row["backend_name"],
                 row["model_id"],
                 str(row.get("loop_budget", "")),
                 str(row["timeout_s"]),
                 str(row["total"]),
                 str(row["passed"]),
+                str(row.get("artifact_generated_tasks", 0)),
+                str(row.get("artifact_evaluated_tasks", 0)),
                 f"{row['pass_rate']:.1%}",
             )
         console.print(table)
@@ -2649,6 +2661,46 @@ def bench_artifacts_show(
         )
     manifest = read_task_manifest(Path(str(row["manifest_path"])))
     console.print(json.dumps(asdict(manifest), indent=2, sort_keys=True, default=str))
+
+@bench_app.command("artifacts-patch")
+def bench_artifacts_patch(
+    task_id: Annotated[str, typer.Argument(..., help="Task id to inspect")],
+    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
+    run_id: Annotated[
+        int | None,
+        typer.Option("--run-id", help="Run id (defaults to latest run)"),
+    ] = None,
+    candidate_index: Annotated[
+        int | None,
+        typer.Option("--candidate-index", help="Candidate index (defaults to selected candidate)"),
+    ] = None,
+ ) -> None:
+    """Print one saved candidate patch."""
+    with ResultsDB(db) as rdb:
+        resolved_run_id = _resolve_results_run_id(rdb, run_id)
+        rows = rdb.task_artifact_rows(resolved_run_id)
+    row = rows.get(task_id)
+    if row is None:
+        raise typer.BadParameter(
+            f"No artifact manifest for task {task_id!r} in run {resolved_run_id}"
+        )
+    manifest = read_task_manifest(Path(str(row["manifest_path"])))
+    candidate = None
+    if candidate_index is None:
+        candidate = next((item for item in manifest.candidates if item.selected), None)
+    else:
+        candidate = next(
+            (item for item in manifest.candidates if item.candidate_index == candidate_index),
+            None,
+        )
+    if candidate is None:
+        raise typer.BadParameter(
+            f"No candidate patch for task {task_id!r} in run {resolved_run_id}"
+        )
+    manifest_path = Path(str(row["manifest_path"]))
+    patch_path = manifest_path.parent / candidate.patch_path
+    typer.echo(patch_path.read_text(encoding="utf-8"))
+
 
 
 

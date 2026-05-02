@@ -171,10 +171,12 @@ Once a split-phase or suite run has written artifacts, inspect them directly fro
 ```bash
 uv run mcode bench artifacts-list --db experiments/results/mixed-suite-evaluate.db
 uv run mcode bench artifacts-show python/affine-cipher --db experiments/results/mixed-suite-evaluate.db
+uv run mcode bench artifacts-patch python/affine-cipher --db experiments/results/mixed-suite-evaluate.db
 ```
 
 - `artifacts-list` shows task ids, phase, candidate count, evaluation count, and manifest path for one run
 - `artifacts-show` prints the saved task manifest JSON for one task
+- `artifacts-patch` prints the selected candidate diff, or `--candidate-index N` for a specific candidate
 
 ### `swebench-live` / `swebench-lite` extras
 

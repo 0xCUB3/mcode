@@ -96,6 +96,13 @@ def test_bench_artifacts_list_and_show(tmp_path: Path) -> None:
     assert list_res.exit_code == 0
     assert task_id in list_res.stdout
     assert "evaluate" in list_res.stdout
+    patch_res = runner.invoke(
+        app,
+        ["bench", "artifacts-patch", task_id, "--db", str(db_path), "--run-id", str(run_id)],
+        color=False,
+    )
+    assert patch_res.exit_code == 0
+    assert "+x = 2" in patch_res.stdout
 
     show_res = runner.invoke(
         app,

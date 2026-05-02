@@ -785,18 +785,30 @@ class ResultsDB:
                 r.suite_entry_name AS suite_entry_name,
                 r.loop_budget AS loop_budget,
                 r.timeout_s AS timeout_s,
-                COUNT(*) AS total,
-                SUM(tr.passed) AS passed
+                COUNT(tr.id) AS total,
+                COALESCE(SUM(tr.passed), 0) AS passed,
+                COALESCE(a.generated_tasks, 0) AS artifact_generated_tasks,
+                COALESCE(a.evaluated_tasks, 0) AS artifact_evaluated_tasks
               FROM runs r
-              JOIN task_results tr ON tr.run_id = r.id
+              LEFT JOIN task_results tr ON tr.run_id = r.id
+              LEFT JOIN (
+                SELECT
+                  at.run_id AS run_id,
+                  COUNT(DISTINCT at.task_id) AS generated_tasks,
+                  COUNT(DISTINCT CASE WHEN at.evaluation_count > 0 THEN at.task_id END)
+                    AS evaluated_tasks
+                FROM artifact_tasks at
+                GROUP BY at.run_id
+              ) a ON a.run_id = r.id
               WHERE {" AND ".join(where)}
+                AND (tr.id IS NOT NULL OR a.generated_tasks IS NOT NULL)
               GROUP BY r.id
               ORDER BY r.timestamp DESC
             """
             rows = self.conn.execute(sql, params).fetchall()
             out: list[dict] = []
             for row in rows:
-                total = int(row["total"])
+                total = int(row["total"] or 0)
                 passed = int(row["passed"] or 0)
                 out.append(
                     {
@@ -812,6 +824,12 @@ class ResultsDB:
                         "config_json": str(row["config_json"]),
                         "total": total,
                         "passed": passed,
+                        "artifact_generated_tasks": int(
+                            row["artifact_generated_tasks"] or 0
+                        ),
+                        "artifact_evaluated_tasks": int(
+                            row["artifact_evaluated_tasks"] or 0
+                        ),
                         "pass_rate": passed / total if total else 0.0,
                     }
                 )
@@ -837,23 +855,37 @@ class ResultsDB:
             r.suite_entry_name AS suite_entry_name,
             r.loop_budget AS loop_budget,
             r.timeout_s AS timeout_s,
-            COUNT(*) AS total,
-            SUM(tr.passed) AS passed
+            COUNT(tr.id) AS total,
+            COALESCE(SUM(tr.passed), 0) AS passed,
+            COALESCE(SUM(a.generated_tasks), 0) AS artifact_generated_tasks,
+            COALESCE(SUM(a.evaluated_tasks), 0) AS artifact_evaluated_tasks
           FROM runs r
-          JOIN task_results tr ON tr.run_id = r.id
+          LEFT JOIN task_results tr ON tr.run_id = r.id
+          LEFT JOIN (
+            SELECT
+              at.run_id AS run_id,
+              COUNT(DISTINCT at.task_id) AS generated_tasks,
+              COUNT(DISTINCT CASE WHEN at.evaluation_count > 0 THEN at.task_id END)
+                AS evaluated_tasks
+            FROM artifact_tasks at
+            GROUP BY at.run_id
+          ) a ON a.run_id = r.id
           WHERE {" AND ".join(where)}
+            AND (tr.id IS NOT NULL OR a.generated_tasks IS NOT NULL)
           GROUP BY {", ".join(group_cols)}
           ORDER BY
             r.benchmark,
             r.model_id,
             r.backend_name,
+            r.suite_name,
+            r.suite_entry_name,
             r.timeout_s,
             r.loop_budget
         """
         rows = self.conn.execute(sql, params).fetchall()
         out: list[dict] = []
         for row in rows:
-            total = int(row["total"])
+            total = int(row["total"] or 0)
             passed = int(row["passed"] or 0)
             out.append(
                 {
@@ -866,6 +898,12 @@ class ResultsDB:
                     "timeout_s": int(row["timeout_s"]),
                     "total": total,
                     "passed": passed,
+                    "artifact_generated_tasks": int(
+                        row["artifact_generated_tasks"] or 0
+                    ),
+                    "artifact_evaluated_tasks": int(
+                        row["artifact_evaluated_tasks"] or 0
+                    ),
                     "pass_rate": passed / total if total else 0.0,
                 }
             )
