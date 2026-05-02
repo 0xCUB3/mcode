@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import mcode.execution.swebench_live as swebench_live_module
 from mcode.execution.sandbox import DockerUnavailableError
 from mcode.execution.swebench_live import (
     SWEbenchLiveSandbox,
@@ -207,6 +208,14 @@ def test_build_agent_shell_command_activates_testbed_and_rewrites_repo_root():
     assert "/tmp/mcode-testbed-123/testbed" not in wrapped
 
 
+def test_build_agent_shell_command_rewrites_common_repo_aliases():
+    command = "cd /home/user/repo && python -m pytest -q"
+    wrapped = _build_agent_shell_command(command)
+
+    assert "cd /testbed && python -m pytest -q" in wrapped
+    assert "/home/user/repo" not in wrapped
+
+
 def test_exec_in_container_raises_docker_unavailable() -> None:
     class BrokenContainer:
         def exec_run(self, *args, **kwargs):
@@ -215,6 +224,59 @@ def test_exec_in_container_raises_docker_unavailable() -> None:
 
     with pytest.raises(DockerUnavailableError, match="SWE-bench Live evaluation"):
         _exec_in_container(BrokenContainer(), "pytest", timeout_s=1)
+
+
+def test_swebench_live_prepare_images_checks_cached_tags(monkeypatch) -> None:
+    task = SimpleNamespace(instance_id="django__django__4.0")
+    calls: list[tuple[str, bool]] = []
+
+    class FakeImages:
+        def list(self):
+            return [SimpleNamespace(tags=[_ms_image_name(task.instance_id)])]
+
+    fake_client = SimpleNamespace(images=FakeImages())
+    sandbox = SWEbenchLiveSandbox(check_image_digests=True)
+    monkeypatch.setattr(sandbox, "_get_client", lambda: fake_client)
+
+    def fake_ensure_image(
+        client,
+        image_name: str,
+        *,
+        check_image_digests: bool | None = None,
+    ) -> str:
+        assert client is fake_client
+        calls.append((image_name, bool(check_image_digests)))
+        return "cached"
+
+    monkeypatch.setattr(swebench_live_module, "_ensure_image", fake_ensure_image)
+
+    sandbox.prepare_images([task])
+
+    assert calls == [(_ms_image_name(task.instance_id), True)]
+
+
+def test_swebench_live_prepare_images_honors_no_check_toggle(monkeypatch) -> None:
+    task = SimpleNamespace(instance_id="django__django__4.0")
+    calls: list[tuple[str, bool]] = []
+    fake_client = SimpleNamespace()
+    sandbox = SWEbenchLiveSandbox(check_image_digests=False)
+    monkeypatch.setattr(sandbox, "_get_client", lambda: fake_client)
+
+    def fake_ensure_image(
+        client,
+        image_name: str,
+        *,
+        check_image_digests: bool | None = None,
+    ) -> str:
+        assert client is fake_client
+        calls.append((image_name, bool(check_image_digests)))
+        return "cached"
+
+    monkeypatch.setattr(swebench_live_module, "_ensure_image", fake_ensure_image)
+
+    sandbox.prepare_images([task])
+
+    assert calls == [(_ms_image_name(task.instance_id), False)]
 
 
 def test_swebench_live_evaluate_patch_propagates_test_timeout(monkeypatch) -> None:
@@ -229,6 +291,7 @@ def test_swebench_live_evaluate_patch_propagates_test_timeout(monkeypatch) -> No
     class FakeImages:
         def get(self, name):
             assert name == _ms_image_name(task.instance_id)
+            return object()
 
     class FakeExecResult:
         def __init__(self, output: bytes, exit_code: int) -> None:
@@ -258,7 +321,7 @@ def test_swebench_live_evaluate_patch_propagates_test_timeout(monkeypatch) -> No
             return FakeContainer()
 
     fake_client = SimpleNamespace(images=FakeImages(), containers=FakeContainers())
-    sandbox = SWEbenchLiveSandbox()
+    sandbox = SWEbenchLiveSandbox(check_image_digests=False)
     monkeypatch.setattr(sandbox, "_get_client", lambda: fake_client)
 
     result = sandbox.evaluate_patch(

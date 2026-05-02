@@ -3,9 +3,10 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import tempfile
 from contextlib import contextmanager
 from pathlib import Path
+
+from mcode.util import temporary_directory
 
 
 @contextmanager
@@ -15,7 +16,7 @@ def repo_snapshot(repo_root: str, *, enabled: bool):
         return
 
     root = Path(repo_root)
-    with tempfile.TemporaryDirectory(prefix="mcode-repo-snapshot-") as td:
+    with temporary_directory(prefix="mcode-repo-snapshot-") as td:
         snapshot_dir = Path(td) / "snapshot"
         shutil.copytree(root, snapshot_dir, ignore=_ignore_git, symlinks=True)
         yield snapshot_dir

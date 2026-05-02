@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import os
-import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import docker
 from docker.errors import DockerException, ImageNotFound
+
+from mcode.util import temporary_directory
 
 
 @dataclass(frozen=True)
@@ -164,7 +165,7 @@ class DockerSandbox:
     def run_python(self, code: str, *, timeout_s: int = 60) -> SandboxRun:
         self.ensure_image()
         client = self._get_client()
-        with tempfile.TemporaryDirectory(prefix="mcode-sandbox-") as td:
+        with temporary_directory(prefix="mcode-sandbox-") as td:
             host_dir = Path(td)
             host_dir.chmod(0o755)
             script = host_dir / "main.py"
@@ -185,13 +186,14 @@ class DockerSandbox:
                     cap_drop=["ALL"],
                     security_opt=["no-new-privileges"],
                     read_only=True,
-                    tmpfs={"/tmp": ""},
+                    tmpfs={"/work-tmp": ""},
                     user="65534:65534",
                     volumes={str(host_dir): {"bind": "/work", "mode": "ro"}},
                     environment={
                         "PYTHONUNBUFFERED": "1",
                         "PYTHONDONTWRITEBYTECODE": "1",
                         "MPLBACKEND": "Agg",
+                        "TMPDIR": "/work-tmp",
                     },
                 )
                 try:

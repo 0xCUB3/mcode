@@ -48,6 +48,8 @@ def _fake_subprocess(
     rsync_rc: int = 0,
     remote_state: str = "marker",
     ssh_rc: int = 0,
+    deps_rc: int = 0,
+    deps_stderr: str = "remote uv sync failed",
 ):
     """Mock subprocess.run for cmd_sync. remote_state drives the probe response:
     - "marker": launcher-owned workspace; rsync proceeds
@@ -62,9 +64,19 @@ def _fake_subprocess(
             return type("R", (), {"returncode": rsync_rc, "stdout": "", "stderr": ""})()
         if argv and argv[0] == "ssh":
             seen.setdefault("ssh_calls", []).append(argv)
+            remote = argv[-1]
+            if "uv sync" in remote:
+                return type(
+                    "R",
+                    (),
+                    {
+                        "returncode": deps_rc,
+                        "stdout": "",
+                        "stderr": deps_stderr if deps_rc else "",
+                    },
+                )()
             # The probe command contains the state-detection logic. The touch
             # command is a follow-up — return empty stdout for that.
-            remote = argv[-1]
             if "elif" in remote:  # the 3-state probe
                 return type(
                     "R", (), {"returncode": ssh_rc, "stdout": f"{remote_state}\n", "stderr": ""}
@@ -74,6 +86,8 @@ def _fake_subprocess(
         return type("R", (), {"returncode": 1, "stdout": "", "stderr": ""})()
 
     return fake, seen
+
+
 
 
 def test_sync_invokes_rsync_to_correct_destination(
@@ -105,6 +119,12 @@ def test_sync_invokes_rsync_to_correct_destination(
     ssh_cmd = argv[argv.index("-e") + 1]
     assert "BatchMode=yes" in ssh_cmd
     assert "ConnectTimeout=10" in ssh_cmd
+    ssh_calls = seen.get("ssh_calls", [])
+    assert any(
+        "uv sync --extra dev --extra swebench --extra datasets --extra observability"
+        in c[-1]
+        for c in ssh_calls
+    )
 
 
 def test_sync_fails_closed_when_not_in_git_repo(
@@ -181,6 +201,32 @@ def test_sync_dry_run_adds_flag_v2(runner: CliRunner, cfg_path: Path, tmp_path: 
         result = runner.invoke(app, ["sync", "bluevela", "--dry-run", "--src", str(src)])
     assert result.exit_code == 0, result.output
     assert "--dry-run" in seen["rsync_argv"]
+
+
+def test_sync_dry_run_skips_remote_dependency_refresh(
+    runner: CliRunner, cfg_path: Path, tmp_path: Path
+) -> None:
+    src = tmp_path / "repo"
+    src.mkdir()
+    fake, seen = _fake_subprocess()
+    with patch("subprocess.run", side_effect=fake):
+        result = runner.invoke(app, ["sync", "bluevela", "--dry-run", "--src", str(src)])
+    assert result.exit_code == 0, result.output
+    ssh_calls = seen.get("ssh_calls", [])
+    assert not any("uv sync" in call[-1] for call in ssh_calls)
+
+
+def test_sync_surfaces_remote_dependency_failure(
+    runner: CliRunner, cfg_path: Path, tmp_path: Path
+) -> None:
+    src = tmp_path / "repo"
+    src.mkdir()
+    fake, _ = _fake_subprocess(deps_rc=1, deps_stderr="uv sync boom")
+    with patch("subprocess.run", side_effect=fake):
+        result = runner.invoke(app, ["sync", "bluevela", "--src", str(src)])
+    assert result.exit_code == 1
+    assert "remote dependency sync failed" in result.output
+    assert "uv sync boom" in result.output
 
 
 def test_sync_surfaces_rsync_failure_as_launch_error_v2(

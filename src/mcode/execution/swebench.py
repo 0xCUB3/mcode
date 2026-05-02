@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import os
 import platform
-import tempfile
 import threading
 import time
 from contextlib import contextmanager
@@ -15,6 +14,7 @@ from mcode.execution.sandbox import (
     is_docker_unavailable_error,
     reraise_docker_unavailable,
 )
+from mcode.util import make_temp_dir, temporary_directory
 
 
 def _fq_image(name: str) -> str:
@@ -76,6 +76,8 @@ class RetryablePodmanImageError(RuntimeError):
 
 
 def _is_retryable_podman_image_error(exc_or_text: object) -> bool:
+    if isinstance(exc_or_text, RetryablePodmanImageError):
+        return True
     if isinstance(exc_or_text, BaseException) and is_docker_unavailable_error(exc_or_text):
         return True
     text = str(exc_or_text).lower()
@@ -99,17 +101,72 @@ def _podman_image_pull_lock():
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
-def _image_present(client: object, name: str, fq: str, docker_module: object) -> bool:
-    try:
-        client.images.get(name)
+def _parse_env_bool(name: str, *, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
         return True
-    except docker_module.errors.ImageNotFound:
-        pass
-    try:
-        client.images.get(fq)
-        return True
-    except docker_module.errors.ImageNotFound:
+    if value in {"0", "false", "no", "off"}:
         return False
+    raise ValueError(
+        f"{name} must be one of 0/1/true/false/yes/no/on/off (got {raw!r})"
+    )
+
+
+def _get_local_image(client: object, name: str, fq: str, docker_module: object) -> object | None:
+    for candidate in (name, fq):
+        try:
+            return client.images.get(candidate)
+        except docker_module.errors.ImageNotFound:
+            continue
+    return None
+
+
+def _local_repo_digests(image: object) -> set[str]:
+    attrs = getattr(image, "attrs", None) or {}
+    if not isinstance(attrs, dict):
+        return set()
+    repo_digests = attrs.get("RepoDigests") or []
+    if not isinstance(repo_digests, list):
+        return set()
+    digests: set[str] = set()
+    for item in repo_digests:
+        if not isinstance(item, str):
+            continue
+        digests.add(item)
+        if "@" in item:
+            digests.add(item.split("@", 1)[1])
+    return digests
+
+
+def _inspect_distribution_digest(client: object, *names: str) -> str:
+    last_error: Exception | None = None
+    seen: set[str] = set()
+    for candidate in names:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            response = client.api.inspect_distribution(candidate)
+        except Exception as exc:
+            last_error = exc
+            continue
+        descriptor = response.get("Descriptor") or response.get("descriptor")
+        if not isinstance(descriptor, dict):
+            raise RuntimeError(
+                f"registry digest check returned no descriptor for {candidate}"
+            )
+        digest = descriptor.get("digest")
+        if not isinstance(digest, str) or not digest:
+            raise RuntimeError(
+                f"registry digest check returned no digest for {candidate}"
+            )
+        return digest
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("registry digest check had no image names to inspect")
 
 
 def _pull_image_once(client: object, fq: str) -> None:
@@ -120,11 +177,24 @@ def _pull_image_once(client: object, fq: str) -> None:
             raise RuntimeError(line["error"])
 
 
-def _ensure_image(client: object, name: str) -> None:
-    """Pull *name* if not already present, serializing rootless podman unpack."""
+def _ensure_image(
+    client: object,
+    name: str,
+    *,
+    check_image_digests: bool | None = None,
+ ) -> str:
+    """Ensure *name* is present, optionally refreshing mutable tags by digest.
+
+    Returns one of ``cached``, ``pulled``, or ``refreshed``.
+    """
     import docker
 
     fq = _fq_image(name)
+    check_image_digests = (
+        _parse_env_bool("MCODE_SWEBENCH_CHECK_IMAGE_DIGESTS", default=False)
+        if check_image_digests is None
+        else check_image_digests
+    )
     attempts_raw = os.environ.get("MCODE_PODMAN_PULL_ATTEMPTS", "2")
     delay_raw = os.environ.get("MCODE_PODMAN_PULL_RETRY_DELAY", "2")
     try:
@@ -138,36 +208,40 @@ def _ensure_image(client: object, name: str) -> None:
 
     from mcode.util.retry import with_backoff
 
-    def image_present_with_backoff() -> bool:
+    def with_podman_backoff(fn):
         return with_backoff(
-            lambda: _image_present(client, name, fq, docker),
+            fn,
             is_retryable=_is_retryable_podman_image_error,
             max_attempts=attempts,
             base_sleep_s=delay if delay > 0 else 0.001,
             max_sleep_s=max(delay, 30.0),
         )
 
-    try:
-        if image_present_with_backoff():
-            return
-    except Exception as last_error:
-        if _is_retryable_podman_image_error(last_error):
-            raise RetryablePodmanImageError(
-                f"Retryable podman image inspect failed for {fq}: {last_error}"
-            ) from last_error
-        raise
-
     with _podman_image_pull_lock():
         try:
-            if image_present_with_backoff():
-                return
-            with_backoff(
-                lambda: _pull_image_once(client, fq),
-                is_retryable=_is_retryable_podman_image_error,
-                max_attempts=attempts,
-                base_sleep_s=delay if delay > 0 else 0.001,
-                max_sleep_s=max(delay, 30.0),
+            local_image = with_podman_backoff(
+                lambda: _get_local_image(client, name, fq, docker)
             )
+            if local_image is not None:
+                if not check_image_digests:
+                    return "cached"
+                try:
+                    registry_digest = with_podman_backoff(
+                        lambda: _inspect_distribution_digest(client, fq, name)
+                    )
+                except Exception as last_error:
+                    raise RetryablePodmanImageError(
+                        f"Retryable podman image digest check failed for {fq}: {last_error}"
+                    ) from last_error
+                if registry_digest in _local_repo_digests(local_image):
+                    return "cached"
+                pull_action = "refreshed"
+            else:
+                pull_action = "pulled"
+            with_podman_backoff(lambda: _pull_image_once(client, fq))
+            return pull_action
+        except RetryablePodmanImageError:
+            raise
         except Exception as last_error:
             if _is_retryable_podman_image_error(last_error):
                 raise RetryablePodmanImageError(
@@ -188,9 +262,11 @@ def _truncate_command_output(output: str, *, max_chars: int = 10_000) -> str:
 
 
 def _normalize_agent_command(command: str, *, host_repo_root: str | None = None) -> str:
-    if host_repo_root:
-        return command.replace(host_repo_root, "/testbed")
-    return command
+    normalized = command
+    for alias in (host_repo_root, "/home/user/repo", "c:/users/user/tmp/repo"):
+        if alias:
+            normalized = normalized.replace(alias, "/testbed")
+    return normalized
 
 
 def _build_agent_shell_command(
@@ -281,6 +357,7 @@ class SWEbenchSandbox:
         base_image_tag: str = "latest",
         env_image_tag: str = "latest",
         instance_image_tag: str = "latest",
+        check_image_digests: bool = True,
     ):
         self.namespace = namespace
         self.arch = arch
@@ -295,6 +372,7 @@ class SWEbenchSandbox:
         self.base_image_tag = base_image_tag
         self.env_image_tag = env_image_tag
         self.instance_image_tag = instance_image_tag
+        self.check_image_digests = check_image_digests
         self._client = None
 
     def _cpu_kwargs(self) -> dict[str, int]:
@@ -378,8 +456,26 @@ class SWEbenchSandbox:
         if self.namespace is not None:
             client = self._get_client()
             image_keys = sorted({spec.instance_image_key for spec in test_specs})
+            counts = {"cached": 0, "pulled": 0, "refreshed": 0}
+            print(f"  [images] checking {len(image_keys)} prebuilt images...", flush=True)
             for image_key in image_keys:
-                _ensure_image(client, image_key)
+                action = _ensure_image(
+                    client,
+                    image_key,
+                    check_image_digests=self.check_image_digests,
+                )
+                counts[action] += 1
+                if action == "cached" and self.check_image_digests:
+                    print(f"  [images] cached digest match {image_key}", flush=True)
+                elif action == "refreshed":
+                    print(f"  [images] refreshed moved tag {image_key}", flush=True)
+                elif action == "pulled":
+                    print(f"  [images] pulled missing image {image_key}", flush=True)
+            print(
+                f"  [images] done: {counts['cached']} cached, {counts['pulled']} pulled, "
+                f"{counts['refreshed']} refreshed",
+                flush=True,
+            )
             return
 
         client = self._get_client()
@@ -430,9 +526,13 @@ class SWEbenchSandbox:
                 instance_image_tag=self.instance_image_tag,
                 arch=self._effective_arch(),
             )
-            _ensure_image(client, test_spec.instance_image_key)
+            _ensure_image(
+                client,
+                test_spec.instance_image_key,
+                check_image_digests=self.check_image_digests,
+            )
 
-            dest = tempfile.mkdtemp(prefix="mcode-testbed-")
+            dest = make_temp_dir(prefix="mcode-testbed-")
             source_container = client.containers.create(
                 image=_fq_image(test_spec.instance_image_key),
                 command="true",
@@ -577,7 +677,11 @@ class SWEbenchSandbox:
         # Ensure the instance image exists (build locally or pull if namespace provided).
         if test_spec.is_remote_image:
             try:
-                _ensure_image(client, test_spec.instance_image_key)
+                _ensure_image(
+                    client,
+                    test_spec.instance_image_key,
+                    check_image_digests=self.check_image_digests,
+                )
             except Exception as e:  # pragma: no cover
                 reraise_docker_unavailable(e, scope="SWE-bench Lite image pull")
                 if _is_retryable_podman_image_error(e):
@@ -592,7 +696,11 @@ class SWEbenchSandbox:
                         arch="x86_64",
                     )
                     try:
-                        _ensure_image(client, alt_spec.instance_image_key)
+                        _ensure_image(
+                            client,
+                            alt_spec.instance_image_key,
+                            check_image_digests=self.check_image_digests,
+                        )
                         test_spec = alt_spec
                     except Exception:
                         raise RuntimeError(
@@ -694,7 +802,7 @@ class SWEbenchSandbox:
 
             # Produce swebench-style report by parsing logs.
             # `get_eval_report` expects a file path; write logs to a temp file.
-            with tempfile.TemporaryDirectory(prefix="mcode-swebench-") as td:
+            with temporary_directory(prefix="mcode-swebench-") as td:
                 p = Path(td) / "test_output.log"
                 p.write_text(test_output, encoding="utf-8", errors="replace")
                 report = get_eval_report(

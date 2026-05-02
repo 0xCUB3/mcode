@@ -8,6 +8,8 @@ import time
 from dataclasses import dataclass
 
 from mcode.execution.sandbox import ensure_docker_client, reraise_docker_unavailable
+from mcode.execution.swebench import _ensure_image
+from mcode.util import make_temp_dir
 
 
 @dataclass(frozen=True)
@@ -77,10 +79,12 @@ class SWEbenchLiveSandbox:
         mem_limit: str = "4g",
         pids_limit: int = 512,
         cpu_limit: float | None = None,
+        check_image_digests: bool = False,
     ):
         self.mem_limit = mem_limit
         self.pids_limit = pids_limit
         self.cpu_limit = cpu_limit if (cpu_limit and cpu_limit > 0) else None
+        self.check_image_digests = check_image_digests
         self._client = None
 
     def _cpu_kwargs(self) -> dict[str, int]:
@@ -131,50 +135,49 @@ class SWEbenchLiveSandbox:
 
         client = self._get_client()
 
-        # Build local tag cache for fast lookup (avoids images.get failures on podman).
-        local_tags: set[str] = set()
-        for img in client.images.list():
-            for tag in img.tags or []:
-                local_tags.add(tag)
-                if tag.startswith("docker.io/"):
-                    local_tags.add(tag[len("docker.io/") :])
-                else:
-                    local_tags.add(f"docker.io/{tag}")
-
-        to_pull: list[str] = []
-        for task in tasks:
-            name = _ms_image_name(task.instance_id)
-            if name not in local_tags:
-                to_pull.append(name)
-
-        if not to_pull:
-            print(f"  [images] all {len(tasks)} images already cached", flush=True)
-            return
-
+        image_names = sorted({_ms_image_name(task.instance_id) for task in tasks})
+        print(f"  [images] checking {len(image_names)} task images...", flush=True)
+        counts = {"cached": 0, "pulled": 0, "refreshed": 0}
+        failed = 0
+        for i, image_name in enumerate(image_names):
+            try:
+                action = _ensure_image(
+                    client,
+                    image_name,
+                    check_image_digests=self.check_image_digests,
+                )
+                counts[action] += 1
+                if action == "cached" and self.check_image_digests:
+                    print(
+                        f"  [{i + 1}/{len(image_names)}] cached digest match {image_name}",
+                        flush=True,
+                    )
+                elif action == "refreshed":
+                    print(
+                        f"  [{i + 1}/{len(image_names)}] refreshed moved tag {image_name}",
+                        flush=True,
+                    )
+                elif action == "pulled":
+                    print(
+                        f"  [{i + 1}/{len(image_names)}] pulled missing image {image_name}",
+                        flush=True,
+                    )
+            except Exception as e:
+                print(
+                    f"  [{i + 1}/{len(image_names)}] FAILED {image_name}: {e}",
+                    flush=True,
+                )
+                failed += 1
+                raise
         print(
-            f"  [images] pulling {len(to_pull)}/{len(tasks)} images...",
+            f"  [images] done: {counts['cached']} cached, {counts['pulled']} pulled, "
+            f"{counts['refreshed']} refreshed, {failed} failed",
             flush=True,
         )
-
-        pulled = 0
-        failed = 0
-        for i, name in enumerate(to_pull):
-            try:
-                print(f"  [{i + 1}/{len(to_pull)}] pulling {name}...", flush=True)
-                for line in client.api.pull(name, stream=True, decode=True):
-                    if "error" in line:
-                        raise RuntimeError(line["error"])
-                pulled += 1
-            except Exception as e:
-                print(f"  [{i + 1}/{len(to_pull)}] FAILED {name}: {e}", flush=True)
-                failed += 1
-
-        print(f"  [images] done: {pulled} pulled, {failed} failed", flush=True)
 
     def repo_context(self, task):
         """Context manager yielding a temp dir with the repo from the task's Docker image."""
         import shutil
-        import tempfile
         from contextlib import contextmanager
         from pathlib import Path
         from types import SimpleNamespace
@@ -185,14 +188,13 @@ class SWEbenchLiveSandbox:
         def _ctx():
             client = self._get_client()
             image_name = _ms_image_name(task.instance_id)
-            try:
-                client.images.get(image_name)
-            except Exception:
-                for line in client.api.pull(image_name, stream=True, decode=True):
-                    if "error" in line:
-                        raise RuntimeError(line["error"])
+            _ensure_image(
+                client,
+                image_name,
+                check_image_digests=self.check_image_digests,
+            )
 
-            dest = tempfile.mkdtemp(prefix="mcode-testbed-")
+            dest = make_temp_dir(prefix="mcode-testbed-")
             source_container = client.containers.create(image=image_name, command="true")
             exec_container = None
             try:
@@ -330,13 +332,12 @@ class SWEbenchLiveSandbox:
         image_name = _ms_image_name(task.instance_id)
         patch_sha = hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest()
 
-        # Ensure image is present (use low-level API for podman compat).
-        try:
-            client.images.get(image_name)
-        except Exception:
-            for line in client.api.pull(image_name, stream=True, decode=True):
-                if "error" in line:
-                    raise RuntimeError(line["error"])
+        # Ensure image is present (and refresh mutable tags when requested).
+        _ensure_image(
+            client,
+            image_name,
+            check_image_digests=self.check_image_digests,
+        )
 
         container = None
         start = time.time()
@@ -366,12 +367,17 @@ class SWEbenchLiveSandbox:
             )
             container.start()
 
+            patch_dir = "/testbed/.mcode-tmp"
+            patch_path = f"{patch_dir}/patch.diff"
+            test_patch_path = f"{patch_dir}/test_patch.diff"
+            _exec_in_container(container, f"mkdir -p {patch_dir}", workdir="/testbed", timeout_s=30)
+
             # Apply test patch.
             if task.test_patch:
-                _copy_to_container(container, "/tmp/test_patch.diff", task.test_patch)
+                _copy_to_container(container, test_patch_path, task.test_patch)
                 out, exit_code, apply_timed_out = _exec_in_container(
                     container,
-                    "git apply --verbose /tmp/test_patch.diff",
+                    f"git apply --verbose {test_patch_path}",
                     workdir="/testbed",
                     timeout_s=60,
                 )
@@ -379,7 +385,7 @@ class SWEbenchLiveSandbox:
                 if exit_code != 0:
                     out2, exit_code2, reject_timed_out = _exec_in_container(
                         container,
-                        "git apply --verbose --reject /tmp/test_patch.diff",
+                        f"git apply --verbose --reject {test_patch_path}",
                         workdir="/testbed",
                         timeout_s=60,
                     )
@@ -397,11 +403,11 @@ class SWEbenchLiveSandbox:
 
             # Apply solution patch.
             if patch:
-                _copy_to_container(container, "/tmp/patch.diff", patch)
+                _copy_to_container(container, patch_path, patch)
                 apply_cmds = [
-                    "git apply --verbose /tmp/patch.diff",
-                    "git apply --verbose --reject /tmp/patch.diff",
-                    "patch --batch --fuzz=5 -p1 -i /tmp/patch.diff",
+                    f"git apply --verbose {patch_path}",
+                    f"git apply --verbose --reject {patch_path}",
+                    f"patch --batch --fuzz=5 -p1 -i {patch_path}",
                 ]
                 applied = False
                 last_out = ""
@@ -509,9 +515,11 @@ def _truncate_agent_output(output: str, *, max_chars: int = 10_000) -> str:
 
 
 def _normalize_agent_command(command: str, *, host_repo_root: str | None = None) -> str:
-    if host_repo_root:
-        return command.replace(host_repo_root, "/testbed")
-    return command
+    normalized = command
+    for alias in (host_repo_root, "/home/user/repo", "c:/users/user/tmp/repo"):
+        if alias:
+            normalized = normalized.replace(alias, "/testbed")
+    return normalized
 
 
 def _build_agent_shell_command(

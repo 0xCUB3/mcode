@@ -16,6 +16,7 @@ Safety design:
 
 from __future__ import annotations
 
+import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +39,9 @@ _SSH_OPTS = (
 )
 
 
+_SYNC_EXTRAS = ("dev", "swebench", "datasets", "observability")
+
+
 @dataclass
 class SyncSpec:
     target: str  # only "bluevela" supported
@@ -52,7 +56,7 @@ class SyncResult:
     src: Path
     dest: str
     dry_run: bool
-
+    deps_synced: bool = False
 
 def run_sync(spec: SyncSpec, *, cfg: config_mod.LaunchConfig | None = None) -> SyncResult:
     """Run sync end-to-end. Raises LaunchError on user-actionable problems
@@ -86,7 +90,10 @@ def run_sync(spec: SyncSpec, *, cfg: config_mod.LaunchConfig | None = None) -> S
 
     dest = f"{bv.login}:{bv.workspace_root}/"
     rc = _rsync(src=src, dest=dest, dry_run=spec.dry_run)
-    return SyncResult(rc=rc, src=src, dest=dest, dry_run=spec.dry_run)
+    if rc != 0 or spec.dry_run:
+        return SyncResult(rc=rc, src=src, dest=dest, dry_run=spec.dry_run)
+    _sync_remote_deps(login=bv.login, workspace_root=bv.workspace_root)
+    return SyncResult(rc=rc, src=src, dest=dest, dry_run=spec.dry_run, deps_synced=True)
 
 
 def _detect_repo_root() -> Path:
@@ -178,6 +185,27 @@ def _check_remote_marker(*, login: str, workspace_root: str, bootstrap: bool) ->
         why="ssh returned something other than marker/empty/populated",
         next="inspect the remote filesystem manually",
     )
+
+
+def _sync_remote_deps(*, login: str, workspace_root: str) -> None:
+    extras = " ".join(f"--extra {name}" for name in _SYNC_EXTRAS)
+    remote_cmd = (
+        "bash -lc "
+        + shlex.quote(f"cd {shlex.quote(workspace_root)} && uv sync {extras}")
+    )
+    print(f"deps: ssh {login} {remote_cmd}")
+    result = subprocess.run(
+        ["ssh", *_SSH_OPTS, login, remote_cmd],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise LaunchError(
+            what="remote dependency sync failed",
+            why=(result.stderr or result.stdout).strip()[:300],
+            next="ssh to the remote workspace and run `uv sync` manually to inspect the failure",
+        )
 
 
 def _rsync(*, src: Path, dest: str, dry_run: bool) -> int:

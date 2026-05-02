@@ -607,11 +607,12 @@ def _phase_starting(ctx: _LaunchContext) -> None:
                 if ok:
                     ctx.host = host
                     break
+            stat = _bjobs_state(ctx.ssh, ctx.job_id)
             starting_fail_streak = 0
         except TransportError as e:
             starting_fail_streak = _absorb_ssh_blip(starting_fail_streak, e, phase="startup")
             continue
-        if _bjobs_state(ctx.ssh, ctx.job_id) in (None, "EXIT", "DONE"):
+        if stat in (None, "EXIT", "DONE"):
             tail = _remote_log_tail(ctx.ssh, ctx.run_dir)
             ctx.reporter.finish(PhaseStatus.FAILED, detail="job exited early")
             raise LaunchError(

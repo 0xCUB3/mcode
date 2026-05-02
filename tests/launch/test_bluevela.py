@@ -312,6 +312,43 @@ def test_launch_fails_fast_on_done_before_ready(tmp_path: Path) -> None:
     assert "done" in msg or "exited" in msg or "before running" in msg
 
 
+def test_phase_starting_absorbs_bjobs_transport_blip(tmp_path: Path) -> None:
+    ssh = MagicMock()
+    calls = {"bjobs": 0}
+
+    def run(cmd: str, *, timeout: float = 60.0):
+        if "vllm_host.txt" in cmd:
+            return _result(stdout="p2-r01-n1.bluevela.rmf.ibm.com\n")
+        if "curl" in cmd:
+            return _result(returncode=1)
+        if "bjobs" in cmd:
+            calls["bjobs"] += 1
+            if calls["bjobs"] == 1:
+                raise TransportError("ssh timeout")
+            return _result(stdout="DONE\n")
+        if "vllm.log" in cmd:
+            return _result(stdout="startup log")
+        return _result()
+
+    ssh.run.side_effect = run
+    ctx = bluevela._LaunchContext(
+        spec=_spec(),
+        reporter=NullReporter.create(bluevela.PHASES),
+        ssh=ssh,
+        cfg=_cfg(),
+        state_path=tmp_path / "s.json",
+        run_id="bv-test",
+        run_dir="/proj/dmfexp/skula/mcode-shared/runs/bv-test",
+        local_log=tmp_path / "vllm.log",
+        job_id="999",
+    )
+
+    with pytest.raises(LaunchError, match="before endpoint became healthy"):
+        bluevela._phase_starting(ctx)
+
+    assert calls["bjobs"] == 2
+
+
 def test_launch_surfaces_transport_error_with_hint() -> None:
     ssh = MagicMock()
     ssh.run.side_effect = TransportError("Connection timed out")
