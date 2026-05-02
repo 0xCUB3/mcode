@@ -10,6 +10,7 @@ def test_command_docs_cover_sampling_and_compare() -> None:
     assert "uv run mcode bench artifacts-list" in command_docs
     assert "uv run mcode bench artifacts-patch" in command_docs
     assert "uv run mcode bench artifacts-replay" in command_docs
+    assert "uv run mcode bench artifacts-fetch" in command_docs
     assert "--shards" in command_docs
     assert "--sampling {none,multiturn}" in command_docs
     assert "--phase {run,generate,evaluate}" in command_docs
@@ -42,7 +43,9 @@ def test_readmes_match_command_contract() -> None:
     assert "--sampling" in bluevela_doc
     assert "--phase generate" in bluevela_doc
     assert "--artifact-dir DIR" in bluevela_doc
+    assert "--fetch-artifacts" in bluevela_doc
     assert "uv run mcode bench suite" in bluevela_doc
+    assert "uv run mcode bench artifacts-fetch" in bluevela_doc
 
     # Reference doc covers compare and observability env vars.
     assert "uv run mcode compare" in commands_doc
@@ -50,6 +53,7 @@ def test_readmes_match_command_contract() -> None:
     assert "uv run mcode bench artifacts-list" in commands_doc
     assert "uv run mcode bench artifacts-patch" in commands_doc
     assert "uv run mcode bench artifacts-replay" in commands_doc
+    assert "uv run mcode bench artifacts-fetch" in commands_doc
     assert "MELLEA_TRACE_APPLICATION" in commands_doc
 
     # Legacy Blue Vela shell scripts still match their pinned shape.

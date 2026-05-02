@@ -173,12 +173,14 @@ uv run mcode bench artifacts-list --db experiments/results/mixed-suite-evaluate.
 uv run mcode bench artifacts-show python/affine-cipher --db experiments/results/mixed-suite-evaluate.db
 uv run mcode bench artifacts-patch python/affine-cipher --db experiments/results/mixed-suite-evaluate.db
 uv run mcode bench artifacts-replay python/affine-cipher --db experiments/results/mixed-suite-generate.db
+uv run mcode bench artifacts-fetch bench-<run-id> --dest research/mixed-suite/artifacts
 ```
 
 - `artifacts-list` shows task ids, phase, candidate count, evaluation count, and manifest path for one run
 - `artifacts-show` prints the saved task manifest JSON for one task
 - `artifacts-patch` prints the selected candidate diff, or `--candidate-index N` for a specific candidate
 - `artifacts-replay` re-evaluates one saved candidate into a fresh DB, optionally with `--candidate-index N`, `--out-db PATH`, and `--benchmark-root PATH` for cross-machine polyglot artifacts
+- `artifacts-fetch` downloads the saved remote artifact directory later, using the run metadata recorded in `mcode bench list`
 
 ### `swebench-live` / `swebench-lite` extras
 

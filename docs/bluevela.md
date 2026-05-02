@@ -100,11 +100,9 @@ uv run mcode bench suite \
   --on bluevela
 ```
 
-Add `--json` to any bench command to get a strictly-monotonic event stream you can pipe to `jq`. Add `--fetch-db / --no-fetch-db` to control whether the DB is rsync'd back when the run ends. The benchmark phase split also works remotely: use `--phase generate` with an explicit `--artifact-dir DIR`, then rerun with `--phase evaluate` and the same artifact directory. The mixed suite command supports the same phase split, and it now supports both auto-merged `--shards` and manual `--shard-count / --shard-index`.
+Add `--json` to any bench command to get a strictly-monotonic event stream you can pipe to `jq`. Add `--fetch-db / --no-fetch-db` to control whether the DB is rsync'd back when the run ends. Add `--fetch-artifacts` when you also want the artifact directory copied back for local replay or inspection. The benchmark phase split also works remotely: use `--phase generate` with an explicit `--artifact-dir DIR`, then rerun with `--phase evaluate` and the same artifact directory. The mixed suite command supports the same phase split, and it now supports both auto-merged `--shards` and manual `--shard-count / --shard-index`.
 
-
-
-Remote bench run directories are stable for the same model, local DB path, bench argv, and forwarded MCODE context env. If log streaming or DB fetch drops after the remote process finished, rerun the same command to resume remotely and fetch the existing DB metadata instead of starting from scratch.
+Remote bench run directories are stable for the same model, local DB path, bench argv, and forwarded MCODE context env. If log streaming or DB fetch drops after the remote process finished, rerun the same command to resume remotely and fetch the existing DB metadata instead of starting from scratch. After the run is recorded, `uv run mcode bench artifacts-fetch <run-id>` can fetch the artifact directory later if you skipped `--fetch-artifacts` the first time.
 
 `OPENAI_BASE_URL` and `OPENAI_API_KEY` (if set) take precedence over auto-resolution.
 
