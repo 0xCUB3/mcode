@@ -9,6 +9,7 @@ def test_command_docs_cover_sampling_and_compare() -> None:
     assert "uv run mcode bench suite" in command_docs
     assert "uv run mcode bench artifacts-list" in command_docs
     assert "uv run mcode bench artifacts-patch" in command_docs
+    assert "uv run mcode bench artifacts-replay" in command_docs
     assert "--shards" in command_docs
     assert "--sampling {none,multiturn}" in command_docs
     assert "--phase {run,generate,evaluate}" in command_docs
@@ -48,6 +49,7 @@ def test_readmes_match_command_contract() -> None:
     assert "uv run mcode bench suite" in commands_doc
     assert "uv run mcode bench artifacts-list" in commands_doc
     assert "uv run mcode bench artifacts-patch" in commands_doc
+    assert "uv run mcode bench artifacts-replay" in commands_doc
     assert "MELLEA_TRACE_APPLICATION" in commands_doc
 
     # Legacy Blue Vela shell scripts still match their pinned shape.

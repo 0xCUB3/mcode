@@ -2615,6 +2615,49 @@ def bench_cancel(
             raise typer.Exit(rc)
 
     _do()
+def _artifact_replay_config(
+    *,
+    source_db: Path,
+    run_id: int,
+    task_id: str,
+    candidate_index: int | None,
+ ) -> tuple[str, BenchConfig, Path]:
+    with ResultsDB(source_db) as rdb:
+        row = rdb.conn.execute(
+            """
+            SELECT
+              r.benchmark AS benchmark,
+              r.config_json AS config_json,
+              at.manifest_path AS manifest_path
+            FROM artifact_tasks at
+            JOIN runs r ON r.id = at.run_id
+            WHERE at.run_id = ? AND at.task_id = ?
+            LIMIT 1
+            """,
+            (run_id, task_id),
+        ).fetchone()
+    if row is None:
+        raise typer.BadParameter(
+            f"No artifact manifest for task {task_id!r} in run {run_id}"
+        )
+    manifest = read_task_manifest(Path(str(row["manifest_path"])))
+    manifest_path = Path(str(row["manifest_path"]))
+    artifact_dir = manifest_path.parent
+    for _ in Path(manifest.task.artifact_root).parts:
+        artifact_dir = artifact_dir.parent
+    raw_config = json.loads(str(row["config_json"]))
+    allowed = set(BenchConfig.__dataclass_fields__)
+    config_kwargs = {key: value for key, value in raw_config.items() if key in allowed}
+    for path_key in ("cache_dir", "artifact_dir", "aider_polyglot_root"):
+        value = config_kwargs.get(path_key)
+        if isinstance(value, str) and value:
+            config_kwargs[path_key] = Path(value)
+    config_kwargs["phase"] = "evaluate"
+    config_kwargs["artifact_dir"] = artifact_dir
+    config_kwargs["artifact_candidate_index"] = candidate_index
+    return str(row["benchmark"]), BenchConfig(**config_kwargs), artifact_dir
+
+
 @bench_app.command("artifacts-list")
 def bench_artifacts_list(
     db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
@@ -2665,6 +2708,53 @@ def bench_artifacts_show(
         )
     manifest = read_task_manifest(Path(str(row["manifest_path"])))
     console.print(json.dumps(asdict(manifest), indent=2, sort_keys=True, default=str))
+@bench_app.command("artifacts-replay")
+def bench_artifacts_replay(
+    task_id: Annotated[str, typer.Argument(..., help="Task id to evaluate")],
+    db: Annotated[
+        Path,
+        typer.Option("--db", help="Source SQLite results DB path"),
+    ] = DEFAULT_DB_PATH,
+    run_id: Annotated[
+        int | None,
+        typer.Option("--run-id", help="Run id (defaults to latest run)"),
+    ] = None,
+    out_db: Annotated[
+        Path | None,
+        typer.Option("--out-db", help="Destination SQLite DB path"),
+    ] = None,
+    candidate_index: Annotated[
+        int | None,
+        typer.Option("--candidate-index", help="Candidate index to replay"),
+    ] = None,
+ ) -> None:
+    """Re-evaluate one saved artifact candidate through the benchmark adapter."""
+    with ResultsDB(db) as rdb:
+        resolved_run_id = _resolve_results_run_id(rdb, run_id)
+    benchmark, config, _artifact_dir = _artifact_replay_config(
+        source_db=db,
+        run_id=resolved_run_id,
+        task_id=task_id,
+        candidate_index=candidate_index,
+    )
+    target_db = out_db if out_db is not None else db.with_name(f"{db.stem}-replay.db")
+    _run_single_benchmark(
+        benchmark=benchmark,
+        config=config,
+        db=target_db,
+        limit=None,
+        task_ids=task_id,
+        backend=config.backend_name,
+        model=config.model_id,
+        loop_budget=config.loop_budget + (
+            config.aider_polyglot_retry_loop_budget
+            if benchmark == "aider-polyglot" and config.aider_polyglot_retry
+            else 0
+        ),
+        timeout_s=config.timeout_s,
+    )
+
+
 
 @bench_app.command("artifacts-patch")
 def bench_artifacts_patch(

@@ -122,3 +122,40 @@ def test_bench_artifacts_list_defaults_to_latest_run(tmp_path: Path) -> None:
     res = runner.invoke(app, ["bench", "artifacts-list", "--db", str(db_path)], color=False)
     assert res.exit_code == 0
     assert task_id in res.stdout
+
+
+
+def test_bench_artifacts_replay_builds_evaluate_run(monkeypatch, tmp_path: Path) -> None:
+    db_path, run_id, task_id = _seed_artifact_run(tmp_path)
+    runner = CliRunner()
+    captured: dict[str, object] = {}
+
+    def fake_run_single_benchmark(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("mcode.cli._run_single_benchmark", fake_run_single_benchmark)
+
+    res = runner.invoke(
+        app,
+        [
+            "bench",
+            "artifacts-replay",
+            task_id,
+            "--db",
+            str(db_path),
+            "--run-id",
+            str(run_id),
+            "--candidate-index",
+            "0",
+        ],
+        color=False,
+    )
+
+    assert res.exit_code == 0
+    assert captured["benchmark"] == "aider-polyglot"
+    assert captured["task_ids"] == task_id
+    assert captured["db"] == db_path.with_name("results-replay.db")
+    config = captured["config"]
+    assert config.phase == "evaluate"
+    assert config.artifact_candidate_index == 0
+    assert config.artifact_dir == tmp_path / "artifacts"

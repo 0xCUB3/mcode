@@ -48,6 +48,7 @@ class BenchConfig:
     cache_dir: Path = field(default_factory=_default_cache_dir)
     phase: str = "run"
     artifact_dir: Path | None = None
+    artifact_candidate_index: int | None = None
     swebench_split: str = "test"
     swebench_namespace: str | None = "swebench"
     swebench_arch: str | None = None
@@ -426,7 +427,26 @@ class BenchmarkRunner:
         self, manifest: TaskArtifactManifest, store: TaskArtifactStore
     ) -> tuple[int, str]:
         if not manifest.candidates:
-            raise RuntimeError(f"artifact manifest has no candidates for {manifest.task.task_id}")
+            raise RuntimeError(
+                f"artifact manifest has no candidates for {manifest.task.task_id}"
+            )
+        if self.config.artifact_candidate_index is not None:
+            candidate = next(
+                (
+                    item
+                    for item in manifest.candidates
+                    if item.candidate_index == self.config.artifact_candidate_index
+                ),
+                None,
+            )
+            if candidate is None:
+                raise RuntimeError(
+                    "artifact manifest has no candidate index "
+                    f"{self.config.artifact_candidate_index} for {manifest.task.task_id}"
+                )
+            return candidate.candidate_index, (
+                store.task_root / candidate.patch_path
+            ).read_text(encoding="utf-8")
         for candidate in manifest.candidates:
             if candidate.selected:
                 return candidate.candidate_index, (

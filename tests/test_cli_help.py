@@ -110,6 +110,7 @@ def test_cli_bench_artifacts_help() -> None:
     list_options = _command_option_names("bench", "artifacts-list")
     show_options = _command_option_names("bench", "artifacts-show")
     patch_options = _command_option_names("bench", "artifacts-patch")
+    replay_options = _command_option_names("bench", "artifacts-replay")
     assert "db" in list_options
     assert "run_id" in list_options
     assert "db" in show_options
@@ -117,6 +118,10 @@ def test_cli_bench_artifacts_help() -> None:
     assert "db" in patch_options
     assert "run_id" in patch_options
     assert "candidate_index" in patch_options
+    assert "db" in replay_options
+    assert "run_id" in replay_options
+    assert "out_db" in replay_options
+    assert "candidate_index" in replay_options
 
 def test_cli_compare_help() -> None:
     _invoke_help("compare", "--help")
