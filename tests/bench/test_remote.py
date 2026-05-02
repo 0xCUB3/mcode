@@ -550,11 +550,16 @@ def test_bench_artifacts_fetch_downloads_saved_remote_dir(tmp_path, monkeypatch)
             "run-1",
             "--dest",
             str(tmp_path / "override-artifacts"),
+            "--json",
         ],
         color=False,
     )
 
     assert res.exit_code == 0
+    payload = __import__("json").loads(res.stdout)
+    assert payload["run_id"] == "run-1"
+    assert payload["remote_artifact_dir"] == "/remote/artifacts"
+    assert payload["local_artifact_dir"] == str(tmp_path / "override-artifacts")
     ssh = _FakeSshClient.last
     assert ssh is not None
     assert ssh.download_trees == [

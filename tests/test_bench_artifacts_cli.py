@@ -98,6 +98,25 @@ def test_bench_artifacts_list_and_show(tmp_path: Path) -> None:
     assert task_id in list_res.stdout
     assert "evaluate" in list_res.stdout
 
+    filtered_res = runner.invoke(
+        app,
+        [
+            "bench",
+            "artifacts-list",
+            "--db",
+            str(db_path),
+            "--run-id",
+            str(run_id),
+            "--task-id",
+            task_id,
+            "--phase",
+            "evaluate",
+        ],
+        color=False,
+    )
+    assert filtered_res.exit_code == 0
+    assert task_id in filtered_res.stdout
+
     list_json_res = runner.invoke(
         app,
         [

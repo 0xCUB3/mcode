@@ -170,18 +170,19 @@ Once a split-phase or suite run has written artifacts, inspect them directly fro
 
 ```bash
 uv run mcode bench artifacts-list --db experiments/results/mixed-suite-evaluate.db
+uv run mcode bench artifacts-list --db experiments/results/mixed-suite-evaluate.db --task-id python/affine-cipher --phase evaluate --json
 uv run mcode bench artifacts-show python/affine-cipher --db experiments/results/mixed-suite-evaluate.db
 uv run mcode bench artifacts-patch python/affine-cipher --db experiments/results/mixed-suite-evaluate.db
 uv run mcode bench artifacts-replay python/affine-cipher --db experiments/results/mixed-suite-generate.db
 uv run mcode bench artifacts-fetch bench-<run-id> --dest research/mixed-suite/artifacts
-uv run mcode bench artifacts-fetch --db experiments/results/mixed-suite-generate.db
+uv run mcode bench artifacts-fetch --db experiments/results/mixed-suite-generate.db --json
 ```
 
-- `artifacts-list` shows task ids, phase, candidate count, evaluation count, and manifest path for one run
+- `artifacts-list` shows task ids, phase, candidate count, evaluation count, and manifest path for one run. Add `--task-id`, `--phase`, or `--json` when you want a narrower machine-readable inventory
 - `artifacts-show` prints the saved task manifest JSON for one task
 - `artifacts-patch` prints the selected candidate diff, or `--candidate-index N` for a specific candidate
 - `artifacts-replay` re-evaluates one saved candidate into a fresh DB, optionally with `--candidate-index N`, `--out-db PATH`, and `--benchmark-root PATH` for cross-machine polyglot artifacts
-- `artifacts-fetch` downloads the saved remote artifact directory later, using either a recorded run id or the latest fetchable run for a local `--db` path
+- `artifacts-fetch` downloads the saved remote artifact directory later, using either a recorded run id or the latest fetchable run for a local `--db` path. Add `--json` when another script needs the resolved local and remote paths
 
 ### `swebench-live` / `swebench-lite` extras
 

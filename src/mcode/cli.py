@@ -2710,15 +2710,22 @@ def bench_artifacts_list(
         int | None,
         typer.Option("--run-id", help="Run id (defaults to latest run)"),
     ] = None,
+    task_id: Annotated[str | None, typer.Option("--task-id")] = None,
+    phase: Annotated[str | None, typer.Option("--phase")] = None,
     json_mode: JsonFlag = False,
  ) -> None:
     """List artifact-backed tasks for one run."""
     with ResultsDB(db) as rdb:
         resolved_run_id = _resolve_results_run_id(rdb, run_id)
         rows = rdb.task_artifact_rows(resolved_run_id)
+    filtered = [
+        {"task_id": current_task_id, **rows[current_task_id]}
+        for current_task_id in sorted(rows)
+        if (task_id is None or current_task_id == task_id)
+        and (phase is None or str(rows[current_task_id].get("phase")) == phase)
+    ]
     if json_mode:
-        payload = [{"task_id": task_id, **rows[task_id]} for task_id in sorted(rows)]
-        console.print_json(data=payload)
+        console.print_json(data=filtered)
         return
     table = Table(title=f"Artifacts for run {resolved_run_id}")
     table.add_column("task_id", no_wrap=True)
@@ -2726,10 +2733,9 @@ def bench_artifacts_list(
     table.add_column("candidates", justify="right")
     table.add_column("evaluations", justify="right")
     table.add_column("manifest", overflow="fold")
-    for task_id in sorted(rows):
-        row = rows[task_id]
+    for row in filtered:
         table.add_row(
-            task_id,
+            row["task_id"],
             str(row.get("phase") or "-"),
             str(row.get("candidate_count", 0)),
             str(row.get("evaluation_count", 0)),
@@ -2777,6 +2783,7 @@ def bench_artifacts_fetch(
         Path | None,
         typer.Option("--dest", help="Override the local artifact directory destination"),
     ] = None,
+    json_mode: JsonFlag = False,
  ) -> None:
     """Fetch a remote artifact directory for a finished Blue Vela run."""
     from mcode.launch.ssh import SshClient
@@ -2815,6 +2822,14 @@ def bench_artifacts_fetch(
                 why=str(exc),
                 next="check SSH reachability, remote paths, and local disk space, then retry",
             ) from exc
+        payload = {
+            "run_id": resolved_run_id,
+            "remote_artifact_dir": remote_artifact_dir,
+            "local_artifact_dir": str(local_artifact_dir),
+        }
+        if json_mode:
+            console.print_json(data=payload)
+            return
         console.print(f"fetched artifacts to {local_artifact_dir}")
 
     _do()
