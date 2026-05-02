@@ -4,24 +4,6 @@ import sqlite3
 from pathlib import Path
 
 
-def compare_run_dirs(
-    *,
-    baseline_dir: str,
-    candidate_dir: str,
-    task_ids: list[str] | None = None,
-    suite_name: str | None = None,
-    suite_entry_name: str | None = None,
- ) -> str:
-    report = compare_runs(
-        baseline_dir,
-        candidate_dir,
-        task_ids=task_ids,
-        suite_name=suite_name,
-        suite_entry_name=suite_entry_name,
-    )
-    return format_comparison(report)
-
-
 def compare_runs(
     baseline_dir: str,
     candidate_dir: str,
@@ -29,7 +11,7 @@ def compare_runs(
     task_ids: list[str] | None = None,
     suite_name: str | None = None,
     suite_entry_name: str | None = None,
- ) -> dict[str, object]:
+) -> dict[str, object]:
     baseline = _load_results_from_dir(
         baseline_dir,
         task_ids,
@@ -97,7 +79,7 @@ def _load_results_from_dir(
     *,
     suite_name: str | None = None,
     suite_entry_name: str | None = None,
- ) -> dict[str, bool]:
+) -> dict[str, bool]:
     results: dict[str, bool] = {}
     root = Path(dir_path)
     db_paths = [root] if root.is_file() else sorted(root.glob("*.db"))
@@ -119,7 +101,7 @@ def _load_results(
     *,
     suite_name: str | None = None,
     suite_entry_name: str | None = None,
- ) -> dict[str, bool]:
+) -> dict[str, bool]:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
@@ -139,10 +121,14 @@ def _load_results(
             where.append(f"tr.task_id IN ({placeholders})")
             params.extend(task_ids)
         run_columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
-        join_runs = bool(suite_name or suite_entry_name) and {
-            "suite_name",
-            "suite_entry_name",
-        } <= run_columns
+        join_runs = (
+            bool(suite_name or suite_entry_name)
+            and {
+                "suite_name",
+                "suite_entry_name",
+            }
+            <= run_columns
+        )
         if suite_name and join_runs:
             where.append("r.suite_name = ?")
             params.append(suite_name)
