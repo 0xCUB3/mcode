@@ -34,6 +34,14 @@ def _command_option_names(*args: str) -> set[str]:
     return {param.name for param in current.params}
 
 
+def test_cli_bench_list_help() -> None:
+    option_names = _command_option_names("bench", "list")
+    assert "benchmark" in option_names
+    assert "status" in option_names
+    assert "artifacts_only" in option_names
+    assert "json_mode" in option_names
+
+
 def test_cli_help() -> None:
     _invoke_help("--help")
 

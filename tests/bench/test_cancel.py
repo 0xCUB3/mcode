@@ -58,6 +58,40 @@ def test_list_runs_json_includes_cancel_reason(isolated_state: Path, capsys) -> 
     assert payload[0]["artifacts_fetchable"] is True
     assert payload[0]["local_artifact_dir"] == "artifacts"
 
+def test_list_runs_filters_benchmark_status_and_artifacts(
+    isolated_state: Path, capsys
+ ) -> None:
+    _put(
+        RunRecord(
+            id="r1",
+            target=Target.BLUEVELA,
+            benchmark="suite",
+            status=RunStatus.DONE,
+            remote={"remote_artifact_dir": "/remote/artifacts"},
+        )
+    )
+    _put(
+        RunRecord(
+            id="r2",
+            target=Target.LOCAL_VLLM,
+            benchmark="smoke",
+            status=RunStatus.RUNNING,
+        )
+    )
+    rc = cancel_mod.list_runs(
+        json_mode=True,
+        benchmark="suite",
+        status="done",
+        artifacts_only=True,
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    import json
+
+    payload = json.loads(out)
+    assert [row["id"] for row in payload] == ["r1"]
+
+
 def test_cancel_unknown_run_raises(isolated_state: Path) -> None:
     with pytest.raises(MCodeError, match="no run with id"):
         cancel_mod.cancel_run("nope")

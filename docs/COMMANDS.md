@@ -87,13 +87,13 @@ Wait exit codes: 0 healthy, 1 failed-or-stopped, 2 timeout (or transient state r
 ## Bench — run benchmarks
 
 ```bash
-mcode bench list [--json]
-mcode bench cancel <run-id>
-mcode bench swebench-live   --model M  [flags]
-mcode bench swebench-lite   --model M  [flags]
-mcode bench aider-polyglot  --model M  [flags]
-mcode bench smoke           --model M  [flags]
-mcode bench suite          --model M  [flags]
+uv run mcode bench list [--json] [--benchmark NAME] [--status running|done|failed|stopped] [--artifacts]
+uv run mcode bench cancel <run-id>
+uv run mcode bench swebench-live   --model M  [flags]
+uv run mcode bench swebench-lite   --model M  [flags]
+uv run mcode bench aider-polyglot  --model M  [flags]
+uv run mcode bench smoke           --model M  [flags]
+uv run mcode bench suite           --model M  [flags]
 ```
 
 ### Common flags (`swebench-live` / `swebench-lite` / `aider-polyglot` / `smoke` / `suite`)
@@ -174,13 +174,14 @@ uv run mcode bench artifacts-show python/affine-cipher --db experiments/results/
 uv run mcode bench artifacts-patch python/affine-cipher --db experiments/results/mixed-suite-evaluate.db
 uv run mcode bench artifacts-replay python/affine-cipher --db experiments/results/mixed-suite-generate.db
 uv run mcode bench artifacts-fetch bench-<run-id> --dest research/mixed-suite/artifacts
+uv run mcode bench artifacts-fetch --db experiments/results/mixed-suite-generate.db
 ```
 
 - `artifacts-list` shows task ids, phase, candidate count, evaluation count, and manifest path for one run
 - `artifacts-show` prints the saved task manifest JSON for one task
 - `artifacts-patch` prints the selected candidate diff, or `--candidate-index N` for a specific candidate
 - `artifacts-replay` re-evaluates one saved candidate into a fresh DB, optionally with `--candidate-index N`, `--out-db PATH`, and `--benchmark-root PATH` for cross-machine polyglot artifacts
-- `artifacts-fetch` downloads the saved remote artifact directory later, using the run metadata recorded in `mcode bench list`
+- `artifacts-fetch` downloads the saved remote artifact directory later, using either a recorded run id or the latest fetchable run for a local `--db` path
 
 ### `swebench-live` / `swebench-lite` extras
 
@@ -325,6 +326,7 @@ uv run mcode bench smoke \
   --on bluevela --shards 4 --json
 
 # inspect / cancel
+uv run mcode bench list --benchmark suite --artifacts
 uv run mcode bench list --json | jq '.[] | select(.status == "running")'
 uv run mcode bench cancel run-abc123
 uv run mcode launch stop server-bv-abc123

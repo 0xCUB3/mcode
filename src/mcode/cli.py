@@ -2614,11 +2614,24 @@ def _resolve_results_run_id(rdb: ResultsDB, run_id: int | None) -> int:
 
 
 @bench_app.command("list")
-def bench_list(json_mode: JsonFlag = False) -> None:
+def bench_list(
+    json_mode: JsonFlag = False,
+    benchmark: Annotated[str | None, typer.Option("--benchmark")] = None,
+    status: Annotated[str | None, typer.Option("--status")] = None,
+    artifacts_only: Annotated[
+        bool,
+        typer.Option("--artifacts", help="Only show runs with remote artifact metadata"),
+    ] = False,
+ ) -> None:
     """List historical bench runs from the launch state file."""
     from mcode.bench.cancel import list_runs
 
-    rc = list_runs(json_mode=json_mode)
+    rc = list_runs(
+        json_mode=json_mode,
+        benchmark=benchmark,
+        status=status,
+        artifacts_only=artifacts_only,
+    )
     if rc != 0:
         raise typer.Exit(rc)
 

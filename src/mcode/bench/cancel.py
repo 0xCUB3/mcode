@@ -28,9 +28,22 @@ from mcode.ui.errors import ExitCode, MCodeError
 _KILL_GRACE_S = 10.0
 
 
-def list_runs(*, json_mode: bool = False) -> int:
-    """Print all known runs. Returns 0."""
+def list_runs(
+    *,
+    json_mode: bool = False,
+    benchmark: str | None = None,
+    status: str | None = None,
+    artifacts_only: bool = False,
+ ) -> int:
+    """Print known runs, optionally filtered."""
     s = launch_state.load()
+    runs = list(s.runs)
+    if benchmark:
+        runs = [run for run in runs if run.benchmark == benchmark]
+    if status:
+        runs = [run for run in runs if run.status.value == status]
+    if artifacts_only:
+        runs = [run for run in runs if (run.remote or {}).get("remote_artifact_dir")]
     if json_mode:
         import json
 
@@ -49,18 +62,18 @@ def list_runs(*, json_mode: bool = False) -> int:
                 "artifacts_fetchable": bool((r.remote or {}).get("remote_artifact_dir")),
                 "local_artifact_dir": (r.remote or {}).get("local_artifact_dir"),
             }
-            for r in s.runs
+            for r in runs
         ]
         print(json.dumps(payload, indent=2, default=str))
         return 0
 
-    if not s.runs:
+    if not runs:
         print("no runs recorded")
         return 0
 
     from rich.table import Table
 
-    table = Table(title=f"runs ({len(s.runs)})")
+    table = Table(title=f"runs ({len(runs)})")
     table.add_column("id")
     table.add_column("benchmark")
     table.add_column("target")
@@ -69,19 +82,19 @@ def list_runs(*, json_mode: bool = False) -> int:
     table.add_column("artifacts")
     table.add_column("started")
     table.add_column("progress")
-    for r in s.runs:
+    for r in runs:
         shards = len(r.shard_job_ids) or len(r.shard_pids)
         started = _format_ts(r.started_at)
         progress = _format_progress(r.progress)
-        status = r.status.value
+        status_value = r.status.value
         if (r.metadata or {}).get("cancel_reason"):
-            status = f"{status} ({r.metadata['cancel_reason']})"
+            status_value = f"{status_value} ({r.metadata['cancel_reason']})"
         artifacts = "yes" if (r.remote or {}).get("remote_artifact_dir") else "-"
         table.add_row(
             r.id,
             r.benchmark,
             r.target.value,
-            status,
+            status_value,
             str(shards),
             artifacts,
             started,
