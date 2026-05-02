@@ -334,6 +334,8 @@ uv run mcode bench list --json | jq '.[] | select(.status == "running")'
 uv run mcode bench cancel run-abc123
 uv run mcode launch stop server-bv-abc123
 ```
+`compare` accepts either DB files or directories on both sides. When a run has no evaluated task rows yet, the JSON output still includes artifact summary fields such as generated task count, evaluated task count, selected verified candidate count, and total selected patch bytes so you can compare generate-only experiments before official eval.
+
 
 Local Ollama smoke:
 
