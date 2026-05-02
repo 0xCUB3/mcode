@@ -338,11 +338,12 @@ def test_smoke_bluevela_forwards_shard_args(monkeypatch, tmp_path: Path) -> None
     runner = CliRunner()
     captured: dict[str, object] = {}
 
-    def fake_run_bench_on_bluevela(*, bench_argv, model, local_db, fetch_db):
+    def fake_run_bench_on_bluevela(*, bench_argv, model, local_db, fetch_db, fetch_artifacts):
         captured["bench_argv"] = bench_argv
         captured["model"] = model
         captured["local_db"] = local_db
         captured["fetch_db"] = fetch_db
+        captured["fetch_artifacts"] = fetch_artifacts
         return 0
 
     monkeypatch.setattr("mcode.bench.remote.run_bench_on_bluevela", fake_run_bench_on_bluevela)
@@ -386,11 +387,12 @@ def test_swebench_lite_bluevela_forwards_args(monkeypatch, tmp_path: Path) -> No
     runner = CliRunner()
     captured: dict[str, object] = {}
 
-    def fake_run_bench_on_bluevela(*, bench_argv, model, local_db, fetch_db):
+    def fake_run_bench_on_bluevela(*, bench_argv, model, local_db, fetch_db, fetch_artifacts):
         captured["bench_argv"] = bench_argv
         captured["model"] = model
         captured["local_db"] = local_db
         captured["fetch_db"] = fetch_db
+        captured["fetch_artifacts"] = fetch_artifacts
         return 0
 
     monkeypatch.setattr("mcode.bench.remote.run_bench_on_bluevela", fake_run_bench_on_bluevela)
@@ -468,11 +470,12 @@ def test_swebench_live_bluevela_forwards_args(monkeypatch, tmp_path: Path) -> No
     runner = CliRunner()
     captured: dict[str, object] = {}
 
-    def fake_run_bench_on_bluevela(*, bench_argv, model, local_db, fetch_db):
+    def fake_run_bench_on_bluevela(*, bench_argv, model, local_db, fetch_db, fetch_artifacts):
         captured["bench_argv"] = bench_argv
         captured["model"] = model
         captured["local_db"] = local_db
         captured["fetch_db"] = fetch_db
+        captured["fetch_artifacts"] = fetch_artifacts
         return 0
 
     monkeypatch.setattr("mcode.bench.remote.run_bench_on_bluevela", fake_run_bench_on_bluevela)
@@ -610,11 +613,12 @@ def test_aider_polyglot_bluevela_forwards_args(monkeypatch, tmp_path: Path) -> N
     runner = CliRunner()
     captured: dict[str, object] = {}
 
-    def fake_run_bench_on_bluevela(*, bench_argv, model, local_db, fetch_db):
+    def fake_run_bench_on_bluevela(*, bench_argv, model, local_db, fetch_db, fetch_artifacts):
         captured["bench_argv"] = bench_argv
         captured["model"] = model
         captured["local_db"] = local_db
         captured["fetch_db"] = fetch_db
+        captured["fetch_artifacts"] = fetch_artifacts
         return 0
 
     monkeypatch.setattr("mcode.bench.remote.run_bench_on_bluevela", fake_run_bench_on_bluevela)

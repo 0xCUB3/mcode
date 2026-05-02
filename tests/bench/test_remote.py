@@ -21,6 +21,7 @@ class _FakeSshClient:
         self.login = login
         self.commands: list[str] = []
         self.downloads: list[tuple[str, Path, float]] = []
+        self.download_trees: list[tuple[str, Path, float]] = []
         self.uploads: list[tuple[str, str, float]] = []
         type(self).last = self
 
@@ -35,6 +36,8 @@ class _FakeSshClient:
             return _FakeResult(stdout="0\n")
         if cmd.startswith("test -f "):
             return _FakeResult(stdout="128\n")
+        if cmd.startswith("test -d "):
+            return _FakeResult(stdout="ok\n")
         if cmd.startswith("STAT=$(bjobs -noheader -o stat "):
             return _FakeResult()
         if cmd.startswith("bkill "):
@@ -43,6 +46,9 @@ class _FakeSshClient:
 
     def download(self, src: str, dst: Path, *, timeout: float = 300.0) -> None:
         self.downloads.append((src, dst, timeout))
+
+    def download_tree(self, src: str, dst: Path, *, timeout: float = 300.0) -> None:
+        self.download_trees.append((src, dst, timeout))
 
     def upload(self, src: Path, dst: str, *, timeout: float = 300.0) -> None:
         self.uploads.append((src.read_text(), dst, timeout))
@@ -217,6 +223,40 @@ def test_run_bench_on_bluevela_forwards_context_env(tmp_path, monkeypatch) -> No
     assert "export MCODE_CONTEXT_WINDOW=262144" in script_text
     assert "export MCODE_MAX_NEW_TOKENS=4096" in script_text
     assert "export MCODE_REACT_TIMEOUT=2400" in script_text
+def test_run_bench_on_bluevela_fetches_artifacts_when_requested(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(remote.launch_config, "load", lambda: _bluevela_cfg())
+    monkeypatch.setattr(remote.launch_config, "validate_for_bluevela", lambda cfg: [])
+    monkeypatch.setattr(remote, "_resolve_endpoint", lambda model, cfg: "http://host:8321/v1")
+    monkeypatch.setattr(remote, "SshClient", _FakeSshClient)
+    monkeypatch.setattr(remote, "_stream_remote_log", _ignore_stream)
+    _set_attempt_context(monkeypatch, timestamp=1777000001.5)
+
+    local_db = tmp_path / "results.db"
+    exit_code = remote.run_bench_on_bluevela(
+        bench_argv=[
+            "smoke",
+            "--model",
+            "Qwen/Qwen3.5-35B-A3B",
+            "--artifact-dir",
+            "experiments/results/smoke/artifacts",
+        ],
+        model="Qwen/Qwen3.5-35B-A3B",
+        local_db=local_db,
+        fetch_artifacts=True,
+    )
+
+    assert exit_code == 0
+    ssh = _FakeSshClient.last
+    assert ssh is not None
+    assert ssh.download_trees == [
+        (
+            "/u/skula/mcode-launch/experiments/results/smoke/artifacts",
+            Path("experiments/results/smoke/artifacts"),
+            300,
+        )
+    ]
+
+
 
 
 def test_run_bench_on_bluevela_prefers_openai_env_override(tmp_path, monkeypatch) -> None:

@@ -107,6 +107,31 @@ def _resolve_endpoint(model: str, *, cfg: launch_config.LaunchConfig) -> str:
     )
 
 
+def _argv_option_value(argv: list[str], flag: str) -> str | None:
+    if flag not in argv:
+        return None
+    index = argv.index(flag)
+    if index + 1 >= len(argv):
+        return None
+    return argv[index + 1]
+
+
+def _resolve_remote_artifact_dir(
+    *,
+    workspace_root: str,
+    argv: list[str],
+ ) -> tuple[str, Path] | None:
+    raw = _argv_option_value(argv, "--artifact-dir")
+    if not raw:
+        return None
+    local_path = Path(raw)
+    if local_path.is_absolute():
+        remote_path = raw
+    else:
+        remote_path = f"{workspace_root}/{raw}"
+    return remote_path, local_path
+
+
 def _replace_or_append_option(argv: list[str], flag: str, value: str) -> None:
     if flag in argv:
         i = argv.index(flag)
@@ -164,7 +189,8 @@ def run_bench_on_bluevela(
     model: str,
     local_db: Path,
     fetch_db: bool = True,
-) -> int:
+    fetch_artifacts: bool = False,
+ ) -> int:
     """Submit `uv run mcode bench <bench_argv>` to a Blue Vela compute node.
 
     `bench_argv` is the full list after `mcode bench` (e.g. `["smoke",
@@ -211,6 +237,10 @@ def run_bench_on_bluevela(
 
     # Replace/append --db so the bench writes to the remote path.
     argv = [*bench_argv]
+    local_artifact_fetch = _resolve_remote_artifact_dir(
+        workspace_root=bv.workspace_root,
+        argv=argv,
+    )
     if "--db" in argv:
         i = argv.index("--db")
         argv[i + 1] = remote_db
@@ -541,6 +571,29 @@ exit $rc
                     exit_code = exit_code or 99
             else:
                 print("⚠ remote DB is empty; nothing to fetch")
+
+        if fetch_artifacts and local_artifact_fetch is not None:
+            remote_artifact_dir, local_artifact_dir = local_artifact_fetch
+            artifact_check = ssh.run(
+                f"test -d {shlex.quote(remote_artifact_dir)} && echo ok || echo missing",
+                timeout=30,
+            )
+            if artifact_check.ok and artifact_check.stdout.strip().endswith("ok"):
+                try:
+                    ssh.download_tree(
+                        remote_artifact_dir,
+                        local_artifact_dir,
+                        timeout=300,
+                    )
+                    print(f"✓ fetched artifacts: {local_artifact_dir}")
+                except Exception as exc:
+                    print(
+                        "⚠ remote artifacts exist but download failed: "
+                        f"{exc}; remote_artifact_dir={remote_artifact_dir}"
+                    )
+                    exit_code = exit_code or 99
+            else:
+                print("⚠ remote artifact directory is missing; nothing to fetch")
 
         if sentinel_ok:
             try:

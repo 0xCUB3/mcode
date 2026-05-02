@@ -2379,7 +2379,8 @@ def _run_bluevela_benchmark(
     model: str,
     db: Path,
     fetch_db: bool,
-) -> None:
+    fetch_artifacts: bool = False,
+ ) -> None:
     from mcode.bench.remote import RemoteBenchError, run_bench_on_bluevela
 
     try:
@@ -2388,6 +2389,7 @@ def _run_bluevela_benchmark(
             model=model,
             local_db=db,
             fetch_db=fetch_db,
+            fetch_artifacts=fetch_artifacts,
         )
     except RemoteBenchError as e:
         typer.echo(f"✗ {e}", err=True)
@@ -2931,6 +2933,13 @@ def bench_swebench_live(
         bool,
         typer.Option("--fetch-db/--no-fetch-db", help="Rsync DB back when --on bluevela"),
     ] = True,
+    fetch_artifacts: Annotated[
+        bool,
+        typer.Option(
+            "--fetch-artifacts/--no-fetch-artifacts",
+            help="Rsync the artifact directory back when --on bluevela",
+        ),
+    ] = False,
     diagnostic_traces: Annotated[
         bool,
         typer.Option(
@@ -2986,6 +2995,7 @@ def bench_swebench_live(
             model=model,
             db=db,
             fetch_db=fetch_db,
+            fetch_artifacts=fetch_artifacts,
         )
     if on != "local":
         typer.echo(f"✗ unknown --on target {on!r}; expected local or bluevela", err=True)
@@ -3199,6 +3209,13 @@ def bench_swebench_lite(
         bool,
         typer.Option("--fetch-db/--no-fetch-db", help="Rsync DB back when --on bluevela"),
     ] = True,
+    fetch_artifacts: Annotated[
+        bool,
+        typer.Option(
+            "--fetch-artifacts/--no-fetch-artifacts",
+            help="Rsync the artifact directory back when --on bluevela",
+        ),
+    ] = False,
     diagnostic_traces: Annotated[
         bool,
         typer.Option(
@@ -3257,6 +3274,7 @@ def bench_swebench_lite(
             model=model,
             db=db,
             fetch_db=fetch_db,
+            fetch_artifacts=fetch_artifacts,
         )
     if on != "local":
         typer.echo(f"✗ unknown --on target {on!r}; expected local or bluevela", err=True)
@@ -3427,6 +3445,13 @@ def bench_aider_polyglot(
         bool,
         typer.Option("--fetch-db/--no-fetch-db", help="Rsync DB back when --on bluevela"),
     ] = True,
+    fetch_artifacts: Annotated[
+        bool,
+        typer.Option(
+            "--fetch-artifacts/--no-fetch-artifacts",
+            help="Rsync the artifact directory back when --on bluevela",
+        ),
+    ] = False,
     json_mode: JsonFlag = False,
 ) -> None:
     """Run the Aider Polyglot benchmark through mcode's harness."""
@@ -3481,6 +3506,7 @@ def bench_aider_polyglot(
             model=model,
             db=db,
             fetch_db=fetch_db,
+            fetch_artifacts=fetch_artifacts,
         )
     if on != "local":
         typer.echo(f"✗ unknown --on target {on!r}; expected local or bluevela", err=True)
@@ -3623,6 +3649,13 @@ def bench_suite(
         bool,
         typer.Option("--fetch-db/--no-fetch-db", help="Rsync DB back when --on bluevela"),
     ] = True,
+    fetch_artifacts: Annotated[
+        bool,
+        typer.Option(
+            "--fetch-artifacts/--no-fetch-artifacts",
+            help="Rsync the artifact directory back when --on bluevela",
+        ),
+    ] = False,
     diagnostic_traces: Annotated[
         bool,
         typer.Option(
@@ -3666,6 +3699,7 @@ def bench_suite(
             model=model,
             db=db,
             fetch_db=fetch_db,
+            fetch_artifacts=fetch_artifacts,
         )
     if on != "local":
         typer.echo(f"✗ unknown --on target {on!r}; expected local or bluevela", err=True)
@@ -3761,6 +3795,13 @@ def bench_smoke(
         bool,
         typer.Option("--fetch-db/--no-fetch-db", help="Rsync DB back when --on bluevela"),
     ] = True,
+    fetch_artifacts: Annotated[
+        bool,
+        typer.Option(
+            "--fetch-artifacts/--no-fetch-artifacts",
+            help="Rsync the artifact directory back when --on bluevela",
+        ),
+    ] = False,
     diagnostic_traces: Annotated[
         bool,
         typer.Option(
@@ -3833,6 +3874,7 @@ def bench_smoke(
             model=model,
             db=db,
             fetch_db=fetch_db,
+            fetch_artifacts=fetch_artifacts,
         )
     if on != "local":
         typer.echo(f"✗ unknown --on target {on!r}; expected local or bluevela", err=True)

@@ -15,7 +15,7 @@ Public API:
     client.run(cmd: str, *, timeout: float) -> SshResult
     client.upload(src: Path, dst: str, *, timeout: float) -> None
     client.download(src: str, dst: Path, *, timeout: float) -> None
-
+    client.download_tree(src: str, dst: Path, *, timeout: float) -> None
 Log tailing for the progress heartbeat uses `client.run("tail -n 20 ...")` —
 we don't need a streaming primitive for v1. `launch logs --follow` can add
 one later when it has a real consumer.
@@ -184,6 +184,17 @@ class SshClient:
         dst.parent.mkdir(parents=True, exist_ok=True)
         argv = [
             self._scp_binary,
+            *self._ssh_options,
+            f"{self.login}:{src}",
+            str(dst),
+        ]
+        self._run_xfer(argv, timeout=timeout)
+
+    def download_tree(self, src: str, dst: Path, *, timeout: float = 300.0) -> None:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        argv = [
+            self._scp_binary,
+            "-r",
             *self._ssh_options,
             f"{self.login}:{src}",
             str(dst),

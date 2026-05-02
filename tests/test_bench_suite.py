@@ -100,11 +100,12 @@ def test_bench_suite_bluevela_forwards_manifest_and_phase(monkeypatch, tmp_path:
     runner = CliRunner()
     captured: dict[str, object] = {}
 
-    def fake_run_bench_on_bluevela(*, bench_argv, model, local_db, fetch_db):
+    def fake_run_bench_on_bluevela(*, bench_argv, model, local_db, fetch_db, fetch_artifacts):
         captured["bench_argv"] = bench_argv
         captured["model"] = model
         captured["local_db"] = local_db
         captured["fetch_db"] = fetch_db
+        captured["fetch_artifacts"] = fetch_artifacts
         return 0
 
     monkeypatch.setattr("mcode.bench.remote.run_bench_on_bluevela", fake_run_bench_on_bluevela)
