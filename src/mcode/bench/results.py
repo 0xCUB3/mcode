@@ -733,6 +733,8 @@ class ResultsDB:
         model_id: str | None,
         backend_name: str | None = None,
         timeout_s: int | None = None,
+        suite_name: str | None = None,
+        suite_entry_name: str | None = None,
         group_by: Sequence[str],
         loop_budget: int | None = None,
     ) -> list[dict]:
@@ -760,6 +762,12 @@ class ResultsDB:
         if timeout_s is not None:
             where.append("r.timeout_s = ?")
             params.append(int(timeout_s))
+        if suite_name:
+            where.append("r.suite_name = ?")
+            params.append(suite_name)
+        if suite_entry_name:
+            where.append("r.suite_entry_name = ?")
+            params.append(suite_entry_name)
         if loop_budget is not None:
             where.append("r.loop_budget = ?")
             params.append(int(loop_budget))
@@ -870,6 +878,8 @@ class ResultsDB:
         model_id: str | None,
         backend_name: str | None = None,
         timeout_s: int | None = None,
+        suite_name: str | None = None,
+        suite_entry_name: str | None = None,
         group_by: Sequence[str],
         loop_budget: int | None = None,
         include_percentiles: bool = True,
@@ -898,6 +908,12 @@ class ResultsDB:
         if timeout_s is not None:
             where.append("r.timeout_s = ?")
             params.append(int(timeout_s))
+        if suite_name:
+            where.append("r.suite_name = ?")
+            params.append(suite_name)
+        if suite_entry_name:
+            where.append("r.suite_entry_name = ?")
+            params.append(suite_entry_name)
         if loop_budget is not None:
             where.append("r.loop_budget = ?")
             params.append(int(loop_budget))

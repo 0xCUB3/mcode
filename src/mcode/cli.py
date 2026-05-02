@@ -356,6 +356,8 @@ def results(
     benchmark: Annotated[str | None, typer.Option("--benchmark")] = None,
     model: Annotated[str | None, typer.Option("--model")] = None,
     backend: Annotated[str | None, typer.Option("--backend")] = None,
+    suite_name: Annotated[str | None, typer.Option("--suite")] = None,
+    suite_entry_name: Annotated[str | None, typer.Option("--suite-entry")] = None,
     loop_budget: Annotated[int | None, typer.Option("--loop-budget", min=1)] = None,
     timeout_s: Annotated[int | None, typer.Option("--timeout", min=1)] = None,
     compare_configs: Annotated[
@@ -385,6 +387,8 @@ def results(
                     model_id=model,
                     backend_name=backend,
                     timeout_s=timeout_s,
+                    suite_name=suite_name,
+                    suite_entry_name=suite_entry_name,
                     group_by=group_by_config,
                     loop_budget=loop_budget,
                 )
@@ -404,23 +408,14 @@ def results(
                 table.add_column("runs", justify="right")
                 table.add_column("total", justify="right")
                 table.add_column("passed", justify="right")
-                table.add_column("timed_out", justify="right")
-                table.add_column("timeout_rate", justify="right")
+                table.add_column("generated", justify="right")
+                table.add_column("evaluated", justify="right")
                 table.add_column("pass_rate", justify="right")
                 table.add_column("avg_s", justify="right")
                 table.add_column("p95_s", justify="right")
                 table.add_column("tok/task", justify="right")
                 table.add_column("sec/solve", justify="right")
                 table.add_column("solves/hr", justify="right")
-                table.add_column("z_edit", justify="right")
-                table.add_column("z_ver", justify="right")
-                table.add_column("wrong", justify="right")
-                table.add_column("bad_calls", justify="right")
-                table.add_column("arg_fix", justify="right")
-                table.add_column("blocked_fin", justify="right")
-                table.add_column("repeat_rt", justify="right")
-                table.add_column("post_edit", justify="right")
-                table.add_column("edit_gap", justify="right")
                 for row in rows:
                     table.add_row(
                         row["benchmark"],
@@ -433,8 +428,8 @@ def results(
                         str(row.get("runs", "")),
                         str(row["total"]),
                         str(row["passed"]),
-                        str(row.get("timed_out", 0)),
-                        f"{row.get('timeout_rate', 0.0):.1%}",
+                        str(row.get("artifact_generated_tasks", 0)),
+                        str(row.get("artifact_evaluated_tasks", 0)),
                         f"{row['pass_rate']:.1%}",
                         f"{row['time_s_avg']:.2f}",
                         f"{row['time_s_p95']:.2f}" if row.get("time_s_p95") is not None else "-",
@@ -445,18 +440,6 @@ def results(
                         if row.get("sec_per_solve") is not None
                         else "-",
                         f"{row['solves_per_hour']:.2f}",
-                        str(row.get("zero_edit", 0)),
-                        str(row.get("zero_verification", 0)),
-                        str(row.get("wrong_patch_after_verification", 0)),
-                        str(row.get("invalid_tool_call_count", 0)),
-                        str(row.get("malformed_tool_call_recoveries", 0)),
-                        str(row.get("blocked_finalizer_count", 0)),
-                        str(row.get("repeated_failed_run_test_count", 0)),
-                        str(row.get("post_edit_exploration_count", 0)),
-                        f"{row['turns_after_first_edit_before_first_verification_avg']:.2f}"
-                        if row.get("turns_after_first_edit_before_first_verification_avg")
-                        is not None
-                        else "-",
                     )
                 console.print(table)
                 return
@@ -466,6 +449,8 @@ def results(
                 model_id=model,
                 backend_name=backend,
                 timeout_s=timeout_s,
+                suite_name=suite_name,
+                suite_entry_name=suite_entry_name,
                 group_by=group_by_config,
                 loop_budget=loop_budget,
             )
@@ -502,6 +487,8 @@ def results(
                 model_id=model,
                 backend_name=backend,
                 timeout_s=timeout_s,
+                suite_name=suite_name,
+                suite_entry_name=suite_entry_name,
                 group_by=(),
                 loop_budget=loop_budget,
             )
@@ -518,23 +505,14 @@ def results(
             table.add_column("timeout", justify="right")
             table.add_column("total", justify="right")
             table.add_column("passed", justify="right")
-            table.add_column("timed_out", justify="right")
-            table.add_column("timeout_rate", justify="right")
+            table.add_column("generated", justify="right")
+            table.add_column("evaluated", justify="right")
             table.add_column("pass_rate", justify="right")
             table.add_column("avg_s", justify="right")
             table.add_column("p95_s", justify="right")
             table.add_column("tok/task", justify="right")
             table.add_column("sec/solve", justify="right")
             table.add_column("solves/hr", justify="right")
-            table.add_column("z_edit", justify="right")
-            table.add_column("z_ver", justify="right")
-            table.add_column("wrong", justify="right")
-            table.add_column("bad_calls", justify="right")
-            table.add_column("arg_fix", justify="right")
-            table.add_column("blocked_fin", justify="right")
-            table.add_column("repeat_rt", justify="right")
-            table.add_column("post_edit", justify="right")
-            table.add_column("edit_gap", justify="right")
             for row in rows:
                 table.add_row(
                     str(row["run_id"]),
@@ -548,8 +526,8 @@ def results(
                     str(row["timeout_s"]),
                     str(row["total"]),
                     str(row["passed"]),
-                    str(row.get("timed_out", 0)),
-                    f"{row.get('timeout_rate', 0.0):.1%}",
+                    str(row.get("artifact_generated_tasks", 0)),
+                    str(row.get("artifact_evaluated_tasks", 0)),
                     f"{row['pass_rate']:.1%}",
                     f"{row['time_s_avg']:.2f}",
                     f"{row['time_s_p95']:.2f}" if row.get("time_s_p95") is not None else "-",
@@ -558,18 +536,6 @@ def results(
                     else "-",
                     f"{row['sec_per_solve']:.2f}" if row.get("sec_per_solve") is not None else "-",
                     f"{row['solves_per_hour']:.2f}",
-                    str(row.get("zero_edit", 0)),
-                    str(row.get("zero_verification", 0)),
-                    str(row.get("wrong_patch_after_verification", 0)),
-                    str(row.get("invalid_tool_call_count", 0)),
-                    str(row.get("malformed_tool_call_recoveries", 0)),
-                    str(row.get("blocked_finalizer_count", 0)),
-                    str(row.get("repeated_failed_run_test_count", 0)),
-                    str(row.get("post_edit_exploration_count", 0)),
-                    f"{row['turns_after_first_edit_before_first_verification_avg']:.2f}"
-                    if row.get("turns_after_first_edit_before_first_verification_avg")
-                    is not None
-                    else "-",
                 )
             console.print(table)
             return
@@ -579,6 +545,8 @@ def results(
             model_id=model,
             backend_name=backend,
             timeout_s=timeout_s,
+            suite_name=suite_name,
+            suite_entry_name=suite_entry_name,
             group_by=(),
             loop_budget=loop_budget,
         )
@@ -606,7 +574,8 @@ def results(
                 str(row["passed"]),
                 f"{row['pass_rate']:.1%}",
             )
-            console.print(table)
+        console.print(table)
+
 
 
 @app.command("compare")
@@ -1624,6 +1593,8 @@ def report(
     benchmark: Annotated[str | None, typer.Option("--benchmark")] = None,
     model: Annotated[str | None, typer.Option("--model")] = None,
     backend: Annotated[str | None, typer.Option("--backend")] = None,
+    suite_name: Annotated[str | None, typer.Option("--suite")] = None,
+    suite_entry_name: Annotated[str | None, typer.Option("--suite-entry")] = None,
     loop_budget: Annotated[int | None, typer.Option("--loop-budget", min=1)] = None,
     timeout_s: Annotated[int | None, typer.Option("--timeout", min=1)] = None,
     per_run: Annotated[
@@ -1631,7 +1602,13 @@ def report(
     ] = False,
 ) -> None:
     """Generate a lightweight HTML report (Plotly) for pass rate vs time-to-solve."""
-    group_by_config = ("backend_name", "timeout_s", "loop_budget")
+    group_by_config = (
+        "suite_name",
+        "suite_entry_name",
+        "backend_name",
+        "timeout_s",
+        "loop_budget",
+    )
     group_by = () if per_run else group_by_config
 
     db_paths = _expand_db_paths(db=db, db_glob=db_glob, db_dir=db_dir)
@@ -1641,6 +1618,8 @@ def report(
             model_id=model,
             backend_name=backend,
             timeout_s=timeout_s,
+            suite_name=suite_name,
+            suite_entry_name=suite_entry_name,
             group_by=group_by,
             loop_budget=loop_budget,
             include_percentiles=True,
