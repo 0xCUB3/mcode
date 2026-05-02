@@ -106,6 +106,15 @@ def test_cli_bench_suite_help() -> None:
     assert "shard_index" in option_names
 
 
+def test_cli_bench_artifacts_help() -> None:
+    list_options = _command_option_names("bench", "artifacts-list")
+    show_options = _command_option_names("bench", "artifacts-show")
+    assert "db" in list_options
+    assert "run_id" in list_options
+    assert "db" in show_options
+    assert "run_id" in show_options
+
+
 
 def test_cli_compare_help() -> None:
     _invoke_help("compare", "--help")

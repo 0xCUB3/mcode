@@ -164,6 +164,18 @@ uv run mcode bench suite \
 - `--shard-count C / --shard-index I` — manual shard mode for the whole suite; each slice applies the same shard split
 - `--retry-loop-budget N` — Aider Polyglot retry budget inside the suite
 
+### Artifact inspection
+
+Once a split-phase or suite run has written artifacts, inspect them directly from the DB without spelunking through directories by hand.
+
+```bash
+uv run mcode bench artifacts-list --db experiments/results/mixed-suite-evaluate.db
+uv run mcode bench artifacts-show python/affine-cipher --db experiments/results/mixed-suite-evaluate.db
+```
+
+- `artifacts-list` shows task ids, phase, candidate count, evaluation count, and manifest path for one run
+- `artifacts-show` prints the saved task manifest JSON for one task
+
 ### `swebench-live` / `swebench-lite` extras
 
 - `--split` — `test` / `lite` / `verified` / `full` / `dev`

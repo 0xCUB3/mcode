@@ -7,6 +7,7 @@ def test_command_docs_cover_sampling_and_compare() -> None:
     command_docs = Path("docs/COMMANDS.md").read_text()
     assert "uv run mcode bench swebench-lite" in command_docs
     assert "uv run mcode bench suite" in command_docs
+    assert "uv run mcode bench artifacts-list" in command_docs
     assert "--shards" in command_docs
     assert "--sampling {none,multiturn}" in command_docs
     assert "--phase {run,generate,evaluate}" in command_docs
@@ -45,6 +46,7 @@ def test_readmes_match_command_contract() -> None:
     # Reference doc covers compare and observability env vars.
     assert "uv run mcode compare" in commands_doc
     assert "uv run mcode bench suite" in commands_doc
+    assert "uv run mcode bench artifacts-list" in commands_doc
     assert "MELLEA_TRACE_APPLICATION" in commands_doc
 
     # Legacy Blue Vela shell scripts still match their pinned shape.

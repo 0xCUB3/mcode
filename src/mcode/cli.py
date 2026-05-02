@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 from contextlib import contextmanager
+from dataclasses import asdict
 from glob import glob
 from pathlib import Path
 from typing import Annotated, Literal
@@ -16,6 +17,7 @@ from typing import Annotated, Literal
 import typer
 from rich.table import Table
 
+from mcode.bench.artifacts import read_task_manifest
 from mcode.bench.results import (
     ResultsDB,
     RunSummary,
@@ -2582,6 +2584,15 @@ def _aider_polyglot_cli_args(
     return argv
 
 
+def _resolve_results_run_id(rdb: ResultsDB, run_id: int | None) -> int:
+    if run_id is not None:
+        return run_id
+    row = rdb.conn.execute("SELECT MAX(id) AS run_id FROM runs").fetchone()
+    if row is None or row["run_id"] is None:
+        raise typer.BadParameter(f"No runs found in {rdb.path}")
+    return int(row["run_id"])
+
+
 @bench_app.command("list")
 def bench_list(json_mode: JsonFlag = False) -> None:
     """List historical bench runs from the launch state file."""
@@ -2609,6 +2620,58 @@ def bench_cancel(
             raise typer.Exit(rc)
 
     _do()
+@bench_app.command("artifacts-list")
+def bench_artifacts_list(
+    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
+    run_id: Annotated[
+        int | None,
+        typer.Option("--run-id", help="Run id (defaults to latest run)"),
+    ] = None,
+ ) -> None:
+    """List artifact-backed tasks for one run."""
+    with ResultsDB(db) as rdb:
+        resolved_run_id = _resolve_results_run_id(rdb, run_id)
+        rows = rdb.task_artifact_rows(resolved_run_id)
+    table = Table(title=f"Artifacts for run {resolved_run_id}")
+    table.add_column("task_id", no_wrap=True)
+    table.add_column("phase")
+    table.add_column("candidates", justify="right")
+    table.add_column("evaluations", justify="right")
+    table.add_column("manifest", overflow="fold")
+    for task_id in sorted(rows):
+        row = rows[task_id]
+        table.add_row(
+            task_id,
+            str(row.get("phase") or "-"),
+            str(row.get("candidate_count", 0)),
+            str(row.get("evaluation_count", 0)),
+            str(row.get("manifest_path") or "-"),
+        )
+    console.print(table)
+
+
+@bench_app.command("artifacts-show")
+def bench_artifacts_show(
+    task_id: Annotated[str, typer.Argument(..., help="Task id to inspect")],
+    db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
+    run_id: Annotated[
+        int | None,
+        typer.Option("--run-id", help="Run id (defaults to latest run)"),
+    ] = None,
+ ) -> None:
+    """Show one task artifact manifest."""
+    with ResultsDB(db) as rdb:
+        resolved_run_id = _resolve_results_run_id(rdb, run_id)
+        rows = rdb.task_artifact_rows(resolved_run_id)
+    row = rows.get(task_id)
+    if row is None:
+        raise typer.BadParameter(
+            f"No artifact manifest for task {task_id!r} in run {resolved_run_id}"
+        )
+    manifest = read_task_manifest(Path(str(row["manifest_path"])))
+    console.print(json.dumps(asdict(manifest), indent=2, sort_keys=True, default=str))
+
+
 
 
 @bench_app.command("swebench-live")
