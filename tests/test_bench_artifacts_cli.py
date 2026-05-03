@@ -194,7 +194,6 @@ def test_bench_artifacts_list_defaults_to_latest_run(tmp_path: Path) -> None:
     assert task_id in res.stdout
 
 
-
 def test_bench_artifacts_replay_builds_evaluate_run(monkeypatch, tmp_path: Path) -> None:
     db_path, run_id, task_id = _seed_artifact_run(tmp_path)
     runner = CliRunner()
@@ -203,19 +202,14 @@ def test_bench_artifacts_replay_builds_evaluate_run(monkeypatch, tmp_path: Path)
     def fake_run_single_benchmark(**kwargs):
         captured.update(kwargs)
 
-    monkeypatch.setattr("mcode.cli._run_single_benchmark", fake_run_single_benchmark)
+    monkeypatch.setattr("mcode.bench.cli._run_single_benchmark", fake_run_single_benchmark)
 
     override_root = tmp_path / "polyglot"
     override_artifacts = tmp_path / "override-artifacts"
     override_task_dir = override_artifacts / "aider-polyglot" / "python" / "affine-cipher"
     override_task_dir.mkdir(parents=True)
     source_manifest = (
-        tmp_path
-        / "artifacts"
-        / "aider-polyglot"
-        / "python"
-        / "affine-cipher"
-        / "manifest.json"
+        tmp_path / "artifacts" / "aider-polyglot" / "python" / "affine-cipher" / "manifest.json"
     )
     (override_task_dir / "manifest.json").write_text(source_manifest.read_text())
     (override_task_dir / "patch.diff").write_text("diff --git a/foo.py b/foo.py\n+x = 2\n")
@@ -258,19 +252,10 @@ def test_bench_artifacts_replay_fetches_missing_artifacts(monkeypatch, tmp_path:
     manifest_dir = fetched_root / "aider-polyglot" / "python" / "affine-cipher"
     manifest_dir.mkdir(parents=True)
     source_manifest = (
-        artifact_root
-        / "aider-polyglot"
-        / "python"
-        / "affine-cipher"
-        / "manifest.json"
+        artifact_root / "aider-polyglot" / "python" / "affine-cipher" / "manifest.json"
     )
     source_patch = (
-        artifact_root
-        / "aider-polyglot"
-        / "python"
-        / "affine-cipher"
-        / "candidate-0"
-        / "patch.diff"
+        artifact_root / "aider-polyglot" / "python" / "affine-cipher" / "candidate-0" / "patch.diff"
     )
     manifest_text = source_manifest.read_text()
     patch_text = source_patch.read_text()
@@ -292,12 +277,12 @@ def test_bench_artifacts_replay_fetches_missing_artifacts(monkeypatch, tmp_path:
         return ("run-fetch", "/remote/artifacts", fetched_root)
 
     monkeypatch.setattr(
-        "mcode.cli._resolve_artifact_fetch_run",
+        "mcode.bench.artifacts_cli._resolve_artifact_fetch_run",
         lambda **_kwargs: object(),
     )
-    monkeypatch.setattr("mcode.cli._run_single_benchmark", fake_run_single_benchmark)
+    monkeypatch.setattr("mcode.bench.cli._run_single_benchmark", fake_run_single_benchmark)
     monkeypatch.setattr(
-        "mcode.cli._fetch_remote_artifacts_for_run",
+        "mcode.bench.artifacts_cli._fetch_remote_artifacts_for_run",
         fake_fetch_remote_artifacts_for_run,
     )
 

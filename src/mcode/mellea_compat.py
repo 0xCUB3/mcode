@@ -41,14 +41,14 @@ def inspect_tool_call_arg_compat(tool_calls: object) -> dict[str, int]:
         "raw_arg_call_count": raw_arg_call_count,
         "recoverable_call_count": recoverable_call_count,
     }
+
+
 _TOOL_ARG_ALIASES = {
     "run_tests": {
         "timeout": "timeout_s",
         "max_output": "max_output_chars",
     },
 }
-
-
 
 
 def _normalize_tool_calls(result) -> None:

@@ -368,7 +368,6 @@ async def run_react_loop(
                         )
                     )
 
-
             tool_responses = []
             if result.tool_calls:
                 invalid_calls = []
@@ -701,8 +700,6 @@ def _normalize_text_tool_name(name: str) -> str:
         "test": "run_tests",
     }
     return aliases.get(name, name)
-
-
 
 
 _REDACTED_KEYS = {

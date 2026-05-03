@@ -97,16 +97,17 @@ def test_status_json_mode(runner: CliRunner, isolated_state: Path) -> None:
 
 
 def test_error_formatting_prints_what_why_next(
-    runner: CliRunner, isolated_state: Path, monkeypatch
+    runner: CliRunner, isolated_state: Path, tmp_path: Path, monkeypatch
 ) -> None:
     """The LaunchError contract: what / why / next / logs to stderr, exit 1."""
+    log_path = tmp_path / "fake.log"
 
     def fake_launch(*a, **kw):
         raise LaunchError(
             what="simulated failure",
             why="testing",
             next="run the test again",
-            logs="/tmp/fake.log",
+            logs=str(log_path),
         )
 
     monkeypatch.setattr("mcode.launch.cli.local_vllm.launch", fake_launch)
@@ -117,7 +118,7 @@ def test_error_formatting_prints_what_why_next(
     assert "simulated failure" in err
     assert "why:" in err and "testing" in err
     assert "next:" in err and "run the test again" in err
-    assert "logs:" in err and "/tmp/fake.log" in err
+    assert "logs:" in err and str(log_path) in err
 
 
 def test_refresh_formats_state_update_failure(

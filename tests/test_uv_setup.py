@@ -65,9 +65,10 @@ def test_sync_uv_environment_falls_back_to_github_without_local_fork(tmp_path):
     site_packages.mkdir(parents=True)
     (project_root / "pyproject.toml").write_text("[project]\nname='mcode'\n")
     managed_override = site_packages / uv_setup.MANAGED_MELLEA_PTH_NAME
+    old_fork = tmp_path / "old-mellea-fork"
     managed_override.write_text(
         "# Managed by mcode deps sync. Do not edit by hand.\n"
-        'import sys; sys.path.insert(0, "/tmp/mellea-fork")\n'
+        f"import sys; sys.path.insert(0, {str(old_fork)!r})\n"
     )
 
     commands: list[list[str]] = []
@@ -90,7 +91,7 @@ def test_sync_uv_environment_refuses_to_overwrite_unmanaged_override(tmp_path):
     site_packages = project_root / ".venv" / "lib" / "python3.12" / "site-packages"
     site_packages.mkdir(parents=True)
     (project_root / "pyproject.toml").write_text("[project]\nname='mcode'\n")
-    (site_packages / uv_setup.MANAGED_MELLEA_PTH_NAME).write_text("/tmp/elsewhere\n")
+    (site_packages / uv_setup.MANAGED_MELLEA_PTH_NAME).write_text(f"{tmp_path / 'elsewhere'}\n")
 
     sibling_fork = tmp_path / "mellea-fork"
     sibling_fork.mkdir()

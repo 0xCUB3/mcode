@@ -318,7 +318,7 @@ End-to-end Blue Vela run:
 
 ```bash
 # bootstrap config and validate
-uv run mcode doctor bluevela --init --login skula@login3.bluevela.rmf.ibm.com
+uv run mcode doctor bluevela --init --login <user>@login3.bluevela.rmf.ibm.com
 uv run mcode doctor bluevela
 
 # push the local repo

@@ -375,6 +375,7 @@ class LLMSession:
                     restore_repo_snapshot(repo_root, snapshot_dir)
                 collector = SolveTraceCollector(diagnostic_enabled=self.diagnostic_traces)
                 runtime_plugins = [SolveTracePlugin(collector)] if enable_hooks else None
+
                 async def _solve_once() -> SolveResult:
                     loop = asyncio.get_running_loop()
                     loop.set_exception_handler(_ignore_async_client_close_noise)

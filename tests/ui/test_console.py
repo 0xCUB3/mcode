@@ -29,7 +29,6 @@ def test_configure_logging_handles_unknown_level():
     assert logging.getLogger("mcode").level == logging.WARNING
 
 
-
 def test_configure_logging_sets_mellea_logger_level():
     from mellea.core.utils import FancyLogger
 

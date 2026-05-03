@@ -17,7 +17,7 @@ from mcode.bench.artifacts import (
     iso_utc_now,
     make_task_digest,
     read_task_manifest,
- )
+)
 from mcode.bench.results import ResultsDB, export_csv, merge_shard_dbs
 
 
@@ -1195,12 +1195,8 @@ def test_export_csv_includes_generation_only_artifacts(tmp_path: Path) -> None:
     assert artifact_candidate_rows[0]["task_id"] == manifest.task.task_id
     assert artifact_candidate_rows[0]["selected"] == "1"
     assert artifact_candidate_rows[0]["patch_path"] == manifest.candidates[0].patch_path
-    assert artifact_candidate_rows[0]["patch_sha256"] == (
-        manifest.candidates[0].patch_stats.sha256
-    )
+    assert artifact_candidate_rows[0]["patch_sha256"] == (manifest.candidates[0].patch_stats.sha256)
     assert artifact_candidate_rows[0]["trace_path"] == manifest.candidates[0].trace_path
-
-
 
 
 def test_merge_from_preserves_artifact_rows(tmp_path: Path) -> None:
@@ -1309,6 +1305,7 @@ def test_artifact_manifest_writes_non_json_metadata_with_default_str(tmp_path: P
     path = store.write_manifest(manifest)
     raw = json.loads(path.read_text(encoding="utf-8"))
     assert raw["task"]["metadata"]["raw_instance"]["created_at"] == "2026-01-01 00:00:00+00:00"
+
 
 def test_run_metrics_grouped_separates_suite_entries(tmp_path: Path) -> None:
     db_path = tmp_path / "results.db"

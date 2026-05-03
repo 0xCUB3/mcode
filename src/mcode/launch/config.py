@@ -89,7 +89,7 @@ def _parse_bluevela(raw: dict) -> BluevelaConfig:
         raise LaunchError(
             what="invalid [bluevela.podman] section",
             why="expected a TOML table",
-            next="see docs/bluevela-probe-findings.md for the schema",
+            next="see docs/bluevela.md for the schema",
         )
     return BluevelaConfig(
         login=str(raw.get("login", "") or ""),

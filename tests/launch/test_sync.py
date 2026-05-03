@@ -88,8 +88,6 @@ def _fake_subprocess(
     return fake, seen
 
 
-
-
 def test_sync_invokes_rsync_to_correct_destination(
     runner: CliRunner, cfg_path: Path, tmp_path: Path
 ) -> None:
@@ -121,8 +119,7 @@ def test_sync_invokes_rsync_to_correct_destination(
     assert "ConnectTimeout=10" in ssh_cmd
     ssh_calls = seen.get("ssh_calls", [])
     assert any(
-        "uv sync --extra dev --extra swebench --extra datasets --extra observability"
-        in c[-1]
+        "uv sync --extra dev --extra swebench --extra datasets --extra observability" in c[-1]
         for c in ssh_calls
     )
 

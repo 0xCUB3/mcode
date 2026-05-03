@@ -59,9 +59,9 @@ def test_list_runs_json_includes_cancel_reason(isolated_state: Path, capsys) -> 
     assert payload[0]["artifacts_fetchable"] is True
     assert payload[0]["artifacts_fetched_at"] == 123.0
     assert payload[0]["local_artifact_dir"] == "artifacts"
-def test_list_runs_filters_benchmark_status_and_artifacts(
-    isolated_state: Path, capsys
- ) -> None:
+
+
+def test_list_runs_filters_benchmark_status_and_artifacts(isolated_state: Path, capsys) -> None:
     _put(
         RunRecord(
             id="r1",
@@ -144,6 +144,7 @@ def test_list_runs_table_marks_fetchable_artifacts(isolated_state: Path, capsys)
     out = capsys.readouterr().out
     assert out.lower().count("yes") >= 2
 
+
 def test_cancel_already_terminal_returns_ok(isolated_state: Path, capsys) -> None:
     _put(
         RunRecord(
@@ -225,7 +226,7 @@ def test_cancel_remote_calls_ssh_kill(isolated_state: Path, monkeypatch) -> None
             target=Target.BLUEVELA,
             benchmark="smoke",
             status=RunStatus.RUNNING,
-            remote={"login": "skula@bv", "pid": "4242", "run_dir": "/u/skula/x"},
+            remote={"login": "testuser@host", "pid": "4242", "run_dir": "/u/testuser/x"},
         )
     )
     rc = cancel_mod.cancel_run("r1")
@@ -253,7 +254,7 @@ def test_cancel_remote_lsf_calls_bkill(isolated_state: Path, monkeypatch) -> Non
             target=Target.BLUEVELA,
             benchmark="smoke",
             status=RunStatus.RUNNING,
-            remote={"login": "skula@bv", "job_id": "871884", "run_dir": "/u/skula/x"},
+            remote={"login": "testuser@host", "job_id": "871884", "run_dir": "/u/testuser/x"},
         )
     )
 

@@ -90,11 +90,13 @@ def format_comparison(report: dict[str, object]) -> str:
         if report.get("suite_entry_name"):
             context_parts.append(f"entry={report['suite_entry_name']}")
         lines.append("Context: " + " ".join(context_parts))
-    lines.extend([
-        f"Baseline: {report['baseline_passed']}/{report['baseline_total']} passed",
-        f"Candidate: {report['candidate_passed']}/{report['candidate_total']} passed",
-        f"Net change: {report['net_change']:+d}",
-    ])
+    lines.extend(
+        [
+            f"Baseline: {report['baseline_passed']}/{report['baseline_total']} passed",
+            f"Candidate: {report['candidate_passed']}/{report['candidate_total']} passed",
+            f"Net change: {report['net_change']:+d}",
+        ]
+    )
     if baseline_artifacts or candidate_artifacts:
         lines.append(
             "Artifacts: "
@@ -211,9 +213,13 @@ def _load_results(
             where.append(f"tr.task_id IN ({placeholders})")
             params.extend(task_ids)
         run_columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
-        join_runs = bool(benchmark or suite_name or suite_entry_name) and {
-            "benchmark",
-        } <= run_columns
+        join_runs = (
+            bool(benchmark or suite_name or suite_entry_name)
+            and {
+                "benchmark",
+            }
+            <= run_columns
+        )
         if benchmark and join_runs:
             where.append("r.benchmark = ?")
             params.append(benchmark)
@@ -274,9 +280,13 @@ def _load_artifact_summary(
             where.append(f"at.task_id IN ({placeholders})")
             params.extend(task_ids)
         run_columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
-        join_runs = bool(benchmark or suite_name or suite_entry_name) and {
-            "benchmark",
-        } <= run_columns
+        join_runs = (
+            bool(benchmark or suite_name or suite_entry_name)
+            and {
+                "benchmark",
+            }
+            <= run_columns
+        )
         if benchmark and join_runs:
             where.append("r.benchmark = ?")
             params.append(benchmark)
@@ -318,7 +328,7 @@ def _load_artifact_summary(
             FROM {from_clause}
             LEFT JOIN artifact_candidates ac
               ON ac.run_id = at.run_id AND ac.task_id = at.task_id
-            WHERE {' AND '.join(where)}
+            WHERE {" AND ".join(where)}
         """
         row = conn.execute(sql, params).fetchone()
         return {

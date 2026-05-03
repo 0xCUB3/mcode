@@ -438,9 +438,7 @@ class BenchmarkRunner:
         self, manifest: TaskArtifactManifest, store: TaskArtifactStore
     ) -> tuple[int, str]:
         if not manifest.candidates:
-            raise RuntimeError(
-                f"artifact manifest has no candidates for {manifest.task.task_id}"
-            )
+            raise RuntimeError(f"artifact manifest has no candidates for {manifest.task.task_id}")
         if self.config.artifact_candidate_index is not None:
             candidate = next(
                 (
@@ -455,9 +453,9 @@ class BenchmarkRunner:
                     "artifact manifest has no candidate index "
                     f"{self.config.artifact_candidate_index} for {manifest.task.task_id}"
                 )
-            return candidate.candidate_index, (
-                store.task_root / candidate.patch_path
-            ).read_text(encoding="utf-8")
+            return candidate.candidate_index, (store.task_root / candidate.patch_path).read_text(
+                encoding="utf-8"
+            )
         for candidate in manifest.candidates:
             if candidate.selected:
                 return candidate.candidate_index, (

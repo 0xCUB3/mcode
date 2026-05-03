@@ -1,23 +1,4 @@
-"""TaskReporter — counter-style progress UI for bench-shaped work.
-
-Parallels mcode.launch.progress (which keeps its phase-list reporter for
-launch commands). The two stacks intentionally do not share an implementation
-to avoid breaking the eleven launch.progress import sites; tests/ui/
-test_reporter_drift.py pins the selection logic so they don't drift.
-
-Wave 1 ships the API + the selection contract. Wave 2 grows the Rich and
-Plain renderers into the full sharded-bench dashboard.
-
-Usage:
-
-    reporter = choose(json_mode=False)
-    with reporter:
-        reporter.total(len(tasks))
-        for task in tasks:
-            ...
-            reporter.advance(detail=f"finished {task.id}")
-        reporter.finish(ok=True, summary="42 passed")
-"""
+"""Counter-style progress UI for bench-shaped work."""
 
 from __future__ import annotations
 
@@ -228,11 +209,11 @@ def choose(
     json_mode: bool = False,
     stream: IO[str] | None = None,
 ) -> _Base:
-    """Pick a reporter. Selection logic kept in lockstep with
-    mcode.launch.progress.choose() (verified by tests/ui/test_reporter_drift.py).
+    """Pick a reporter.
 
     JSON mode wins. Otherwise Rich if stderr is a TTY, else Plain. Rich
-    construction failure falls back to Plain."""
+    construction failure falls back to Plain.
+    """
     if json_mode:
         return JsonReporter(stream=stream)
     out = stream or sys.stderr

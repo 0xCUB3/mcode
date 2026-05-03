@@ -194,18 +194,16 @@ def test_load_swebench_live_missing_datasets(monkeypatch):
         load_swebench_live(None, split="verified", limit=1)
 
 
-def test_build_agent_shell_command_activates_testbed_and_rewrites_repo_root():
-    command = "cd /tmp/mcode-testbed-123/testbed && python -m pytest -q"
-    wrapped = _build_agent_shell_command(
-        command,
-        host_repo_root="/tmp/mcode-testbed-123/testbed",
-    )
+def test_build_agent_shell_command_activates_testbed_and_rewrites_repo_root(tmp_path):
+    repo_root = tmp_path / "mcode-testbed" / "testbed"
+    command = f"cd {repo_root} && python -m pytest -q"
+    wrapped = _build_agent_shell_command(command, host_repo_root=str(repo_root))
 
     assert "source /opt/miniconda3/bin/activate" in wrapped
     assert "conda activate testbed" in wrapped
     assert "git config --global --add safe.directory /testbed" in wrapped
     assert "cd /testbed && python -m pytest -q" in wrapped
-    assert "/tmp/mcode-testbed-123/testbed" not in wrapped
+    assert str(repo_root) not in wrapped
 
 
 def test_build_agent_shell_command_rewrites_common_repo_aliases():

@@ -722,7 +722,6 @@ class ResultsDB:
         )
         self.conn.commit()
 
-
     def task_artifact_rows(self, run_id: int) -> dict[str, dict[str, object]]:
         if not _sqlite_table_exists(self.conn, "artifact_tasks"):
             return {}
@@ -858,12 +857,8 @@ class ResultsDB:
                         "config_json": str(row["config_json"]),
                         "total": total,
                         "passed": passed,
-                        "artifact_generated_tasks": int(
-                            row["artifact_generated_tasks"] or 0
-                        ),
-                        "artifact_evaluated_tasks": int(
-                            row["artifact_evaluated_tasks"] or 0
-                        ),
+                        "artifact_generated_tasks": int(row["artifact_generated_tasks"] or 0),
+                        "artifact_evaluated_tasks": int(row["artifact_evaluated_tasks"] or 0),
                         "pass_rate": passed / total if total else 0.0,
                     }
                 )
@@ -932,12 +927,8 @@ class ResultsDB:
                     "timeout_s": int(row["timeout_s"]),
                     "total": total,
                     "passed": passed,
-                    "artifact_generated_tasks": int(
-                        row["artifact_generated_tasks"] or 0
-                    ),
-                    "artifact_evaluated_tasks": int(
-                        row["artifact_evaluated_tasks"] or 0
-                    ),
+                    "artifact_generated_tasks": int(row["artifact_generated_tasks"] or 0),
+                    "artifact_evaluated_tasks": int(row["artifact_evaluated_tasks"] or 0),
                     "pass_rate": passed / total if total else 0.0,
                 }
             )
@@ -984,10 +975,7 @@ class ResultsDB:
             for reason in _TERMINAL_REASON_BUCKETS
         )
         grouped_reason_selects = ",\n".join(
-            (
-                "            COALESCE(SUM(run_metrics."
-                f"{reason}), 0) AS {reason}"
-            )
+            (f"            COALESCE(SUM(run_metrics.{reason}), 0) AS {reason}")
             for reason in _TERMINAL_REASON_BUCKETS
         )
 
@@ -2532,9 +2520,7 @@ def export_csv(
                                 tr, "turns_after_first_edit_before_first_verification"
                             ),
                             "zero_edit": int(_row_value(tr, "zero_edit", 1) or 0),
-                            "zero_verification": int(
-                                _row_value(tr, "zero_verification", 1) or 0
-                            ),
+                            "zero_verification": int(_row_value(tr, "zero_verification", 1) or 0),
                             "verification_succeeded": int(
                                 _row_value(tr, "verification_succeeded", 0) or 0
                             ),

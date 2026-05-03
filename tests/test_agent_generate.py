@@ -228,6 +228,7 @@ def test_delegates_unexpected_loop_exceptions():
 
     assert calls == [context]
 
+
 def test_coerce_submission_accepts_json_string():
     submission = _coerce_submission('{"summary":"done","tests_ran":["default"]}')
 

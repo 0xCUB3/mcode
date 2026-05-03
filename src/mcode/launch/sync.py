@@ -58,6 +58,7 @@ class SyncResult:
     dry_run: bool
     deps_synced: bool = False
 
+
 def run_sync(spec: SyncSpec, *, cfg: config_mod.LaunchConfig | None = None) -> SyncResult:
     """Run sync end-to-end. Raises LaunchError on user-actionable problems
     before invoking rsync. Returns a SyncResult with the rsync exit code so
@@ -189,10 +190,7 @@ def _check_remote_marker(*, login: str, workspace_root: str, bootstrap: bool) ->
 
 def _sync_remote_deps(*, login: str, workspace_root: str) -> None:
     extras = " ".join(f"--extra {name}" for name in _SYNC_EXTRAS)
-    remote_cmd = (
-        "bash -lc "
-        + shlex.quote(f"cd {shlex.quote(workspace_root)} && uv sync {extras}")
-    )
+    remote_cmd = "bash -lc " + shlex.quote(f"cd {shlex.quote(workspace_root)} && uv sync {extras}")
     print(f"deps: ssh {login} {remote_cmd}")
     result = subprocess.run(
         ["ssh", *_SSH_OPTS, login, remote_cmd],

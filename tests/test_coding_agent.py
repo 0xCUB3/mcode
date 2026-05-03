@@ -60,7 +60,7 @@ def test_verification_policy_without_default_rejects_default():
     assert policy.test_cmds == []
     assert policy.allow_default_test_cmd is False
     assert "There is no default test command" in policy.prompt_block
-    assert "use `test_cmd=\"default\"`" not in policy.prompt_block
+    assert 'use `test_cmd="default"`' not in policy.prompt_block
 
 
 def test_build_run_tests_tool_uses_command_fn_for_default_commands(tmp_path):

@@ -9,7 +9,7 @@ This run tested the upstream Mellea cutover plus generic control-loop changes on
 - Benchmark root on Blue Vela: `/u/skula/mcode-launch/benchmarks/polyglot-benchmark`
 - Toolchain root on Blue Vela: `/proj/dmfexp/skula/mcode-shared/toolchains/aider-polyglot`
 - Baseline to beat: little-coder Qwen3.6 result, `177/225 = 78.67%`
-- Previous mcode baseline: run 5 from `2026-04-24-aider-polyglot-workspace-context-full`, `170/225 = 75.6%`
+- Previous mcode baseline: 170/225 = 75.6%
 
 ## Commands
 

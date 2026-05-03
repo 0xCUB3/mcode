@@ -8,14 +8,100 @@ from typer.testing import CliRunner
 
 from mcode.cli import app
 
+EXPECTED_OPTIONS: dict[tuple[str, ...], set[str]] = {
+    ("bench", "list"): {"benchmark", "status", "artifacts_only", "limit", "json_mode"},
+    ("bench", "swebench-lite"): {
+        "shards",
+        "n_samples",
+        "sampling",
+        "sampling_budget",
+        "selection_attempts",
+        "on",
+        "fetch_db",
+        "fetch_artifacts",
+        "diagnostic_traces",
+        "phase",
+        "artifact_dir",
+    },
+    ("bench", "swebench-live"): {
+        "shards",
+        "n_samples",
+        "sampling",
+        "sampling_budget",
+        "selection_attempts",
+        "on",
+        "fetch_db",
+        "fetch_artifacts",
+        "diagnostic_traces",
+        "phase",
+        "artifact_dir",
+    },
+    ("bench", "aider-polyglot"): {
+        "retry_loop_budget",
+        "benchmark_root",
+        "language",
+        "exercise",
+        "no_retry",
+        "task_ids",
+        "on",
+        "fetch_db",
+        "fetch_artifacts",
+        "shards",
+        "shard_count",
+        "shard_index",
+        "phase",
+        "artifact_dir",
+    },
+    ("bench", "smoke"): {
+        "shards",
+        "diagnostic_traces",
+        "fetch_artifacts",
+        "phase",
+        "artifact_dir",
+    },
+    ("bench", "suite"): {
+        "suite_file",
+        "phase",
+        "artifact_dir",
+        "fetch_artifacts",
+        "shards",
+        "shard_count",
+        "shard_index",
+    },
+    ("bench", "artifacts-list"): {"db", "run_id", "task_id", "phase", "json_mode"},
+    ("bench", "artifacts-fetch"): {"db", "dest", "json_mode"},
+    ("bench", "artifacts-show"): {"db", "run_id", "candidate_index"},
+    ("bench", "artifacts-patch"): {"db", "run_id", "candidate_index", "out"},
+    ("bench", "artifacts-replay"): {
+        "db",
+        "run_id",
+        "out_db",
+        "candidate_index",
+        "benchmark_root",
+        "artifact_dir",
+        "fetch_missing_artifacts",
+    },
+}
+
+HELP_COMMANDS = [
+    ("--help",),
+    ("bench", "swebench-lite", "--help"),
+    ("report", "--help"),
+    ("compare", "--help"),
+    ("deps", "sync", "--help"),
+]
+
 
 def _strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
+def _invoke(*args: str):
+    return CliRunner().invoke(app, list(args), color=False)
+
+
 def _invoke_help(*args: str) -> str:
-    runner = CliRunner()
-    res = runner.invoke(
+    res = CliRunner().invoke(
         app,
         list(args),
         color=False,
@@ -34,147 +120,30 @@ def _command_option_names(*args: str) -> set[str]:
     return {param.name for param in current.params}
 
 
-def test_cli_bench_list_help() -> None:
-    option_names = _command_option_names("bench", "list")
-    assert "benchmark" in option_names
-    assert "status" in option_names
-    assert "artifacts_only" in option_names
-    assert "limit" in option_names
-    assert "json_mode" in option_names
+def test_cli_options_are_registered() -> None:
+    for args, options in EXPECTED_OPTIONS.items():
+        assert options <= _command_option_names(*args)
 
 
 def test_cli_help() -> None:
-    _invoke_help("--help")
-
-
-def test_cli_bench_swebench_help() -> None:
-    _invoke_help("bench", "swebench-lite", "--help")
-    option_names = _command_option_names("bench", "swebench-lite")
-    assert "shards" in option_names
-    assert "n_samples" in option_names
-    assert "sampling" in option_names
-    assert "sampling_budget" in option_names
-    assert "selection_attempts" in option_names
-    assert "on" in option_names
-    assert "fetch_db" in option_names
-    assert "fetch_artifacts" in option_names
-    assert "diagnostic_traces" in option_names
-    assert "phase" in option_names
-    assert "artifact_dir" in option_names
-
-def test_cli_report_help() -> None:
-    _invoke_help("report", "--help")
-
-
-def test_cli_bench_swebench_live_help() -> None:
-    option_names = _command_option_names("bench", "swebench-live")
-    assert "shards" in option_names
-    assert "n_samples" in option_names
-    assert "sampling" in option_names
-    assert "sampling_budget" in option_names
-    assert "selection_attempts" in option_names
-    assert "on" in option_names
-    assert "fetch_db" in option_names
-    assert "fetch_artifacts" in option_names
-    assert "diagnostic_traces" in option_names
-    assert "phase" in option_names
-    assert "artifact_dir" in option_names
-
-def test_cli_bench_aider_polyglot_help() -> None:
-    option_names = _command_option_names("bench", "aider-polyglot")
-    assert "retry_loop_budget" in option_names
-    assert "benchmark_root" in option_names
-    assert "language" in option_names
-    assert "exercise" in option_names
-    assert "no_retry" in option_names
-    assert "task_ids" in option_names
-    assert "on" in option_names
-    assert "fetch_db" in option_names
-    assert "fetch_artifacts" in option_names
-    assert "shards" in option_names
-    assert "shard_count" in option_names
-    assert "shard_index" in option_names
-    assert "phase" in option_names
-    assert "artifact_dir" in option_names
-
-def test_cli_bench_smoke_help() -> None:
-    option_names = _command_option_names("bench", "smoke")
-    assert "shards" in option_names
-    assert "diagnostic_traces" in option_names
-    assert "fetch_artifacts" in option_names
-    assert "phase" in option_names
-    assert "artifact_dir" in option_names
-def test_cli_bench_suite_help() -> None:
-    option_names = _command_option_names("bench", "suite")
-    assert "suite_file" in option_names
-    assert "phase" in option_names
-    assert "artifact_dir" in option_names
-    assert "fetch_artifacts" in option_names
-    assert "shards" in option_names
-    assert "shard_count" in option_names
-    assert "shard_index" in option_names
-
-def test_cli_bench_artifacts_help() -> None:
-    list_options = _command_option_names("bench", "artifacts-list")
-    fetch_options = _command_option_names("bench", "artifacts-fetch")
-    show_options = _command_option_names("bench", "artifacts-show")
-    patch_options = _command_option_names("bench", "artifacts-patch")
-    replay_options = _command_option_names("bench", "artifacts-replay")
-    assert "db" in list_options
-    assert "run_id" in list_options
-    assert "task_id" in list_options
-    assert "phase" in list_options
-    assert "json_mode" in list_options
-    assert "db" in fetch_options
-    assert "dest" in fetch_options
-    assert "json_mode" in fetch_options
-    assert "db" in show_options
-    assert "run_id" in show_options
-    assert "candidate_index" in show_options
-    assert "db" in patch_options
-    assert "run_id" in patch_options
-    assert "candidate_index" in patch_options
-    assert "out" in patch_options
-    assert "db" in replay_options
-    assert "run_id" in replay_options
-    assert "out_db" in replay_options
-    assert "candidate_index" in replay_options
-    assert "benchmark_root" in replay_options
-    assert "artifact_dir" in replay_options
-    assert "fetch_missing_artifacts" in replay_options
-    assert "artifact_dir" in replay_options
-
-def test_cli_compare_help() -> None:
-    _invoke_help("compare", "--help")
+    for args in HELP_COMMANDS:
+        _invoke_help(*args)
 
 
 def test_cli_rejects_sampling_budget_without_sampling() -> None:
-    runner = CliRunner()
-    res = runner.invoke(
-        app,
-        [
-            "bench",
-            "swebench-lite",
-            "--model",
-            "test-model",
-            "--sampling-budget",
-            "2",
-        ],
-        color=False,
+    res = _invoke(
+        "bench",
+        "swebench-lite",
+        "--model",
+        "test-model",
+        "--sampling-budget",
+        "2",
     )
     assert res.exit_code != 0
-    output = _strip_ansi(res.output)
-    assert "--sampling-budget requires --sampling != none" in output
+    assert "--sampling-budget requires --sampling != none" in _strip_ansi(res.output)
 
 
-def test_cli_deps_sync_help() -> None:
-    _invoke_help("deps", "sync", "--help")
-
-
-def test_cli_deps_sync_defaults_to_dev_extra(monkeypatch) -> None:
-    runner = CliRunner()
-    captured: dict[str, object] = {}
-
+def _fake_sync(captured: dict[str, object]):
     def fake_sync(
         project_root: Path,
         *,
@@ -191,9 +160,14 @@ def test_cli_deps_sync_defaults_to_dev_extra(monkeypatch) -> None:
 
         return Selection()
 
-    monkeypatch.setattr("mcode.uv_setup.sync_uv_environment", fake_sync)
+    return fake_sync
 
-    res = runner.invoke(app, ["deps", "sync"])
+
+def test_cli_deps_sync_defaults_to_dev_extra(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr("mcode.uv_setup.sync_uv_environment", _fake_sync(captured))
+
+    res = _invoke("deps", "sync")
 
     assert res.exit_code == 0
     assert captured["project_root"] == Path.cwd()
@@ -201,31 +175,10 @@ def test_cli_deps_sync_defaults_to_dev_extra(monkeypatch) -> None:
 
 
 def test_cli_deps_sync_allows_disabling_dev_and_adding_extras(monkeypatch) -> None:
-    runner = CliRunner()
     captured: dict[str, object] = {}
+    monkeypatch.setattr("mcode.uv_setup.sync_uv_environment", _fake_sync(captured))
 
-    def fake_sync(
-        project_root: Path,
-        *,
-        env=None,
-        sync_args=None,
-        run_command=None,
-    ):
-        captured["project_root"] = project_root
-        captured["sync_args"] = sync_args
-
-        class Selection:
-            source = "github"
-            local_path = None
-
-        return Selection()
-
-    monkeypatch.setattr("mcode.uv_setup.sync_uv_environment", fake_sync)
-
-    res = runner.invoke(
-        app,
-        ["deps", "sync", "--no-dev", "--extra", "swebench", "--extra", "datasets"],
-    )
+    res = _invoke("deps", "sync", "--no-dev", "--extra", "swebench", "--extra", "datasets")
 
     assert res.exit_code == 0
     assert captured["project_root"] == Path.cwd()

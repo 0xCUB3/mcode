@@ -189,8 +189,6 @@ def execute_command(
     )
 
 
-
-
 def search_code(query: str, *, repo_root: str) -> str:
     globs = [f"--glob=!{d}" for d in _SKIP_DIRS]
     cmd = [
@@ -465,4 +463,3 @@ def list_dir(path: str = ".", *, repo_root: str) -> str:
     except OSError as e:
         return f"Error listing {path}: {e}"
     return f"{path}/\n" + "\n".join(entries) if entries else f"{path}/ (empty)"
-

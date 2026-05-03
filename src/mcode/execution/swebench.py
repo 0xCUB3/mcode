@@ -111,9 +111,7 @@ def _parse_env_bool(name: str, *, default: bool) -> bool:
         return True
     if value in {"0", "false", "no", "off"}:
         return False
-    raise ValueError(
-        f"{name} must be one of 0/1/true/false/yes/no/on/off (got {raw!r})"
-    )
+    raise ValueError(f"{name} must be one of 0/1/true/false/yes/no/on/off (got {raw!r})")
 
 
 def _get_local_image(client: object, name: str, fq: str, docker_module: object) -> object | None:
@@ -156,14 +154,10 @@ def _inspect_distribution_digest(client: object, *names: str) -> str:
             continue
         descriptor = response.get("Descriptor") or response.get("descriptor")
         if not isinstance(descriptor, dict):
-            raise RuntimeError(
-                f"registry digest check returned no descriptor for {candidate}"
-            )
+            raise RuntimeError(f"registry digest check returned no descriptor for {candidate}")
         digest = descriptor.get("digest")
         if not isinstance(digest, str) or not digest:
-            raise RuntimeError(
-                f"registry digest check returned no digest for {candidate}"
-            )
+            raise RuntimeError(f"registry digest check returned no digest for {candidate}")
         return digest
     if last_error is not None:
         raise last_error
@@ -183,7 +177,7 @@ def _ensure_image(
     name: str,
     *,
     check_image_digests: bool | None = None,
- ) -> str:
+) -> str:
     """Ensure *name* is present, optionally refreshing mutable tags by digest.
 
     Returns one of ``cached``, ``pulled``, or ``refreshed``.
@@ -220,9 +214,7 @@ def _ensure_image(
 
     with _podman_image_pull_lock():
         try:
-            local_image = with_podman_backoff(
-                lambda: _get_local_image(client, name, fq, docker)
-            )
+            local_image = with_podman_backoff(lambda: _get_local_image(client, name, fq, docker))
             if local_image is not None:
                 if not check_image_digests:
                     return "cached"
@@ -266,9 +258,7 @@ def _replace_agent_path_alias(command: str, alias: str, replacement: str = "/tes
     normalized_alias = alias.rstrip("/")
     if not normalized_alias:
         return command
-    pattern = re.compile(
-        rf"(?<![A-Za-z0-9_./-]){re.escape(normalized_alias)}(?=$|[\s/'\";)&|])"
-    )
+    pattern = re.compile(rf"(?<![A-Za-z0-9_./-]){re.escape(normalized_alias)}(?=$|[\s/'\";)&|])")
     return pattern.sub(replacement, command)
 
 

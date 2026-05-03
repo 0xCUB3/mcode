@@ -942,7 +942,7 @@ def _parse_bugroup(raw: str, *, user: str = "") -> list[str]:
     `lsfadmins` bleed through and doctor-init picks the wrong one.
 
     An empty `user` returns every well-formed row (internal use only). Member
-    match is whole-word, not substring, so `skula` doesn't match `skulapp`.
+    match is whole-word, not substring, so `alice` doesn't match `alice2`.
     """
     out: list[str] = []
     for line in raw.splitlines():

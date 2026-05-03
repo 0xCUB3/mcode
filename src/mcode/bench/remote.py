@@ -133,7 +133,7 @@ def _resolve_remote_artifact_dir(
     *,
     workspace_root: str,
     argv: list[str],
- ) -> tuple[str, Path] | None:
+) -> tuple[str, Path] | None:
     raw = _argv_option_value(argv, "--artifact-dir")
     if not raw:
         return None
@@ -203,7 +203,7 @@ def run_bench_on_bluevela(
     local_db: Path,
     fetch_db: bool = True,
     fetch_artifacts: bool = False,
- ) -> int:
+) -> int:
     """Submit `uv run mcode bench <bench_argv>` to a Blue Vela compute node.
 
     `bench_argv` is the full list after `mcode bench` (e.g. `["smoke",
@@ -237,7 +237,7 @@ def run_bench_on_bluevela(
     svc_log = f"{remote_logs_dir}/podman-svc-{attempt_token}.log"
     # Podman storage and temporary testbeds go under shared_root on /proj.
     # /tmp on login3 is small + shared, and workspace_root may be under a
-    # per-user quota on /u/skula depending on local config. The shared /proj
+    # per-user quota on /u/<user> depending on local config. The shared /proj
     # filesystem is the only place large image pulls and benchmark repos fit.
     runtime_dir = f"{bv.shared_root}/podman-runtime/{run_id}"
     tmp_dir = f"{bv.shared_root}/podman-tmp/{run_id}"
@@ -818,9 +818,9 @@ def _stream_remote_log(
     grace_s = 3
     sentinel_poll = (
         f'if [ "$SENTINEL_SEEN" = 0 ] && test -f {sentinel_q}; then '
-        'SENTINEL_SEEN=1; '
-        f'DEADLINE=$(( $(date +%s) + {grace_s} )); '
-        'fi; '
+        "SENTINEL_SEEN=1; "
+        f"DEADLINE=$(( $(date +%s) + {grace_s} )); "
+        "fi; "
     )
     job_stat_poll = (
         f"STAT=$(bjobs -noheader -o stat {job_q} 2>/dev/null | tr -d '[:space:]' || true); "
@@ -828,16 +828,16 @@ def _stream_remote_log(
     sentinel_grace = (
         'if [ "$SENTINEL_SEEN" = 1 ]; then '
         'if [ "$(date +%s)" -ge "$DEADLINE" ]; then break; fi; '
-        'sleep 1; continue; '
-        'fi; '
+        "sleep 1; continue; "
+        "fi; "
     )
     sentinel_warning = (
         'if [ "$SENTINEL_SEEN" = 1 ]; then '
         'case "$STAT" in PEND|RUN|PSUSP|USUSP|SSUSP) '
         f'echo "WARNING: benchmark finished but LSF job {job_id} is still $STAT; " '
         f'"inspect {remote_log}" >&2 ;; '
-        'esac; '
-        'fi'
+        "esac; "
+        "fi"
     )
     argv = [
         "ssh",
@@ -861,9 +861,7 @@ def _stream_remote_log(
             print(f"⚠ log-stream ssh exited {rc}; remote job may still be running")
         return
 
-    proc = subprocess.Popen(
-        argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
-    )
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     assert proc.stdout is not None
     for raw_line in proc.stdout:
         line = raw_line.rstrip("\n")

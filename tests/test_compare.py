@@ -330,7 +330,6 @@ def test_compare_runs_includes_artifact_only_summary(tmp_path: Path) -> None:
     )
 
 
-
 def test_compare_cli_json_filters_benchmark(tmp_path: Path) -> None:
     baseline_dir = tmp_path / "baseline-benchmark"
     candidate_dir = tmp_path / "candidate-benchmark"

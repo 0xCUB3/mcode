@@ -27,15 +27,16 @@ def test_launch_error_is_mcode_error():
     assert e.logs == "l"
 
 
-def test_print_error_formats_with_what_why_next_logs():
-    err = MCodeError(what="boom", why="bad config", next="run init", logs="/tmp/x")
+def test_print_error_formats_with_what_why_next_logs(tmp_path):
+    log_path = tmp_path / "x.log"
+    err = MCodeError(what="boom", why="bad config", next="run init", logs=str(log_path))
     buf = io.StringIO()
     print_error(err, stream=buf)
     output = buf.getvalue()
     assert "boom" in output
     assert "  why:  bad config" in output
     assert "  next: run init" in output
-    assert "  logs: /tmp/x" in output
+    assert f"  logs: {log_path}" in output
 
 
 def test_print_error_omits_empty_optional_fields():

@@ -33,7 +33,7 @@ def _build_coding_prompt(
     hints_text: str = "",
     repo_customization_text: str = "",
     verification_prompt: str = "",
- ) -> tuple[str, str]:
+) -> tuple[str, str]:
     hints_block = f"\n\nAdditional context:\n{hints_text.strip()}" if hints_text.strip() else ""
     customization_block = (
         f"\n\nRepository-specific guidance:\n{repo_customization_text.strip()}"

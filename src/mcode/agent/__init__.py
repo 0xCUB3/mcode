@@ -10,4 +10,4 @@ __all__ = [
     "build_coding_agent",
     "build_run_tests_tool",
     "build_verification_policy",
- ]
+]

@@ -35,7 +35,7 @@ def list_runs(
     status: str | None = None,
     artifacts_only: bool = False,
     limit: int | None = None,
- ) -> int:
+) -> int:
     """Print known runs, optionally filtered."""
     s = launch_state.load()
     runs = list(s.runs)

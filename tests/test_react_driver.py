@@ -154,7 +154,6 @@ def test_inspect_tool_call_arg_compat_counts_recoverable_raw_args(tmp_path):
     assert stats == {"raw_arg_call_count": 1, "recoverable_call_count": 1}
 
 
-
 def test_provider_patch_fills_missing_final_answer_text():
     import mellea.helpers.openai_compatible_helpers as helpers
 
@@ -230,7 +229,6 @@ def test_solve_trace_plugin_records_sanitized_diagnostic_events():
     assert edit_result["path"] == "foo.py"
     assert edit_result["status"] == "APPLIED"
     assert "old_str" not in edit_result
-
 
 
 def test_run_react_loop_returns_structured_submission(monkeypatch):
@@ -452,9 +450,12 @@ def test_run_react_loop_recovers_textual_tool_call(monkeypatch):
         return (
             SimpleNamespace(
                 tool_calls=None,
-                value=("Thought: fix it.\nAction:\n```json\n"
-                       '{"name": "edit", "arguments": {"path": "foo.py", '
-                       r'"old_str": "^[\w.@+-]+$", "new_str": "\\A[\\w.@+-]+\\Z"}}' "\n```")
+                value=(
+                    "Thought: fix it.\nAction:\n```json\n"
+                    '{"name": "edit", "arguments": {"path": "foo.py", '
+                    r'"old_str": "^[\w.@+-]+$", "new_str": "\\A[\\w.@+-]+\\Z"}}'
+                    "\n```"
+                ),
             ),
             ChatContext(),
         )
@@ -498,16 +499,13 @@ def test_run_react_loop_recovers_textual_tool_call(monkeypatch):
         "new_str": "\\A[\\w.@+-]+\\Z",
     }
     assert any(
-        event["event_type"] == "text_tool_call_recovery"
-        for event in collector.diagnostic_events
+        event["event_type"] == "text_tool_call_recovery" for event in collector.diagnostic_events
     )
 
 
 def test_run_react_loop_nudges_when_budget_spent_without_edit(monkeypatch):
     seen_user_messages: list[list[str]] = []
-    outputs = iter(
-        (SimpleNamespace(tool_calls=None), ChatContext()) for _ in range(6)
-    )
+    outputs = iter((SimpleNamespace(tool_calls=None), ChatContext()) for _ in range(6))
 
     async def fake_aact(*args, **kwargs):
         del args
@@ -548,9 +546,7 @@ def test_run_react_loop_nudges_when_budget_spent_without_edit(monkeypatch):
         for messages in seen_user_messages
         for message in messages
     )
-    assert any(
-        "Stop browsing and call edit" in message for message in seen_user_messages[1]
-    )
+    assert any("Stop browsing and call edit" in message for message in seen_user_messages[1])
     assert any(
         "did not call a tool" in message and "respond with exactly one tool call" in message
         for messages in seen_user_messages
@@ -727,7 +723,6 @@ def test_run_react_loop_blocks_final_answer_until_verification_succeeds(monkeypa
     assert executed == ["edit", "run_tests", "final_answer"]
 
 
-
 def test_run_react_loop_reminds_to_verify_after_edit(monkeypatch):
     seen_user_messages: list[list[str]] = []
     edit_tool = MelleaTool.from_callable(
@@ -794,7 +789,6 @@ def test_run_react_loop_reminds_to_verify_after_edit(monkeypatch):
     assert any(
         'Call run_tests with test_cmd="default"' in message for message in seen_user_messages[-1]
     )
-
 
 
 def test_run_react_loop_autofills_verified_finalizer(monkeypatch):

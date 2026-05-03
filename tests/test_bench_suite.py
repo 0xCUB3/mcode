@@ -40,12 +40,13 @@ def test_bench_suite_help_exposes_phase_and_manifest_flags() -> None:
     assert "shard_count" in option_names
     assert "shard_index" in option_names
 
+
 def test_bench_suite_runs_each_manifest_entry(monkeypatch, tmp_path: Path) -> None:
     runner = CliRunner()
     seen: list[dict[str, object]] = []
 
     monkeypatch.setattr(
-        "mcode.cli.load_suite_manifest",
+        "mcode.bench.suite_cli.load_suite_manifest",
         lambda _path=None: type(
             "Manifest",
             (),
@@ -73,7 +74,7 @@ def test_bench_suite_runs_each_manifest_entry(monkeypatch, tmp_path: Path) -> No
     def fake_run_suite_entry(**kwargs):
         seen.append(kwargs)
 
-    monkeypatch.setattr("mcode.cli._run_suite_entry", fake_run_suite_entry)
+    monkeypatch.setattr("mcode.bench.suite_cli._run_suite_entry", fake_run_suite_entry)
 
     res = runner.invoke(
         app,

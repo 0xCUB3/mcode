@@ -1,6 +1,5 @@
 """Model -> ServingProfile registry.
 
-Every entry is tested with a golden fixture (see tests/launch/fixtures/).
 Add a model here whenever you need mcode to serve it.
 
 Design note: profile pattern matching uses first-match-wins order. Put more
@@ -172,8 +171,7 @@ def resolve(model: str) -> ServingProfile:
     """Return the ServingProfile for a model id, first-match-wins.
 
     Fallback is a minimal default profile suitable for a small local test
-    model. Callers that care about correctness for a specific model should
-    add it to _PROFILES above and gate it with a golden-fixture test.
+    model.
     """
 
     m = model.lower()

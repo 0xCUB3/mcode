@@ -75,7 +75,6 @@ def test_format_tool_result_keeps_status_visible_for_multiline_commands():
     assert lines[2] == "actual failure"
 
 
-
 def test_str_replace_edit_allows_small_multi_replace(tmp_path):
     from mcode.agent.tooling import str_replace_edit
 

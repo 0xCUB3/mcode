@@ -68,18 +68,16 @@ def test_extract_agent_test_commands_from_eval_script():
     assert commands == ["./tests/runtests.py --verbosity 2 auth_tests.test_validators"]
 
 
-def test_build_agent_shell_command_activates_testbed_and_rewrites_repo_root():
-    command = "cd /tmp/mcode-testbed-999/testbed && python -m pytest -q"
-    wrapped = _build_agent_shell_command(
-        command,
-        host_repo_root="/tmp/mcode-testbed-999/testbed",
-    )
+def test_build_agent_shell_command_activates_testbed_and_rewrites_repo_root(tmp_path):
+    repo_root = tmp_path / "mcode-testbed" / "testbed"
+    command = f"cd {repo_root} && python -m pytest -q"
+    wrapped = _build_agent_shell_command(command, host_repo_root=str(repo_root))
 
     assert "source /opt/miniconda3/bin/activate" in wrapped
     assert "conda activate testbed" in wrapped
     assert "git config --global --add safe.directory /testbed" in wrapped
     assert "cd /testbed && python -m pytest -q" in wrapped
-    assert "/tmp/mcode-testbed-999/testbed" not in wrapped
+    assert str(repo_root) not in wrapped
 
 
 def test_build_agent_shell_command_rewrites_common_repo_aliases():
@@ -405,6 +403,7 @@ def test_ensure_image_retries_retryable_pull_failure(tmp_path, monkeypatch):
         _ensure_image(client, "swebench/example:latest")
 
     assert client.api.calls == 2
+
 
 def test_ensure_image_retries_retryable_inspect_failure(tmp_path, monkeypatch):
     class ImageNotFound(Exception):

@@ -14,7 +14,7 @@ uv run mcode --version
 uv run mcode doctor
 
 # probe the cluster, write ~/.config/mcode/launch.toml
-uv run mcode doctor bluevela --init --login skula@login3.bluevela.rmf.ibm.com
+uv run mcode doctor bluevela --init --login <user>@login3.bluevela.rmf.ibm.com
 
 # verify everything mcode needs is there
 uv run mcode doctor bluevela
@@ -127,7 +127,7 @@ uv run mcode watch                      # combined live dashboard, refreshes eve
 If the kill misses subprocesses (rare), you can verify orphans manually:
 
 ```bash
-ssh skula@login3.bluevela.rmf.ibm.com 'pgrep -af mcode|podman'
+ssh <user>@login3.bluevela.rmf.ibm.com 'pgrep -af mcode|podman'
 ```
 
 ## 6. Stop the server and fetch results
@@ -167,10 +167,4 @@ Full env-var list and every flag: [`COMMANDS.md`](COMMANDS.md).
 - "queue stayed in PEND past 3600s" — your queues are backlogged; edit `[bluevela].queue_order` in `launch.toml` or wait. `doctor bluevela --init` will rewrite queue_order from current cluster state.
 - "vLLM did not become ready within 2400s" — usually a cold container pull; `tail -n 200 -f <log_path>` (the path is in `launch status`). For Qwen3.5/3.6, the per-job graphroot trades cross-run image caching for reliability.
 - Cancel failed with "remote pid still alive" — VPN dropped mid-cancel, or the job already moved off the login node's view. Run the manual `ssh ... kill -KILL -<pid>` from the error message and retry `bench cancel`.
-- The legacy `deploy/bluevela/*.sh` scripts still work as a fallback. See [`../deploy/bluevela/README.md`](../deploy/bluevela/README.md).
 - `MCODE_DEBUG=1` disables the formatted error layout and dumps a raw traceback.
-
-## Reference notes
-
-- [`e2e-verification.md`](e2e-verification.md) — live-cluster verification of the launcher.
-- [`bluevela-probe-findings.md`](bluevela-probe-findings.md) — Blue Vela cluster probe notes.

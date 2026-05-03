@@ -116,9 +116,7 @@ def build_verification_policy(
         test_fn=test_fn,
         command_fn=command_fn,
         allow_default_test_cmd=allow_default,
-        prompt_block=build_verification_prompt(
-            verification_cmds, allow_default=allow_default
-        ),
+        prompt_block=build_verification_prompt(verification_cmds, allow_default=allow_default),
     )
 
 
@@ -157,9 +155,7 @@ def build_submission_requirements() -> list[object]:
     ]
 
 
-def _valid_test_command(
-    value: object, allowed_commands: list[str], *, allow_default: bool
-) -> bool:
+def _valid_test_command(value: object, allowed_commands: list[str], *, allow_default: bool) -> bool:
     text = str(value).strip()
     if not text:
         return False
