@@ -248,3 +248,74 @@ def test_bench_artifacts_replay_builds_evaluate_run(monkeypatch, tmp_path: Path)
     assert config.artifact_candidate_index == 0
     assert config.artifact_dir == override_artifacts
     assert config.aider_polyglot_root == override_root
+
+
+def test_bench_artifacts_replay_fetches_missing_artifacts(monkeypatch, tmp_path: Path) -> None:
+    db_path, run_id, task_id = _seed_artifact_run(tmp_path)
+    artifact_root = tmp_path / "artifacts"
+    fetched_root = tmp_path / "fetched-artifacts"
+    manifest_dir = fetched_root / "aider-polyglot" / "python" / "affine-cipher"
+    manifest_dir.mkdir(parents=True)
+    source_manifest = (
+        artifact_root
+        / "aider-polyglot"
+        / "python"
+        / "affine-cipher"
+        / "manifest.json"
+    )
+    source_patch = (
+        artifact_root
+        / "aider-polyglot"
+        / "python"
+        / "affine-cipher"
+        / "candidate-0"
+        / "patch.diff"
+    )
+    manifest_text = source_manifest.read_text()
+    patch_text = source_patch.read_text()
+    for path in (source_manifest, source_patch):
+        path.unlink()
+
+    runner = CliRunner()
+    captured: dict[str, object] = {}
+
+    def fake_run_single_benchmark(**kwargs):
+        captured.update(kwargs)
+
+    def fake_fetch_remote_artifacts_for_run(*, run, dest):
+        del run, dest
+        (manifest_dir / "manifest.json").write_text(manifest_text)
+        candidate_dir = manifest_dir / "candidate-0"
+        candidate_dir.mkdir(exist_ok=True)
+        (candidate_dir / "patch.diff").write_text(patch_text)
+        return ("run-fetch", "/remote/artifacts", fetched_root)
+
+    monkeypatch.setattr(
+        "mcode.cli._resolve_artifact_fetch_run",
+        lambda **_kwargs: object(),
+    )
+    monkeypatch.setattr("mcode.cli._run_single_benchmark", fake_run_single_benchmark)
+    monkeypatch.setattr(
+        "mcode.cli._fetch_remote_artifacts_for_run",
+        fake_fetch_remote_artifacts_for_run,
+    )
+
+    res = runner.invoke(
+        app,
+        [
+            "bench",
+            "artifacts-replay",
+            task_id,
+            "--db",
+            str(db_path),
+            "--run-id",
+            str(run_id),
+            "--fetch-missing-artifacts",
+        ],
+        color=False,
+    )
+
+    assert res.exit_code == 0
+    config = captured["config"]
+    assert config.artifact_dir == fetched_root
+    assert captured["task_ids"] == task_id

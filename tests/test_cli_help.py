@@ -141,6 +141,8 @@ def test_cli_bench_artifacts_help() -> None:
     assert "candidate_index" in replay_options
     assert "benchmark_root" in replay_options
     assert "artifact_dir" in replay_options
+    assert "fetch_missing_artifacts" in replay_options
+    assert "artifact_dir" in replay_options
 
 def test_cli_compare_help() -> None:
     _invoke_help("compare", "--help")

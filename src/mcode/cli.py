@@ -2675,6 +2675,7 @@ def _artifact_replay_config(
     candidate_index: int | None,
     benchmark_root: Path | None = None,
     artifact_dir_override: Path | None = None,
+    fetch_missing_artifacts: bool = False,
 ) -> tuple[str, BenchConfig, Path]:
     with ResultsDB(source_db) as rdb:
         row = rdb.conn.execute(
@@ -2696,6 +2697,13 @@ def _artifact_replay_config(
     manifest_path = Path(str(row["manifest_path"]))
     if artifact_dir_override is not None:
         manifest_path = artifact_dir_override / str(row["artifact_root"]) / "manifest.json"
+    if not manifest_path.exists() and artifact_dir_override is None and fetch_missing_artifacts:
+        run = _resolve_artifact_fetch_run(run_id=None, db=source_db)
+        _resolved_run_id, _remote_artifact_dir, artifact_dir = _fetch_remote_artifacts_for_run(
+            run=run,
+            dest=None,
+        )
+        manifest_path = artifact_dir / str(row["artifact_root"]) / "manifest.json"
     manifest = read_task_manifest(manifest_path)
     artifact_dir = manifest_path.parent
     for _ in Path(manifest.task.artifact_root).parts:
@@ -2781,6 +2789,60 @@ def _resolve_artifact_fetch_run(*, run_id: str | None, db: Path | None):
     return matches[-1]
 
 
+def _fetch_remote_artifacts_for_run(*, run, dest: Path | None) -> tuple[str, str, Path]:
+    import time
+    from dataclasses import replace
+
+    from mcode.launch import state as launch_state
+    from mcode.launch.ssh import SshClient
+    from mcode.ui.errors import MCodeError
+
+    resolved_run_id = run.id
+    login = str(run.remote.get("login") or "")
+    remote_artifact_dir = str(run.remote.get("remote_artifact_dir") or "")
+    saved_local_artifact_dir = str(run.remote.get("local_artifact_dir") or "")
+    local_artifact_dir = Path(dest) if dest is not None else Path(saved_local_artifact_dir)
+    if not login or not remote_artifact_dir or not str(local_artifact_dir):
+        raise MCodeError(
+            what=f"run {resolved_run_id!r} has no deferred artifact fetch metadata",
+            why="the run did not record a remote artifact directory",
+            next="rerun the remote bench with --fetch-artifacts or specify a fresh run id",
+        )
+    ssh = SshClient(login)
+    probe = ssh.run(
+        f"test -d {shlex.quote(remote_artifact_dir)} && echo ok || echo missing",
+        timeout=30,
+    )
+    if not probe.ok or not probe.stdout.strip().endswith("ok"):
+        raise MCodeError(
+            what=f"remote artifact directory is missing for {resolved_run_id}",
+            why=remote_artifact_dir,
+            next="rerun the remote bench with --fetch-artifacts, or inspect the remote run dir",
+        )
+    try:
+        ssh.download_tree(remote_artifact_dir, local_artifact_dir, timeout=300)
+    except Exception as exc:
+        raise MCodeError(
+            what=f"failed to fetch artifacts for {resolved_run_id}",
+            why=str(exc),
+            next="check SSH reachability, remote paths, and local disk space, then retry",
+        ) from exc
+    launch_state.update(
+        None,
+        lambda state: state.upsert_run(
+            replace(
+                run,
+                remote={
+                    **run.remote,
+                    "local_artifact_dir": str(local_artifact_dir),
+                    "artifacts_fetched_at": time.time(),
+                },
+            )
+        ),
+    )
+    return resolved_run_id, remote_artifact_dir, local_artifact_dir
+
+
 @bench_app.command("artifacts-fetch")
 def bench_artifacts_fetch(
     run_id: Annotated[
@@ -2798,59 +2860,13 @@ def bench_artifacts_fetch(
     json_mode: JsonFlag = False,
 ) -> None:
     """Fetch a remote artifact directory for a finished Blue Vela run."""
-    from mcode.launch.ssh import SshClient
-    from mcode.ui.errors import MCodeError, handle_errors
+    from mcode.ui.errors import handle_errors
 
     @handle_errors
     def _do() -> None:
-        import time
-        from dataclasses import replace
-
-        from mcode.launch import state as launch_state
-
         run = _resolve_artifact_fetch_run(run_id=run_id, db=db)
-        resolved_run_id = run.id
-        login = str(run.remote.get("login") or "")
-        remote_artifact_dir = str(run.remote.get("remote_artifact_dir") or "")
-        saved_local_artifact_dir = str(run.remote.get("local_artifact_dir") or "")
-        local_artifact_dir = Path(dest) if dest is not None else Path(saved_local_artifact_dir)
-        if not login or not remote_artifact_dir or not str(local_artifact_dir):
-            raise MCodeError(
-                what=f"run {resolved_run_id!r} has no deferred artifact fetch metadata",
-                why="the run did not record a remote artifact directory",
-                next="rerun the remote bench with --fetch-artifacts or specify a fresh run id",
-            )
-        ssh = SshClient(login)
-        probe = ssh.run(
-            f"test -d {shlex.quote(remote_artifact_dir)} && echo ok || echo missing",
-            timeout=30,
-        )
-        if not probe.ok or not probe.stdout.strip().endswith("ok"):
-            raise MCodeError(
-                what=f"remote artifact directory is missing for {resolved_run_id}",
-                why=remote_artifact_dir,
-                next="rerun the remote bench with --fetch-artifacts, or inspect the remote run dir",
-            )
-        try:
-            ssh.download_tree(remote_artifact_dir, local_artifact_dir, timeout=300)
-        except Exception as exc:
-            raise MCodeError(
-                what=f"failed to fetch artifacts for {resolved_run_id}",
-                why=str(exc),
-                next="check SSH reachability, remote paths, and local disk space, then retry",
-            ) from exc
-        launch_state.update(
-            None,
-            lambda state: state.upsert_run(
-                replace(
-                    run,
-                    remote={
-                        **run.remote,
-                        "local_artifact_dir": str(local_artifact_dir),
-                        "artifacts_fetched_at": time.time(),
-                    },
-                )
-            ),
+        resolved_run_id, remote_artifact_dir, local_artifact_dir = _fetch_remote_artifacts_for_run(
+            run=run, dest=dest
         )
         payload = {
             "run_id": resolved_run_id,
@@ -2858,8 +2874,6 @@ def bench_artifacts_fetch(
             "local_artifact_dir": str(local_artifact_dir),
         }
         if json_mode:
-            console.print_json(data=payload)
-            return
             console.print_json(data=payload)
             return
         console.print(f"fetched artifacts to {local_artifact_dir}")
@@ -2938,6 +2952,13 @@ def bench_artifacts_replay(
             help="Override the saved artifact directory when replaying artifacts copied elsewhere",
         ),
     ] = None,
+    fetch_missing_artifacts: Annotated[
+        bool,
+        typer.Option(
+            "--fetch-missing-artifacts",
+            help="Fetch the recorded remote artifact directory if the local manifest is missing",
+        ),
+    ] = False,
 ) -> None:
     """Re-evaluate one saved artifact candidate through the benchmark adapter."""
     with ResultsDB(db) as rdb:
@@ -2949,6 +2970,7 @@ def bench_artifacts_replay(
         candidate_index=candidate_index,
         benchmark_root=benchmark_root,
         artifact_dir_override=artifact_dir,
+        fetch_missing_artifacts=fetch_missing_artifacts,
     )
     target_db = out_db if out_db is not None else db.with_name(f"{db.stem}-replay.db")
     _run_single_benchmark(
