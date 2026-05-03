@@ -6,7 +6,7 @@ import os
 import sqlite3
 import time
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -68,6 +68,7 @@ class BenchConfig:
     sampling_budget: int | None = None
     selection_attempts: int = 1
     diagnostic_traces: bool = False
+    live_trace: bool = False
     suite_name: str | None = None
     suite_entry_name: str | None = None
 
@@ -127,6 +128,7 @@ class BenchmarkRunner:
         self.config = config
         self.results_db = results_db
         self.json_mode = json_mode
+        self._active_reporter = None
         self.llm = self._build_llm(loop_budget=config.loop_budget)
 
     def _build_llm(self, *, loop_budget: int) -> LLMSession:
@@ -140,7 +142,15 @@ class BenchmarkRunner:
             sampling_budget=self.config.sampling_budget,
             selection_attempts=self.config.selection_attempts,
             diagnostic_traces=self.config.diagnostic_traces,
+            live_event_sink=self._live_trace_event if _live_trace_enabled(self.config) else None,
         )
+
+    def _live_trace_event(self, event_type: str, event: object) -> None:
+        if self._active_reporter is None:
+            return
+        text = _format_live_trace_event(event_type, event)
+        if text:
+            self._active_reporter.event("info", text)
 
     def _start_or_resume_run(self, benchmark: str, config: dict) -> _RunResume:
         run_id = self.results_db.find_latest_run_by_config(benchmark, config)
@@ -707,16 +717,22 @@ class BenchmarkRunner:
             )
 
         with choose_task_reporter(json_mode=self.json_mode) as reporter:
-            reporter.total(len(pending_tasks))
-            for task in pending_tasks:
-                result = adapter.run_task(task, environment, resume.run_id)
-                if result is not None:
-                    self._save_task_result(resume.run_id, result)
-                    detail = f"{adapter.task_id(task)} {'ok' if result['passed'] else 'fail'}"
-                else:
-                    detail = f"{adapter.task_id(task)} generated"
-                adapter.cleanup_task(task, environment)
-                reporter.advance(detail=detail)
+            self._active_reporter = reporter
+            try:
+                reporter.total(len(pending_tasks))
+                for task in pending_tasks:
+                    task_id = adapter.task_id(task)
+                    reporter.event("info", f"starting {task_id}")
+                    result = adapter.run_task(task, environment, resume.run_id)
+                    if result is not None:
+                        self._save_task_result(resume.run_id, result)
+                        detail = f"{task_id} {'ok' if result['passed'] else 'fail'}"
+                    else:
+                        detail = f"{task_id} generated"
+                    adapter.cleanup_task(task, environment)
+                    reporter.advance(detail=detail)
+            finally:
+                self._active_reporter = None
 
         return self.results_db.run_summary(resume.run_id)
 
@@ -980,15 +996,32 @@ class BenchmarkRunner:
             status = "PASSED" if outcome.passed else ("TIMEOUT" if outcome.timed_out else "FAILED")
             return format_tool_result(label, status, outcome.output)
 
-        llm.solve(
-            repo=task.repo,
-            problem_statement=prompt,
-            repo_root=str(prepared.work_dir),
-            n_samples=self.config.n_samples,
-            test_cmds={"test_cmds": list(prepared.test_commands)},
-            test_fn=test_fn,
-            visible_repo_root=str(prepared.work_dir),
-        )
+        try:
+            llm.solve(
+                repo=task.repo,
+                problem_statement=prompt,
+                repo_root=str(prepared.work_dir),
+                n_samples=self.config.n_samples,
+                test_cmds={"test_cmds": list(prepared.test_commands)},
+                test_fn=test_fn,
+                visible_repo_root=str(prepared.work_dir),
+            )
+        except Exception as exc:
+            if pass_snapshot is None:
+                raise
+            metrics = _generation_result(llm) or {}
+            metrics.update(
+                {
+                    "terminal_reason": "verified_after_model_error",
+                    "verification_succeeded": True,
+                    "zero_edit": False,
+                    "zero_verification": False,
+                    "last_model_output": {
+                        "preview": f"Recovered passing patch after model error: {exc}",
+                    },
+                }
+            )
+            return metrics, pass_snapshot
         return _generation_result(llm), pass_snapshot
 
     def _generate_task_patch(
@@ -1511,6 +1544,53 @@ def _allowed_polyglot_test_commands(prepared) -> set[str]:
 
 def _truncate(s: str, max_chars: int = 8000) -> str:
     return s if len(s) <= max_chars else s[-max_chars:]
+
+
+def _live_trace_enabled(config: BenchConfig) -> bool:
+    if config.live_trace:
+        return True
+    raw = os.environ.get("MCODE_LIVE_TRACE", "")
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _format_live_trace_event(event_type: str, event: object) -> str | None:
+    if not isinstance(event, Mapping):
+        return None
+    turn = event.get("turn")
+    payload = event.get("payload")
+    if not isinstance(payload, Mapping):
+        payload = {}
+    prefix = f"turn {turn}: " if turn else ""
+    if event_type == "turn_start":
+        return f"turn {payload.get('turn') or turn}"
+    if event_type == "generation":
+        calls = payload.get("tool_calls")
+        if isinstance(calls, list) and calls:
+            names = ", ".join(
+                str(call.get("name", "unknown")) for call in calls if isinstance(call, Mapping)
+            )
+            return f"{prefix}model requested {names or 'tool'}"
+        model_output = payload.get("model_output")
+        if isinstance(model_output, Mapping):
+            preview = str(model_output.get("preview") or "").strip().replace("\n", " ")[:160]
+            if preview:
+                return f"{prefix}model said {preview!r}"
+        return f"{prefix}model produced no tool call"
+    if event_type == "read_search_target":
+        tool_name = payload.get("tool_name")
+        target = payload.get("path") or payload.get("query") or payload.get("pattern") or "."
+        return f"{prefix}{tool_name} {target}"
+    if event_type == "edit_result":
+        return f"{prefix}edit {payload.get('path')} {payload.get('status') or ''}".rstrip()
+    if event_type == "run_tests":
+        command = payload.get("expanded_command") or payload.get("test_cmd") or "default"
+        return f"{prefix}tests {payload.get('status') or 'DONE'}: {command}"
+    if event_type == "tool_result":
+        status = payload.get("status") or ("ok" if payload.get("success") else "failed")
+        return f"{prefix}tool {payload.get('tool_name')} {status}"
+    if event_type in {"final_answer", "no_tool_call", "tool_call_filter"}:
+        return f"{prefix}{event_type} {dict(payload)}"
+    return None
 
 
 def _apply_task_shard(tasks: list, shard_count: int | None, shard_index: int | None) -> list:

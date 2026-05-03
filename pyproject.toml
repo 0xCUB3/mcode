@@ -37,6 +37,9 @@ build-backend = "hatchling.build"
 [tool.hatch.metadata]
 allow-direct-references = true
 
+[tool.pytest.ini_options]
+norecursedirs = ["benchmarks"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

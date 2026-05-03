@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.resources as ir
 from pathlib import Path
 
 from typer.main import get_command
@@ -7,6 +8,23 @@ from typer.testing import CliRunner
 
 from mcode.bench.suite import SuiteEntry, load_suite_manifest
 from mcode.cli import app
+
+
+def test_aider_regression_suite_has_balanced_fixed_tasks() -> None:
+    resource = ir.files("mcode.bench.fixtures").joinpath("aider-regression-suite.json")
+    with ir.as_file(resource) as path:
+        manifest = load_suite_manifest(path)
+
+    assert {entry.benchmark for entry in manifest.entries} == {"aider-polyglot"}
+    assert {entry.language for entry in manifest.entries} == {
+        "python",
+        "go",
+        "rust",
+        "javascript",
+        "cpp",
+        "java",
+    }
+    assert sum(len(entry.task_ids) for entry in manifest.entries) == 27
 
 
 def test_default_suite_manifest_covers_mixed_benchmarks() -> None:

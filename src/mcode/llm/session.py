@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import os
+from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -218,6 +219,9 @@ class LLMSession:
     sampling_budget: int | None = None
     selection_attempts: int = 1
     diagnostic_traces: bool = False
+    live_event_sink: Callable[[str, Mapping[str, object]], None] | None = field(
+        default=None, repr=False
+    )
     _m: object | None = field(default=None, repr=False)
     _last_result: SolveResult | None = field(default=None, repr=False)
 
@@ -373,7 +377,10 @@ class LLMSession:
             for index in range(outer_attempts):
                 if index and snapshot_dir is not None:
                     restore_repo_snapshot(repo_root, snapshot_dir)
-                collector = SolveTraceCollector(diagnostic_enabled=self.diagnostic_traces)
+                collector = SolveTraceCollector(
+                    diagnostic_enabled=self.diagnostic_traces,
+                    live_event_sink=self.live_event_sink,
+                )
                 runtime_plugins = [SolveTracePlugin(collector)] if enable_hooks else None
 
                 async def _solve_once() -> SolveResult:

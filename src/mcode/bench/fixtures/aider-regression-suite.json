@@ -1,0 +1,73 @@
+{
+  "entries": [
+    {
+      "name": "polyglot-python-regression",
+      "benchmark": "aider-polyglot",
+      "language": "python",
+      "task_ids": [
+        "python/affine-cipher",
+        "python/connect",
+        "python/phone-number",
+        "python/sgf-parsing",
+        "python/zebra-puzzle"
+      ]
+    },
+    {
+      "name": "polyglot-go-regression",
+      "benchmark": "aider-polyglot",
+      "language": "go",
+      "task_ids": [
+        "go/connect",
+        "go/poker",
+        "go/pov",
+        "go/zebra-puzzle"
+      ]
+    },
+    {
+      "name": "polyglot-rust-regression",
+      "benchmark": "aider-polyglot",
+      "language": "rust",
+      "task_ids": [
+        "rust/decimal",
+        "rust/dot-dsl",
+        "rust/forth",
+        "rust/poker",
+        "rust/scale-generator"
+      ]
+    },
+    {
+      "name": "polyglot-javascript-regression",
+      "benchmark": "aider-polyglot",
+      "language": "javascript",
+      "task_ids": [
+        "javascript/bowling",
+        "javascript/ledger",
+        "javascript/promises",
+        "javascript/react"
+      ]
+    },
+    {
+      "name": "polyglot-cpp-regression",
+      "benchmark": "aider-polyglot",
+      "language": "cpp",
+      "task_ids": [
+        "cpp/all-your-base",
+        "cpp/binary-search-tree",
+        "cpp/dnd-character",
+        "cpp/meetup",
+        "cpp/yacht"
+      ]
+    },
+    {
+      "name": "polyglot-java-regression",
+      "benchmark": "aider-polyglot",
+      "language": "java",
+      "task_ids": [
+        "java/connect",
+        "java/hangman",
+        "java/sgf-parsing",
+        "java/zebra-puzzle"
+      ]
+    }
+  ]
+}

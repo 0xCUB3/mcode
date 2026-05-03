@@ -74,6 +74,37 @@ def compare_runs(
     }
 
 
+def compare_gate_failures(
+    report: dict[str, object],
+    *,
+    max_lost: int | None = None,
+    min_net: int | None = None,
+    min_candidate_pass_rate: float | None = None,
+    min_candidate_passed: int | None = None,
+) -> list[str]:
+    failures: list[str] = []
+    lost_count = len(list(report.get("lost") or []))
+    net_change = int(report.get("net_change") or 0)
+    candidate_passed = int(report.get("candidate_passed") or 0)
+    candidate_total = int(report.get("candidate_total") or 0)
+    candidate_pass_rate = candidate_passed / candidate_total if candidate_total else 0.0
+
+    if max_lost is not None and lost_count > max_lost:
+        failures.append(f"lost {lost_count} tasks, max allowed is {max_lost}")
+    if min_net is not None and net_change < min_net:
+        failures.append(f"net change {net_change:+d} is below minimum {min_net:+d}")
+    if min_candidate_passed is not None and candidate_passed < min_candidate_passed:
+        failures.append(
+            f"candidate passed {candidate_passed} tasks, minimum is {min_candidate_passed}"
+        )
+    if min_candidate_pass_rate is not None and candidate_pass_rate < min_candidate_pass_rate:
+        failures.append(
+            f"candidate pass rate {candidate_pass_rate:.1%} is below "
+            f"minimum {min_candidate_pass_rate:.1%}"
+        )
+    return failures
+
+
 def format_comparison(report: dict[str, object]) -> str:
     gained = list(report["gained"])
     lost = list(report["lost"])

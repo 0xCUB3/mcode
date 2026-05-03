@@ -37,6 +37,7 @@ class SolveTraceCollector:
     validation_failed_count: int | None = None
     diagnostic_events: list[dict[str, object]] = field(default_factory=list)
     last_model_output: dict[str, object] | None = None
+    live_event_sink: Callable[[str, Mapping[str, object]], None] | None = None
 
     verification_evidence: list[dict[str, object]] = field(default_factory=list)
 
@@ -47,14 +48,23 @@ class SolveTraceCollector:
         *,
         turn: int | None = None,
     ) -> None:
+        event_turn = self.current_turn if turn is None else turn
+        sanitized = _sanitize_diagnostic_payload(payload or {})
+        if self.live_event_sink is not None:
+            self.live_event_sink(
+                event_type,
+                {
+                    "turn": event_turn if event_turn > 0 else None,
+                    "payload": sanitized if isinstance(sanitized, Mapping) else {},
+                },
+            )
         if not self.diagnostic_enabled:
             return
-        event_turn = self.current_turn if turn is None else turn
         self.diagnostic_events.append(
             {
                 "turn": event_turn if event_turn > 0 else None,
                 "event_type": event_type,
-                "payload": _sanitize_diagnostic_payload(payload or {}),
+                "payload": sanitized,
             }
         )
 
@@ -98,6 +108,10 @@ class SolveTraceCollector:
         }
         if totals is not None:
             payload["usage"] = totals
+        if self.last_model_output is not None:
+            payload["model_output"] = _text_digest(
+                str(self.last_model_output.get("preview") or ""), max_preview=500
+            )
         sanitized_calls = _sanitize_tool_calls(tool_calls)
         if sanitized_calls:
             payload["tool_calls"] = sanitized_calls
@@ -155,7 +169,7 @@ class SolveTraceCollector:
         execution_time_ms: int | None,
         error: object | None,
     ) -> None:
-        if not self.diagnostic_enabled:
+        if not self.diagnostic_enabled and self.live_event_sink is None:
             return
         output_text = _safe_text(output)
         payload: dict[str, object] = {

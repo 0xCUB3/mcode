@@ -449,9 +449,30 @@ def compare(
     benchmark: Annotated[str | None, typer.Option("--benchmark")] = None,
     suite_name: Annotated[str | None, typer.Option("--suite")] = None,
     suite_entry_name: Annotated[str | None, typer.Option("--suite-entry")] = None,
+    max_lost: Annotated[
+        int | None,
+        typer.Option("--max-lost", min=0, help="Fail if more than N tasks regress"),
+    ] = None,
+    min_net: Annotated[
+        int | None,
+        typer.Option("--min-net", help="Fail if gained-lost is below N"),
+    ] = None,
+    min_candidate_pass_rate: Annotated[
+        float | None,
+        typer.Option(
+            "--min-candidate-pass-rate",
+            min=0.0,
+            max=1.0,
+            help="Fail if candidate pass rate is below this 0-1 fraction",
+        ),
+    ] = None,
+    min_candidate_passed: Annotated[
+        int | None,
+        typer.Option("--min-candidate-passed", min=0, help="Fail if candidate passes fewer tasks"),
+    ] = None,
     json_mode: JsonFlag = False,
 ) -> None:
-    from mcode.bench.compare import compare_runs, format_comparison
+    from mcode.bench.compare import compare_gate_failures, compare_runs, format_comparison
 
     report = compare_runs(
         baseline_dir=str(baseline_dir),
@@ -461,10 +482,23 @@ def compare(
         suite_name=suite_name,
         suite_entry_name=suite_entry_name,
     )
+    failures = compare_gate_failures(
+        report,
+        max_lost=max_lost,
+        min_net=min_net,
+        min_candidate_pass_rate=min_candidate_pass_rate,
+        min_candidate_passed=min_candidate_passed,
+    )
     if json_mode:
-        console.print_json(data=report)
-        return
-    console.print(format_comparison(report))
+        console.print_json(data={**report, "gate_failures": failures})
+    else:
+        console.print(format_comparison(report))
+        if failures:
+            console.print("\nGate failed:", style="red")
+            for failure in failures:
+                console.print(f"  - {failure}", style="red")
+    if failures:
+        raise typer.Exit(1)
 
 
 @app.command("report")

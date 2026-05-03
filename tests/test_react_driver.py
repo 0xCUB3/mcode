@@ -19,6 +19,22 @@ from mcode.mellea_compat import (
 )
 
 
+def test_solve_trace_collector_emits_live_events_without_diagnostics():
+    events = []
+    collector = SolveTraceCollector(
+        live_event_sink=lambda event_type, payload: events.append((event_type, payload))
+    )
+
+    collector.note_turn(2)
+    collector.note_tool(
+        tool_name="run_tests", output="PASSED", success=True, tool_args={"test_cmd": "default"}
+    )
+
+    assert collector.diagnostic_events == []
+    assert events[0] == ("turn_start", {"turn": 2, "payload": {"turn": 2}})
+    assert any(event_type == "run_tests" for event_type, _payload in events)
+
+
 def test_solve_trace_plugin_collects_generation_tool_and_validation_data():
     collector = SolveTraceCollector()
     plugin = SolveTracePlugin(collector)

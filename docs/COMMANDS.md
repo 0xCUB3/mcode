@@ -140,7 +140,7 @@ uv run mcode bench swebench-lite \
 
 ### `suite`
 
-The mixed suite runs several benchmark slices through the same phase runner and writes all runs into one DB. Use it when you want a small, broader regression sweep instead of another SWE-only pass.
+The mixed suite runs several benchmark slices through the same phase runner and writes all runs into one DB. Use it when you want a small, broader regression sweep instead of another SWE-only pass. For harness A/B work, run the bundled `src/mcode/bench/fixtures/aider-regression-suite.json` before and after a loop change, then gate with `mcode compare --max-lost 0`.
 
 ```bash
 uv run mcode bench suite \
@@ -219,7 +219,7 @@ A 16-task SWE-bench Verified diagnostic slice (astropy + 6 projects). It runs `s
 
 ### JSON event stream
 
-Every bench command supports `--json`. Events are line-delimited JSON with strictly monotonic `seq`:
+Every bench command supports `--json`. Events are line-delimited JSON with strictly monotonic `seq`. Set `MCODE_LIVE_TRACE=1` to include compact per-turn model/tool events while each task is running:
 
 ```jsonl
 {"seq": 1, "ts": 1719445200.123, "kind": "run_start", "data": {"benchmark": "smoke", "model": "...", "shards": 4}}
@@ -251,7 +251,7 @@ State transitions to `RunStatus.STOPPED` with `metadata.cancel_reason = "user"`.
 
 ```bash
 uv run mcode results [--db PATH | --db-glob 'g' | --db-dir DIR] [--benchmark X] [--model M] [--backend B] [--suite S] [--suite-entry E] [--loop-budget N] [--timeout N] [--compare-configs] [--time] [--json]
-uv run mcode compare --baseline-dir A --candidate-dir B [--benchmark X] [--suite S] [--suite-entry E] [--task-ids file] [--json]
+uv run mcode compare --baseline-dir A --candidate-dir B [--benchmark X] [--suite S] [--suite-entry E] [--task-ids file] [--max-lost N] [--min-net N] [--min-candidate-pass-rate F] [--json]
 mcode report [--db ... | --db-dir DIR] [--benchmark X] --out report.html
 mcode merge-shards --shards-glob 'glob' --out merged.db
 mcode export-csv -i DIR --out-dir DIR --prefix mcode [--include-logs]

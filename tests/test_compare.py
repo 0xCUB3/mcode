@@ -12,7 +12,7 @@ from mcode.bench.artifacts import (
     iso_utc_now,
     make_task_digest,
 )
-from mcode.bench.compare import compare_runs
+from mcode.bench.compare import compare_gate_failures, compare_runs
 from mcode.bench.results import ResultsDB
 from mcode.cli import app
 
@@ -328,6 +328,102 @@ def test_compare_runs_includes_artifact_only_summary(tmp_path: Path) -> None:
         report["candidate_artifacts"]["selected_patch_byte_count_total"]
         > (report["baseline_artifacts"]["selected_patch_byte_count_total"])
     )
+
+
+def test_compare_gate_failures_detects_regression(tmp_path: Path) -> None:
+    baseline_db = tmp_path / "baseline-gate.db"
+    candidate_db = tmp_path / "candidate-gate.db"
+
+    _write_compare_db(
+        baseline_db,
+        suite_entry_name="polyglot-python",
+        results={"python/affine-cipher": True, "python/connect": True},
+    )
+    _write_compare_db(
+        candidate_db,
+        suite_entry_name="polyglot-python",
+        results={"python/affine-cipher": True, "python/connect": False},
+    )
+
+    report = compare_runs(str(baseline_db), str(candidate_db), benchmark="aider-polyglot")
+
+    assert compare_gate_failures(report, max_lost=0, min_net=0, min_candidate_pass_rate=1.0) == [
+        "lost 1 tasks, max allowed is 0",
+        "net change -1 is below minimum +0",
+        "candidate pass rate 50.0% is below minimum 100.0%",
+    ]
+
+
+def test_compare_cli_gate_exits_nonzero(tmp_path: Path) -> None:
+    baseline_db = tmp_path / "baseline-cli-gate.db"
+    candidate_db = tmp_path / "candidate-cli-gate.db"
+
+    _write_compare_db(
+        baseline_db,
+        suite_entry_name="polyglot-python",
+        results={"python/affine-cipher": True},
+    )
+    _write_compare_db(
+        candidate_db,
+        suite_entry_name="polyglot-python",
+        results={"python/affine-cipher": False},
+    )
+
+    res = CliRunner().invoke(
+        app,
+        [
+            "compare",
+            "--baseline-dir",
+            str(baseline_db),
+            "--candidate-dir",
+            str(candidate_db),
+            "--benchmark",
+            "aider-polyglot",
+            "--max-lost",
+            "0",
+        ],
+        color=False,
+    )
+
+    assert res.exit_code == 1
+    assert "Gate failed" in res.stdout
+    assert "lost 1 tasks" in res.stdout
+
+
+def test_compare_cli_json_includes_gate_failures(tmp_path: Path) -> None:
+    baseline_db = tmp_path / "baseline-json-gate.db"
+    candidate_db = tmp_path / "candidate-json-gate.db"
+
+    _write_compare_db(
+        baseline_db,
+        suite_entry_name="polyglot-python",
+        results={"python/affine-cipher": True},
+    )
+    _write_compare_db(
+        candidate_db,
+        suite_entry_name="polyglot-python",
+        results={"python/affine-cipher": False},
+    )
+
+    res = CliRunner().invoke(
+        app,
+        [
+            "compare",
+            "--baseline-dir",
+            str(baseline_db),
+            "--candidate-dir",
+            str(candidate_db),
+            "--benchmark",
+            "aider-polyglot",
+            "--max-lost",
+            "0",
+            "--json",
+        ],
+        color=False,
+    )
+
+    assert res.exit_code == 1
+    assert json.loads(res.stdout)["gate_failures"] == ["lost 1 tasks, max allowed is 0"]
 
 
 def test_compare_cli_json_filters_benchmark(tmp_path: Path) -> None:
