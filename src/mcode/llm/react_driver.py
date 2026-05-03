@@ -554,14 +554,23 @@ def _recover_text_tool_calls(
         raw_name = str(
             payload.get("name") or payload.get("tool") or payload.get("action") or ""
         ).strip()
+        inferred_from_args = False
+        if not raw_name:
+            raw_name = _infer_text_tool_name_from_args(payload)
+            inferred_from_args = bool(raw_name)
         name = _normalize_text_tool_name(raw_name)
         tool = tool_by_name.get(name)
         if tool is None:
             continue
-        args = payload.get(
-            "arguments",
-            payload.get("args", payload.get("action_input", {})),
-        )
+        if any(key in payload for key in ("arguments", "args", "action_input")):
+            args = payload.get(
+                "arguments",
+                payload.get("args", payload.get("action_input", {})),
+            )
+        elif inferred_from_args:
+            args = payload
+        else:
+            args = {}
         if not isinstance(args, dict):
             args = {}
         from mellea.core.base import ModelToolCall
@@ -668,6 +677,19 @@ def _balanced_brace_prefix(text: str) -> str | None:
             if depth == 0:
                 return text[: index + 1]
     return None
+
+
+def _infer_text_tool_name_from_args(payload: dict[str, object]) -> str:
+    keys = set(payload)
+    if {"old_str", "new_str", "path"} <= keys:
+        return "edit"
+    if "test_cmd" in keys:
+        return "run_tests"
+    if "query" in keys:
+        return "search_code"
+    if "path" in keys:
+        return "read_file"
+    return ""
 
 
 def _normalize_text_tool_name(name: str) -> str:
