@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import platform
+import re
 import threading
 import time
 from contextlib import contextmanager
@@ -261,11 +262,26 @@ def _truncate_command_output(output: str, *, max_chars: int = 10_000) -> str:
     )
 
 
+def _replace_agent_path_alias(command: str, alias: str, replacement: str = "/testbed") -> str:
+    normalized_alias = alias.rstrip("/")
+    if not normalized_alias:
+        return command
+    pattern = re.compile(
+        rf"(?<![A-Za-z0-9_./-]){re.escape(normalized_alias)}(?=$|[\s/'\";)&|])"
+    )
+    return pattern.sub(replacement, command)
+
+
 def _normalize_agent_command(command: str, *, host_repo_root: str | None = None) -> str:
     normalized = command
+    normalized = re.sub(
+        r"(?<![A-Za-z0-9_./-])/home/user/repos/[^\s/'\";)&|]+",
+        "/testbed",
+        normalized,
+    )
     for alias in (host_repo_root, "/home/user/repo", "c:/users/user/tmp/repo"):
         if alias:
-            normalized = normalized.replace(alias, "/testbed")
+            normalized = _replace_agent_path_alias(normalized, alias)
     return normalized
 
 

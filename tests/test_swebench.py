@@ -75,6 +75,14 @@ def test_build_agent_shell_command_rewrites_common_repo_aliases():
     assert "/home/user/repo" not in wrapped
 
 
+def test_build_agent_shell_command_does_not_corrupt_repos_alias():
+    command = "cd /home/user/repos/django && python -m pytest -q"
+    wrapped = _build_agent_shell_command(command)
+
+    assert "cd /testbed && python -m pytest -q" in wrapped
+    assert "/testbeds/django" not in wrapped
+
+
 def test_swebench_get_client_retries_after_stale_client(monkeypatch):
     class FakeDockerException(Exception):
         pass
