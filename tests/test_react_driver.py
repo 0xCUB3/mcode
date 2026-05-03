@@ -97,6 +97,13 @@ def test_run_tests_success_requires_test_like_command_for_verification():
     assert event["payload"]["counts_as_verification"] is False
 
     collector.note_tool(
+        tool_name="edit",
+        output="$ edit foo.py\nAPPLIED\nok",
+        success=True,
+        tool_args={"path": "foo.py"},
+    )
+
+    collector.note_tool(
         tool_name="run_tests",
         output="$ cd /testbed && python -m pytest tests/test_foo.py\nPASSED\n",
         success=True,

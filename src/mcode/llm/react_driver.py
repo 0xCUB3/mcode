@@ -125,6 +125,7 @@ class SolveTraceCollector:
             and success
             and _run_tests_succeeded(output_text)
             and _run_tests_counts_as_verification(tool_args)
+            and self.turns_to_first_edit is not None
         ):
             self.verification_succeeded = True
         if tool_name == "run_tests":
