@@ -203,6 +203,8 @@ def test_compare_cli_json_filters_suite_entry(tmp_path: Path) -> None:
 
     assert res.exit_code == 0
     payload = json.loads(res.stdout)
+    assert payload["suite_name"] == "tiny-polyglot-suite"
+    assert payload["suite_entry_name"] == "polyglot-python"
     assert payload["gained"] == ["python/affine-cipher"]
 
 
@@ -364,4 +366,5 @@ def test_compare_cli_json_filters_benchmark(tmp_path: Path) -> None:
 
     assert res.exit_code == 0
     payload = json.loads(res.stdout)
+    assert payload["benchmark"] == "aider-polyglot"
     assert payload["gained"] == ["python/affine-cipher"]

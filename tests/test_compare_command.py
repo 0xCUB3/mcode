@@ -63,3 +63,58 @@ def test_compare_command_reports_diff(tmp_path: Path) -> None:
     assert "Baseline: 0/1 passed" in res.stdout
     assert "Candidate: 1/1 passed" in res.stdout
     assert "Net change: +1" in res.stdout
+
+
+
+def test_report_command_includes_suite_filters_in_title(tmp_path: Path) -> None:
+    db_path = tmp_path / "results.db"
+    with ResultsDB(db_path) as rdb:
+        run_id = rdb.start_run(
+            "aider-polyglot",
+            {
+                "backend_name": "openai",
+                "model_id": "test-model",
+                "loop_budget": 23,
+                "timeout_s": 300,
+                "suite_name": "tiny-polyglot-suite",
+                "suite_entry_name": "polyglot-python",
+            },
+        )
+        rdb.save_task_result(
+            run_id,
+            {
+                "task_id": "python/affine-cipher",
+                "passed": True,
+                "attempts_used": 1,
+                "time_ms": 10,
+                "exit_code": 0,
+                "timed_out": False,
+                "stdout": "",
+                "stderr": "",
+                "error": None,
+                "code_sha256": "abc",
+            },
+        )
+
+    out = tmp_path / "report.html"
+    runner = CliRunner()
+    res = runner.invoke(
+        app,
+        [
+            "report",
+            "--db",
+            str(db_path),
+            "--suite",
+            "tiny-polyglot-suite",
+            "--suite-entry",
+            "polyglot-python",
+            "--out",
+            str(out),
+        ],
+        color=False,
+    )
+
+    assert res.exit_code == 0
+    html = out.read_text()
+    assert "suite=tiny-polyglot-suite" in html
+    assert "suite_entry=polyglot-python" in html

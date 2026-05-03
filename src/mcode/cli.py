@@ -1673,6 +1673,10 @@ def report(
         title += f" | backend={backend}"
     if model:
         title += f" | model={model}"
+    if suite_name:
+        title += f" | suite={suite_name}"
+    if suite_entry_name:
+        title += f" | suite_entry={suite_entry_name}"
 
     out.parent.mkdir(parents=True, exist_ok=True)
     html = _render_report_html(rows, title=title)

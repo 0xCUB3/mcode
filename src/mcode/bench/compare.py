@@ -58,6 +58,9 @@ def compare_runs(
             unchanged_pass.append(task)
 
     return {
+        "benchmark": benchmark,
+        "suite_name": suite_name,
+        "suite_entry_name": suite_entry_name,
         "baseline_total": len(baseline),
         "candidate_total": len(candidate),
         "baseline_passed": sum(baseline.values()),
@@ -77,11 +80,21 @@ def format_comparison(report: dict[str, object]) -> str:
     unchanged_pass = list(report["unchanged_pass"])
     baseline_artifacts = dict(report.get("baseline_artifacts") or {})
     candidate_artifacts = dict(report.get("candidate_artifacts") or {})
-    lines = [
+    lines: list[str] = []
+    if report.get("benchmark") or report.get("suite_name") or report.get("suite_entry_name"):
+        context_parts: list[str] = []
+        if report.get("benchmark"):
+            context_parts.append(f"benchmark={report['benchmark']}")
+        if report.get("suite_name"):
+            context_parts.append(f"suite={report['suite_name']}")
+        if report.get("suite_entry_name"):
+            context_parts.append(f"entry={report['suite_entry_name']}")
+        lines.append("Context: " + " ".join(context_parts))
+    lines.extend([
         f"Baseline: {report['baseline_passed']}/{report['baseline_total']} passed",
         f"Candidate: {report['candidate_passed']}/{report['candidate_total']} passed",
         f"Net change: {report['net_change']:+d}",
-    ]
+    ])
     if baseline_artifacts or candidate_artifacts:
         lines.append(
             "Artifacts: "
@@ -135,6 +148,17 @@ def _load_results_from_dir(
     return results
 
 
+def _empty_artifact_summary() -> dict[str, int]:
+    return {
+        "generated_tasks": 0,
+        "evaluated_tasks": 0,
+        "candidate_count": 0,
+        "selected_candidate_count": 0,
+        "selected_verified_count": 0,
+        "selected_patch_byte_count_total": 0,
+    }
+
+
 def _load_artifact_summary_from_dir(
     dir_path: str,
     *,
@@ -143,14 +167,7 @@ def _load_artifact_summary_from_dir(
     suite_name: str | None = None,
     suite_entry_name: str | None = None,
 ) -> dict[str, int]:
-    summary = {
-        "generated_tasks": 0,
-        "evaluated_tasks": 0,
-        "candidate_count": 0,
-        "selected_candidate_count": 0,
-        "selected_verified_count": 0,
-        "selected_patch_byte_count_total": 0,
-    }
+    summary = _empty_artifact_summary()
     root = Path(dir_path)
     db_paths = [root] if root.is_file() else sorted(root.glob("*.db"))
     for db_file in db_paths:
@@ -245,14 +262,7 @@ def _load_artifact_summary(
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             ).fetchall()
         }
-        empty = {
-            "generated_tasks": 0,
-            "evaluated_tasks": 0,
-            "candidate_count": 0,
-            "selected_candidate_count": 0,
-            "selected_verified_count": 0,
-            "selected_patch_byte_count_total": 0,
-        }
+        empty = _empty_artifact_summary()
         if "artifact_tasks" not in tables:
             return empty
 
