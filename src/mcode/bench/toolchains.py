@@ -6,6 +6,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -91,7 +92,7 @@ def install_hint(languages: Sequence[str]) -> str:
         return ""
     system = platform.system().lower()
     if system == "darwin":
-        return " && ".join(_macos_install_hints(packages))
+        return "brew install " + " ".join(_macos_packages(packages))
     if system == "windows":
         return "winget install " + " ".join(_windows_packages(packages))
     if shutil.which("apt-get"):
@@ -159,18 +160,34 @@ def _command_check(
     runner: Callable[..., subprocess.CompletedProcess],
 ) -> ToolchainCheck:
     binary = command[0]
-    path = shutil.which(binary)
-    if not path:
+    candidates = _command_candidates(command)
+    if not candidates:
         return ToolchainCheck(language, name, False, f"{binary} not found on PATH", next_step)
-    try:
-        proc = runner(command, capture_output=True, text=True)
-    except OSError as exc:
-        return ToolchainCheck(language, name, False, str(exc), next_step)
-    output = (proc.stdout or proc.stderr or path).strip().splitlines()
-    detail = output[0] if output else path
-    if proc.returncode == 0:
-        return ToolchainCheck(language, name, True, detail, "")
-    return ToolchainCheck(language, name, False, detail, next_step)
+    failed_detail = f"{binary} not found on PATH"
+    for candidate in candidates:
+        try:
+            proc = runner(candidate, capture_output=True, text=True)
+        except OSError as exc:
+            failed_detail = str(exc)
+            continue
+        output = (proc.stdout or proc.stderr or candidate[0]).strip().splitlines()
+        detail = output[0] if output else candidate[0]
+        if proc.returncode == 0:
+            return ToolchainCheck(language, name, True, detail, "")
+        failed_detail = detail
+    return ToolchainCheck(language, name, False, failed_detail, next_step)
+
+
+def _command_candidates(command: list[str]) -> list[list[str]]:
+    binary = command[0]
+    path = shutil.which(binary)
+    candidates = [[path, *command[1:]]] if path else []
+    if platform.system().lower() == "darwin" and binary in {"java", "javac"}:
+        for root in ("/opt/homebrew/opt/openjdk/bin", "/usr/local/opt/openjdk/bin"):
+            candidate = Path(root) / binary
+            if candidate.exists():
+                candidates.append([str(candidate), *command[1:]])
+    return candidates
 
 
 def _python_module_check(
@@ -235,13 +252,7 @@ def _packages_for_languages(languages: Sequence[str]) -> tuple[str, ...]:
 def _install_commands(packages: Sequence[str]) -> list[list[str]]:
     system = platform.system().lower()
     if system == "darwin" and shutil.which("brew"):
-        commands: list[list[str]] = []
-        formulas = _macos_packages(packages)
-        if formulas:
-            commands.append(["brew", "install", *formulas])
-        if "java" in packages:
-            commands.append(["brew", "install", "--cask", "temurin"])
-        return commands
+        return [["brew", "install", *_macos_packages(packages)]]
     if system == "windows" and shutil.which("winget"):
         commands: list[list[str]] = []
         for package in _windows_packages(packages):
@@ -270,19 +281,9 @@ def _install_commands(packages: Sequence[str]) -> list[list[str]]:
     return []
 
 
-def _macos_install_hints(packages: Sequence[str]) -> list[str]:
-    commands: list[str] = []
-    formulas = _macos_packages(packages)
-    if formulas:
-        commands.append("brew install " + " ".join(formulas))
-    if "java" in packages:
-        commands.append("brew install --cask temurin")
-    return commands
-
-
 def _macos_packages(packages: Sequence[str]) -> list[str]:
-    mapping = {"rust": "rust", "node": "node", "c++": "llvm"}
-    return [mapping.get(package, package) for package in packages if package != "java"]
+    mapping = {"rust": "rust", "node": "node", "java": "openjdk", "c++": "llvm"}
+    return [mapping.get(package, package) for package in packages]
 
 
 def _windows_packages(packages: Sequence[str]) -> list[str]:
