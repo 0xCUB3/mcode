@@ -48,6 +48,7 @@ class SolveResult:
     validation_failed_count: int | None = None
     verification_evidence: list[dict[str, object]] | None = None
     diagnostic_events: list[dict[str, object]] | None = None
+    last_model_output: dict[str, object] | None = None
 
     def as_metrics_dict(self) -> dict[str, object]:
         metrics: dict[str, object] = {
@@ -71,6 +72,8 @@ class SolveResult:
             metrics["verification_evidence"] = self.verification_evidence
         if self.diagnostic_events is not None:
             metrics["diagnostic_events"] = self.diagnostic_events
+        if self.last_model_output is not None:
+            metrics["last_model_output"] = self.last_model_output
         return metrics
 
 
@@ -200,6 +203,7 @@ class McodeSolverPowerup:
             diagnostic_events=(
                 list(collector.diagnostic_events) if collector.diagnostic_enabled else None
             ),
+            last_model_output=collector.last_model_output,
         )
 
 

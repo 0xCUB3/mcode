@@ -433,6 +433,68 @@ def test_run_react_loop_retries_missing_required_args(monkeypatch):
     )
 
 
+def test_run_react_loop_recovers_textual_tool_call(monkeypatch):
+    edit_tool = MelleaTool.from_callable(
+        lambda path, old_str, new_str: path,
+        name="edit",
+    )
+    executed: list[dict[str, object]] = []
+
+    async def fake_aact(*args, **kwargs):
+        del args, kwargs
+        return (
+            SimpleNamespace(
+                tool_calls=None,
+                value=("Thought: fix it.\nAction:\n```json\n"
+                       '{"name": "edit", "arguments": {"path": "foo.py", '
+                       r'"old_str": "^[\w.@+-]+$", "new_str": "\\A[\\w.@+-]+\\Z"}}' "\n```")
+            ),
+            ChatContext(),
+        )
+
+    async def fake_acall_tools(result, backend):
+        del backend
+        executed.append(result.tool_calls)
+        return [SimpleNamespace(name="edit", content="$ edit foo.py\nAPPLIED\nok")]
+
+    session = SimpleNamespace(ctx=ChatContext(), backend=object())
+    collector = SolveTraceCollector(diagnostic_enabled=True)
+    monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
+    monkeypatch.setattr("mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools)
+
+    submission, terminal_reason = asyncio.run(
+        run_react_loop(
+            session,
+            goal="Fix it",
+            tools=[edit_tool],
+            model_options={},
+            loop_budget=1,
+            timeout_s=5,
+            submission_format=None,
+            collector=collector,
+            turn_requirements=lambda turn, budget, state: [],
+            submission_requirements=[],
+            strategy_for_requirements=lambda requirements: None,
+            hooks_enabled=False,
+        )
+    )
+
+    assert submission is None
+    assert terminal_reason == "budget_exhausted"
+    assert len(executed) == 1
+    recovered = next(iter(executed[0].values()))
+    assert recovered.name == "edit"
+    assert recovered.args == {
+        "path": "foo.py",
+        "old_str": "^[\\w.@+-]+$",
+        "new_str": "\\A[\\w.@+-]+\\Z",
+    }
+    assert any(
+        event["event_type"] == "text_tool_call_recovery"
+        for event in collector.diagnostic_events
+    )
+
+
 def test_run_react_loop_nudges_when_budget_spent_without_edit(monkeypatch):
     seen_user_messages: list[list[str]] = []
     outputs = iter(

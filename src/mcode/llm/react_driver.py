@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import ast
 import asyncio
 import hashlib
 import inspect
 import json
 import re
+import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -34,6 +36,7 @@ class SolveTraceCollector:
     validation_passed_count: int | None = None
     validation_failed_count: int | None = None
     diagnostic_events: list[dict[str, object]] = field(default_factory=list)
+    last_model_output: dict[str, object] | None = None
 
     verification_evidence: list[dict[str, object]] = field(default_factory=list)
 
@@ -68,6 +71,7 @@ class SolveTraceCollector:
         response_model: object | None,
         latency_ms: int,
         tool_calls: object | None = None,
+        model_output: object | None = None,
     ) -> None:
         self.prompt_snapshot = _serialize_prompt(prompt)
         totals = _normalize_usage(usage)
@@ -82,6 +86,10 @@ class SolveTraceCollector:
         if normalized_model is not None:
             self.response_model = normalized_model
         self.generation_latency_ms += latency_ms
+        if model_output is not None:
+            model_text = _model_output_text(model_output)
+            if model_text:
+                self.last_model_output = _text_digest(model_text, max_preview=2000)
         payload: dict[str, object] = {
             "provider": normalized_provider,
             "response_model": normalized_model,
@@ -196,6 +204,7 @@ class SolveTracePlugin(Plugin, name="mcode-solve-trace", priority=20):
             response_model=response_model,
             latency_ms=int(getattr(payload, "latency_ms", 0) or 0),
             tool_calls=getattr(model_output, "tool_calls", None),
+            model_output=model_output,
         )
 
     @hook("tool_post_invoke", mode=PluginMode.SEQUENTIAL)
@@ -327,14 +336,24 @@ async def run_react_loop(
                     response_model=getattr(result, "model", None),
                     latency_ms=0,
                     tool_calls=getattr(result, "tool_calls", None),
+                    model_output=result,
                 )
+            if not result.tool_calls:
+                recovered_calls = _recover_text_tool_calls(
+                    result,
+                    tools=tools,
+                    collector=collector,
+                )
+                if recovered_calls:
+                    result.tool_calls = recovered_calls
 
             if not result.tool_calls:
+                tool_names = _tool_names_for_feedback(tools)
                 collector.note_event(
                     "no_tool_call",
-                    {"available_tools": _tool_names_for_feedback(tools)},
+                    {"available_tools": tool_names},
                 )
-                if tools:
+                if tool_names:
                     context = context.add(
                         Message(
                             role="user",
@@ -342,7 +361,7 @@ async def run_react_loop(
                                 "Your last response did not call a tool, so no repository "
                                 "action happened. On the next turn, respond with exactly one "
                                 "tool call from: "
-                                f"{', '.join(_tool_names_for_feedback(tools))}. "
+                                f"{', '.join(tool_names)}. "
                                 "If you know the fix, call edit now. Do not explain in prose."
                             ),
                         )
@@ -495,6 +514,7 @@ async def run_react_loop(
                             response_model=getattr(submission, "model", None),
                             latency_ms=0,
                             tool_calls=getattr(submission, "tool_calls", None),
+                            model_output=submission,
                         )
                 collector.note_event("final_answer", {"action": "accepted"})
                 session.ctx = context
@@ -514,6 +534,150 @@ async def run_react_loop(
 def _tool_names_for_feedback(tools: list) -> list[str]:
     names = [str(getattr(tool, "name", "")).strip() for tool in tools]
     return [name for name in names if name]
+
+
+def _recover_text_tool_calls(
+    result: object,
+    *,
+    tools: list,
+    collector: SolveTraceCollector,
+) -> dict[str, object]:
+    text = _model_output_text(result)
+    if not text:
+        return {}
+    tool_by_name = {str(getattr(tool, "name", "")): tool for tool in tools}
+    recovered: dict[str, object] = {}
+    for index, payload in enumerate(_iter_json_objects(text)):
+        if not isinstance(payload, dict):
+            continue
+        raw_name = str(
+            payload.get("name") or payload.get("tool") or payload.get("action") or ""
+        ).strip()
+        name = _normalize_text_tool_name(raw_name)
+        tool = tool_by_name.get(name)
+        if tool is None:
+            continue
+        args = payload.get(
+            "arguments",
+            payload.get("args", payload.get("action_input", {})),
+        )
+        if not isinstance(args, dict):
+            args = {}
+        from mellea.core.base import ModelToolCall
+
+        recovered[f"text_tool_{index}_{name}"] = ModelToolCall(
+            name=name,
+            func=tool,
+            args=args,
+        )
+    if recovered:
+        collector.note_event(
+            "text_tool_call_recovery",
+            {"tool_names": [getattr(call, "name", "") for call in recovered.values()]},
+        )
+    return recovered
+
+
+def _model_output_text(result: object) -> str:
+    for attr in ("value", "_underlying_value", "parsed_repr", "content", "text"):
+        value = getattr(result, attr, None)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
+
+def _iter_json_objects(text: str):
+    decoder = json.JSONDecoder()
+    candidates = [
+        match.group(1)
+        for match in re.finditer(
+            r"```(?:json)?\s*(\{.*?\})\s*```",
+            text,
+            re.DOTALL,
+        )
+    ]
+    candidates.append(text)
+    seen: set[str] = set()
+    for candidate in candidates:
+        yield from _decode_json_objects(candidate, decoder=decoder, seen=seen)
+    yield from _iter_react_action_payloads(text, decoder=decoder, seen=seen)
+
+
+def _decode_json_objects(text: str, *, decoder: json.JSONDecoder, seen: set[str]):
+    for match in re.finditer(r"\{", text):
+        snippet = text[match.start() :]
+        if snippet in seen:
+            continue
+        seen.add(snippet)
+        try:
+            payload, _end = decoder.raw_decode(snippet)
+        except json.JSONDecodeError:
+            payload = _literal_eval_object(snippet)
+            if payload is None:
+                continue
+        yield payload
+
+
+def _iter_react_action_payloads(text: str, *, decoder: json.JSONDecoder, seen: set[str]):
+    action_re = re.compile(r"\bAction\s*:\s*[`'\"]?([A-Za-z_][\w.-]*)", re.IGNORECASE)
+    for match in action_re.finditer(text):
+        name = match.group(1)
+        tail = text[match.end() :]
+        next_action = action_re.search(tail)
+        if next_action is not None:
+            tail = tail[: next_action.start()]
+        for args in _decode_json_objects(tail, decoder=decoder, seen=seen):
+            if isinstance(args, dict):
+                yield {"name": name, "arguments": args}
+                break
+
+
+def _literal_eval_object(text: str) -> object | None:
+    prefix = _balanced_brace_prefix(text)
+    if prefix is None:
+        return None
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            return ast.literal_eval(prefix)
+    except (SyntaxError, ValueError):
+        return None
+
+
+def _balanced_brace_prefix(text: str) -> str | None:
+    depth = 0
+    in_string: str | None = None
+    escaped = False
+    for index, char in enumerate(text):
+        if in_string is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == in_string:
+                in_string = None
+            continue
+        if char in {"'", '"'}:
+            in_string = char
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[: index + 1]
+    return None
+
+
+def _normalize_text_tool_name(name: str) -> str:
+    aliases = {
+        "edit_file": "edit",
+        "replace": "edit",
+        "read": "read_file",
+        "search": "search_code",
+        "test": "run_tests",
+    }
+    return aliases.get(name, name)
 
 
 

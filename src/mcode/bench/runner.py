@@ -401,6 +401,7 @@ class BenchmarkRunner:
                 "turns_to_first_verification": normalized_metrics.get(
                     "turns_to_first_verification"
                 ),
+                "last_model_output": normalized_metrics.get("last_model_output"),
             },
         )
         manifest = TaskArtifactManifest(
