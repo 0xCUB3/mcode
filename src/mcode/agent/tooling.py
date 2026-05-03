@@ -343,6 +343,16 @@ def _fuzzy_find(content: str, old_str: str) -> str | None:
     return None
 
 
+def _allow_small_multi_replace(old_str: str, new_str: str, count: int) -> bool:
+    return (
+        1 < count <= 5
+        and "\n" not in old_str
+        and "\n" not in new_str
+        and 0 < len(old_str) <= 120
+        and len(new_str) <= 160
+    )
+
+
 def _format_edit_result(status: str, path: str, detail: str) -> str:
     return format_tool_result(f"edit {path}", status, detail)
 
@@ -360,6 +370,7 @@ def str_replace_edit(path: str, old_str: str, new_str: str, *, repo_root: str) -
     except OSError as e:
         return _format_edit_result("REJECTED", path, f"Error reading file: {e}")
 
+    replace_count = 1
     count = content.count(old_str)
     if count == 0 and os.environ.get("MCODE_FUZZY_EDIT", "1") == "1":
         match = _fuzzy_find(content, old_str)
@@ -374,13 +385,19 @@ def str_replace_edit(path: str, old_str: str, new_str: str, *, repo_root: str) -
             f"Error: old_str not found. First 30 lines:\n{preview}",
         )
     if count > 1:
-        return _format_edit_result(
-            "REJECTED",
-            path,
-            f"Error: old_str appears {count} times. Provide more context to make the match unique.",
-        )
+        if _allow_small_multi_replace(old_str, new_str, count):
+            replace_count = count
+        else:
+            return _format_edit_result(
+                "REJECTED",
+                path,
+                (
+                    f"Error: old_str appears {count} times. "
+                    "Provide more context to make the match unique."
+                ),
+            )
 
-    new_content = content.replace(old_str, new_str, 1)
+    new_content = content.replace(old_str, new_str, replace_count)
     if not _should_skip_syntax_guard(path):
         pre_syntax = _syntax_details(str(full_path), content)
         post_syntax = _syntax_details(str(full_path), new_content)
@@ -401,10 +418,11 @@ def str_replace_edit(path: str, old_str: str, new_str: str, *, repo_root: str) -
 
     old_lines = old_str.count("\n") + 1
     new_lines = new_str.count("\n") + 1
+    occurrence_text = f" across {replace_count} occurrences" if replace_count > 1 else ""
     return _format_edit_result(
         "APPLIED",
         path,
-        f"Successfully replaced {old_lines} lines with {new_lines} lines.",
+        f"Successfully replaced {old_lines} lines with {new_lines} lines{occurrence_text}.",
     )
 
 

@@ -73,3 +73,22 @@ def test_format_tool_result_keeps_status_visible_for_multiline_commands():
     assert len(lines[0]) <= 302
     assert lines[1] == "FAILED"
     assert lines[2] == "actual failure"
+
+
+
+def test_str_replace_edit_allows_small_multi_replace(tmp_path):
+    from mcode.agent.tooling import str_replace_edit
+
+    path = tmp_path / "sample.py"
+    path.write_text('a = "old"\nb = "old"\n')
+
+    result = str_replace_edit(
+        "sample.py",
+        "old",
+        "new",
+        repo_root=str(tmp_path),
+    )
+
+    assert "APPLIED" in result
+    assert "across 2 occurrences" in result
+    assert path.read_text() == 'a = "new"\nb = "new"\n'
