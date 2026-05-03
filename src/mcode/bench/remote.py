@@ -30,6 +30,14 @@ _FORWARDED_ENV_VARS = (
 )
 
 
+def _emit_remote_event(json_mode: bool, kind: str, message: str, **data: object) -> None:
+    if not json_mode:
+        print(message)
+        return
+    payload = {"kind": kind, "data": {"message": message, **data}}
+    print(json.dumps(payload, sort_keys=True), flush=True)
+
+
 def _remote_run_key(
     *,
     model: str,
@@ -533,18 +541,38 @@ exit $rc
             },
             log_paths=[remote_log],
         )
-        print(f"▶ remote bench submitted: job={job_id} queue={queue} log={remote_log}")
+        json_mode = "--json" in argv
+        _emit_remote_event(
+            json_mode,
+            "remote_submit",
+            f"remote bench submitted: job={job_id} queue={queue} log={remote_log}",
+            job_id=job_id,
+            queue=queue,
+            log=remote_log,
+        )
 
         try:
-            _stream_remote_log(ssh, remote_log, exit_sentinel=exit_sentinel, job_id=job_id)
+            _stream_remote_log(
+                ssh, remote_log, exit_sentinel=exit_sentinel, job_id=job_id, json_mode=json_mode
+            )
         except KeyboardInterrupt:
             final_status = launch_state.RunStatus.STOPPED
             cancel_reason = "interrupt"
-            print("\n⚠ interrupted; remote LSF job is still running. Check with:")
-            print(f"  ssh {bv.login} 'bjobs {job_id}; tail -f {remote_log}'")
+            _emit_remote_event(
+                json_mode,
+                "remote_interrupt",
+                "interrupted; remote LSF job is still running",
+                job_id=job_id,
+                log=remote_log,
+                login=bv.login,
+            )
             return 130
         except Exception as exc:
-            print(f"⚠ log streaming failed: {exc}; checking remote sentinel and DB")
+            _emit_remote_event(
+                json_mode,
+                "remote_warning",
+                f"log streaming failed: {exc}; checking remote sentinel and DB",
+            )
 
         sentinel_r = ssh.run(
             f"cat {shlex.quote(exit_sentinel)} 2>/dev/null",
@@ -558,7 +586,11 @@ exit $rc
                 exit_code = 99
         else:
             exit_code = 99
-            print("⚠ remote bench did not write a readable exit sentinel")
+            _emit_remote_event(
+                json_mode,
+                "remote_warning",
+                "remote bench did not write a readable exit sentinel",
+            )
 
         qdb = shlex.quote(remote_db)
         size_r = ssh.run(
@@ -575,12 +607,26 @@ exit $rc
                 local_db.parent.mkdir(parents=True, exist_ok=True)
                 try:
                     ssh.download(remote_db, local_db, timeout=120)
-                    print(f"✓ fetched DB: {local_db} ({size} bytes)")
+                    _emit_remote_event(
+                        json_mode,
+                        "remote_fetch_db",
+                        f"fetched DB: {local_db} ({size} bytes)",
+                        path=str(local_db),
+                        bytes=size,
+                    )
                 except Exception as exc:
-                    print(f"⚠ remote DB exists but download failed: {exc}; remote_db={remote_db}")
+                    _emit_remote_event(
+                        json_mode,
+                        "remote_warning",
+                        f"remote DB exists but download failed: {exc}; remote_db={remote_db}",
+                    )
                     exit_code = exit_code or 99
             else:
-                print("⚠ remote DB is empty; nothing to fetch")
+                _emit_remote_event(
+                    json_mode,
+                    "remote_warning",
+                    "remote DB is empty; nothing to fetch",
+                )
 
         if fetch_artifacts and local_artifact_fetch is not None:
             remote_artifact_dir, local_artifact_dir = local_artifact_fetch
@@ -595,40 +641,74 @@ exit $rc
                         local_artifact_dir,
                         timeout=300,
                     )
-                    print(f"✓ fetched artifacts: {local_artifact_dir}")
+                    _emit_remote_event(
+                        json_mode,
+                        "remote_fetch_artifacts",
+                        f"fetched artifacts: {local_artifact_dir}",
+                        path=str(local_artifact_dir),
+                    )
                 except Exception as exc:
-                    print(
-                        "⚠ remote artifacts exist but download failed: "
-                        f"{exc}; remote_artifact_dir={remote_artifact_dir}"
+                    _emit_remote_event(
+                        json_mode,
+                        "remote_warning",
+                        "remote artifacts exist but download failed: "
+                        f"{exc}; remote_artifact_dir={remote_artifact_dir}",
                     )
                     exit_code = exit_code or 99
             else:
-                print("⚠ remote artifact directory is missing; nothing to fetch")
+                _emit_remote_event(
+                    json_mode,
+                    "remote_warning",
+                    "remote artifact directory is missing; nothing to fetch",
+                )
 
         if sentinel_ok:
             try:
                 if _wait_for_lsf_job_inactive(ssh, job_id, timeout_s=15):
                     pass
                 elif _lsf_job_is_active(ssh, job_id):
-                    print(
-                        f"⚠ benchmark finished but LSF job {job_id} is still active; "
-                        "sending bkill"
+                    _emit_remote_event(
+                        json_mode,
+                        "remote_cleanup",
+                        f"benchmark finished but LSF job {job_id} is still active; sending bkill",
+                        job_id=job_id,
                     )
                     kill_r = ssh.run(f"bkill {shlex.quote(job_id)}", timeout=10)
                     if not kill_r.ok:
                         detail = (kill_r.stderr or kill_r.stdout or "bkill failed").strip()
-                        print(f"⚠ failed to clean up lingering LSF job {job_id}: {detail}")
+                        _emit_remote_event(
+                            json_mode,
+                            "remote_warning",
+                            f"failed to clean up lingering LSF job {job_id}: {detail}",
+                            job_id=job_id,
+                        )
                     else:
                         time.sleep(10)
                         if _lsf_job_is_active(ssh, job_id):
-                            print(
-                                f"⚠ lingering LSF job {job_id} is still active after bkill; "
-                                f"inspect {remote_log}"
+                            _emit_remote_event(
+                                json_mode,
+                                "remote_warning",
+                                (
+                                    f"lingering LSF job {job_id} is still active after bkill; "
+                                    f"inspect {remote_log}"
+                                ),
+                                job_id=job_id,
+                                log=remote_log,
                             )
                         else:
-                            print(f"✓ cleaned up lingering LSF job {job_id}")
+                            _emit_remote_event(
+                                json_mode,
+                                "remote_cleanup",
+                                f"cleaned up lingering LSF job {job_id}",
+                                job_id=job_id,
+                            )
             except Exception as exc:
-                print(f"⚠ failed to clean up lingering LSF job {job_id}: {exc}")
+                _emit_remote_event(
+                    json_mode,
+                    "remote_warning",
+                    f"failed to clean up lingering LSF job {job_id}: {exc}",
+                    job_id=job_id,
+                )
 
         final_status = (
             launch_state.RunStatus.DONE if exit_code == 0 else launch_state.RunStatus.FAILED
@@ -717,7 +797,12 @@ def _lsf_job_is_active(ssh: SshClient, job_id: str) -> bool:
 
 
 def _stream_remote_log(
-    ssh: SshClient, remote_log: str, *, exit_sentinel: str, job_id: str
+    ssh: SshClient,
+    remote_log: str,
+    *,
+    exit_sentinel: str,
+    job_id: str,
+    json_mode: bool = False,
 ) -> None:
     """Tail one attempt log until the bench finishes or the LSF job exits."""
     from mcode.launch.ssh import DEFAULT_SSH_OPTIONS
@@ -764,10 +849,37 @@ def _stream_remote_log(
             f"{sentinel_warning}"
         ),
     ]
-    proc = subprocess.Popen(argv, stdout=sys.stdout, stderr=sys.stderr)
+    if not json_mode:
+        proc = subprocess.Popen(argv, stdout=sys.stdout, stderr=sys.stderr)
+        rc = proc.wait()
+        if rc != 0:
+            print(f"⚠ log-stream ssh exited {rc}; remote job may still be running")
+        return
+
+    proc = subprocess.Popen(
+        argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+    )
+    assert proc.stdout is not None
+    for raw_line in proc.stdout:
+        line = raw_line.rstrip("\n")
+        stripped = line.strip()
+        if stripped.startswith("{"):
+            try:
+                json.loads(stripped)
+            except json.JSONDecodeError:
+                pass
+            else:
+                print(stripped, flush=True)
+                continue
+        _emit_remote_event(json_mode, "remote_stdout", line, line=line)
     rc = proc.wait()
     if rc != 0:
-        print(f"⚠ log-stream ssh exited {rc}; remote job may still be running")
+        _emit_remote_event(
+            json_mode,
+            "remote_warning",
+            f"log-stream ssh exited {rc}; remote job may still be running",
+            returncode=rc,
+        )
 
 
 __all__ = ["RemoteBenchError", "run_bench_on_bluevela"]

@@ -83,8 +83,8 @@ def _set_attempt_context(monkeypatch, *, timestamp: float, pid: int = 4242) -> s
     monkeypatch.setattr(remote.os, "getpid", lambda: pid)
     return f"{int(timestamp * 1000)}-{pid}"
 
-def _ignore_stream(ssh, remote_log, *, exit_sentinel, job_id) -> None:
-    del ssh, remote_log, exit_sentinel, job_id
+def _ignore_stream(ssh, remote_log, *, exit_sentinel, job_id, json_mode=False) -> None:
+    del ssh, remote_log, exit_sentinel, job_id, json_mode
 
 
 def test_bluevela_bench_submits_lsf_job_with_podman_on_compute(tmp_path, monkeypatch) -> None:
@@ -95,8 +95,8 @@ def test_bluevela_bench_submits_lsf_job_with_podman_on_compute(tmp_path, monkeyp
     monkeypatch.setattr(remote, "SshClient", _FakeSshClient)
     attempt_token = _set_attempt_context(monkeypatch, timestamp=1777000000.0)
 
-    def fake_stream(ssh, remote_log, *, exit_sentinel, job_id) -> None:
-        del ssh
+    def fake_stream(ssh, remote_log, *, exit_sentinel, job_id, json_mode=False) -> None:
+        del ssh, json_mode
         streamed.update(
             remote_log=remote_log,
             exit_sentinel=exit_sentinel,
@@ -378,7 +378,7 @@ def test_run_bench_on_bluevela_keeps_recoverable_metadata_on_fetch_failure(
     monkeypatch.setattr(
         remote,
         "_stream_remote_log",
-        lambda ssh, remote_log, *, exit_sentinel, job_id: (_ for _ in ()).throw(
+        lambda ssh, remote_log, *, exit_sentinel, job_id, json_mode=False: (_ for _ in ()).throw(
             RuntimeError("ssh dropped")
         ),
     )
