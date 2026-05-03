@@ -550,6 +550,76 @@ def test_run_react_loop_nudges_when_budget_spent_without_edit(monkeypatch):
     )
 
 
+def test_run_react_loop_blocks_late_browsing_before_first_edit(monkeypatch):
+    read_tool = MelleaTool.from_callable(lambda path: path, name="read_file")
+    seen_user_messages: list[list[str]] = []
+    outputs = iter(
+        [
+            (SimpleNamespace(tool_calls=None), ChatContext()),
+            (
+                SimpleNamespace(
+                    tool_calls={
+                        "read_file": ModelToolCall(
+                            name="read_file",
+                            func=read_tool,
+                            args={"path": "foo.py"},
+                        )
+                    }
+                ),
+                ChatContext(),
+            ),
+            (SimpleNamespace(tool_calls=None), ChatContext()),
+        ]
+    )
+    acall_invoked = {"value": False}
+
+    async def fake_aact(*args, **kwargs):
+        del args
+        context = kwargs["context"]
+        seen_user_messages.append(
+            [
+                str(message.content)
+                for message in context.as_list()
+                if getattr(message, "role", None) == "user"
+            ]
+        )
+        return next(outputs)
+
+    async def fake_acall_tools(result, backend):
+        del result, backend
+        acall_invoked["value"] = True
+        return []
+
+    session = SimpleNamespace(ctx=ChatContext(), backend=object())
+    monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
+    monkeypatch.setattr("mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools)
+
+    submission, terminal_reason = asyncio.run(
+        run_react_loop(
+            session,
+            goal="Fix it",
+            tools=[read_tool, SimpleNamespace(name="run_tests")],
+            model_options={},
+            loop_budget=3,
+            timeout_s=5,
+            submission_format=None,
+            collector=SolveTraceCollector(),
+            turn_requirements=lambda turn, budget, state: [],
+            submission_requirements=[],
+            strategy_for_requirements=lambda requirements: None,
+            hooks_enabled=False,
+        )
+    )
+
+    assert submission is None
+    assert terminal_reason == "budget_exhausted"
+    assert acall_invoked["value"] is False
+    assert any(
+        "read_file is blocked now because an edit is required" in message
+        for message in seen_user_messages[-1]
+    )
+
+
 def test_run_react_loop_executes_valid_calls_when_batch_has_malformed_finalizer(monkeypatch):
     edit_tool = MelleaTool.from_callable(
         lambda path, old_str, new_str: path,

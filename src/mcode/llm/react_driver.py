@@ -18,6 +18,8 @@ from mellea.plugins.types import PluginMode
 
 from mcode.mellea_compat import acall_tools_with_arg_compat, inspect_tool_call_arg_compat
 
+_EXPLORATION_TOOL_NAMES = {"find_file", "list_dir", "read_file", "search_code"}
+
 
 @dataclass
 class SolveTraceCollector:
@@ -384,6 +386,16 @@ async def run_react_loop(
                     ):
                         blocked_finalizers.append(
                             "final_answer requires successful verification first"
+                        )
+                        continue
+                    if (
+                        tool_name in _EXPLORATION_TOOL_NAMES
+                        and reminded_without_edit
+                        and collector.turns_to_first_edit is None
+                    ):
+                        invalid_calls.append(
+                            f"{tool_name} is blocked now because an edit is required. "
+                            "Call edit on the best candidate source file instead."
                         )
                         continue
                     missing_args = _missing_required_args(tool_call)
