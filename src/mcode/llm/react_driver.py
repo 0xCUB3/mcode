@@ -329,6 +329,26 @@ async def run_react_loop(
                     tool_calls=getattr(result, "tool_calls", None),
                 )
 
+            if not result.tool_calls:
+                collector.note_event(
+                    "no_tool_call",
+                    {"available_tools": _tool_names_for_feedback(tools)},
+                )
+                if tools:
+                    context = context.add(
+                        Message(
+                            role="user",
+                            content=(
+                                "Your last response did not call a tool, so no repository "
+                                "action happened. On the next turn, respond with exactly one "
+                                "tool call from: "
+                                f"{', '.join(_tool_names_for_feedback(tools))}. "
+                                "If you know the fix, call edit now. Do not explain in prose."
+                            ),
+                        )
+                    )
+
+
             tool_responses = []
             if result.tool_calls:
                 invalid_calls = []
@@ -489,6 +509,11 @@ async def run_react_loop(
         return await asyncio.wait_for(_run(), timeout=timeout_s)
     except TimeoutError:
         return None, "budget_exhausted"
+
+
+def _tool_names_for_feedback(tools: list) -> list[str]:
+    names = [str(getattr(tool, "name", "")).strip() for tool in tools]
+    return [name for name in names if name]
 
 
 

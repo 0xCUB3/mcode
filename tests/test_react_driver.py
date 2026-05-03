@@ -481,6 +481,11 @@ def test_run_react_loop_nudges_when_budget_spent_without_edit(monkeypatch):
     assert any(
         "Stop browsing and call edit" in message for message in seen_user_messages[1]
     )
+    assert any(
+        "did not call a tool" in message and "respond with exactly one tool call" in message
+        for messages in seen_user_messages
+        for message in messages
+    )
 
 
 def test_run_react_loop_executes_valid_calls_when_batch_has_malformed_finalizer(monkeypatch):
