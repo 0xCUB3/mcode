@@ -265,7 +265,9 @@ mcode export-csv -i DIR --out-dir DIR --prefix mcode [--include-logs]
 - `--compare-configs` — group results by `(backend_name, timeout_s, loop_budget)`
 - `--time` — include `sec/solve`, `solves/hour`, p95 metrics
 
-`export-csv --include-logs` adds prompt snapshots, stdout, stderr, and error fields.
+`export-csv` always writes runs, task_results, and artifact CSVs. The run and task result exports now include `suite_name` and `suite_entry_name`, and the artifact exports include those suite columns too so mixed-suite analysis stays join-free.
+
+
 
 `report` produces a Plotly HTML report comparing pass rate vs time-to-solve across the matched runs.
 

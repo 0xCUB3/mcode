@@ -19,6 +19,9 @@ def test_command_docs_cover_sampling_and_compare() -> None:
     assert "uv run mcode compare --baseline-dir A --candidate-dir B [--benchmark X]" in command_docs
     assert "DB files or directories" in command_docs
     assert "selected verified candidate count" in command_docs
+    assert "suite_name" in command_docs
+    assert "suite_entry_name" in command_docs
+    assert "artifact CSVs" in command_docs
     assert "--shards" in command_docs
     assert "--sampling {none,multiturn}" in command_docs
     assert "--phase {run,generate,evaluate}" in command_docs

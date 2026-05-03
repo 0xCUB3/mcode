@@ -1735,9 +1735,16 @@ def export_csv(
     message = (
         f"exported dbs={report['dbs']} runs={report['runs']} "
         f"task_results={report['task_results']} "
-        f"diagnostic_events={report.get('diagnostic_events', 0)}\n"
+        f"diagnostic_events={report.get('diagnostic_events', 0)} "
+        f"artifact_tasks={report.get('artifact_tasks', 0)} "
+        f"artifact_candidates={report.get('artifact_candidates', 0)} "
+        f"artifact_evaluations={report.get('artifact_evaluations', 0)}\n"
         f"runs_csv={report['runs_csv']}\n"
-        f"task_results_csv={report['task_results_csv']}"
+        f"task_results_csv={report['task_results_csv']}\n"
+        f"artifact_tasks_csv={report['artifact_tasks_csv']}\n"
+        f"artifact_candidates_csv={report['artifact_candidates_csv']}\n"
+        f"artifact_evaluations_csv={report['artifact_evaluations_csv']}\n"
+        f"artifact_verification_evidence_csv={report['artifact_verification_evidence_csv']}"
     )
     if report.get("diagnostic_events_csv"):
         message += f"\ndiagnostic_events_csv={report['diagnostic_events_csv']}"

@@ -118,3 +118,58 @@ def test_report_command_includes_suite_filters_in_title(tmp_path: Path) -> None:
     html = out.read_text()
     assert "suite=tiny-polyglot-suite" in html
     assert "suite_entry=polyglot-python" in html
+
+
+def test_export_csv_command_prints_artifact_paths(tmp_path: Path) -> None:
+    db_path = tmp_path / "results.db"
+    with ResultsDB(db_path) as rdb:
+        run_id = rdb.start_run(
+            "aider-polyglot",
+            {
+                "backend_name": "openai",
+                "model_id": "test-model",
+                "loop_budget": 23,
+                "timeout_s": 300,
+            },
+        )
+        rdb.conn.execute(
+            """
+            INSERT INTO artifact_tasks
+            (run_id, task_id, benchmark, phase, artifact_root, manifest_path, schema_version,
+             repo_id, task_digest, candidate_count, evaluation_count, metadata_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                "python/affine-cipher",
+                "aider-polyglot",
+                "generate",
+                "aider-polyglot/python/affine-cipher",
+                str(tmp_path / "manifest.json"),
+                1,
+                "repo",
+                "digest",
+                1,
+                0,
+                "{}",
+            ),
+        )
+        rdb.conn.commit()
+
+    out_dir = tmp_path / "csv"
+    runner = CliRunner()
+    res = runner.invoke(
+        app,
+        [
+            "export-csv",
+            "--input",
+            str(db_path),
+            "--out-dir",
+            str(out_dir),
+        ],
+        color=False,
+    )
+
+    assert res.exit_code == 0
+    assert "artifact_tasks_csv=" in res.stdout
+    assert "artifact_candidates_csv=" in res.stdout
