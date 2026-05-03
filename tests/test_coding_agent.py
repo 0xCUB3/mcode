@@ -126,6 +126,27 @@ def test_run_tests_tool_blocks_evasive_pytest_selection(tmp_path):
     assert "masking their exit status" in result
 
 
+def test_run_tests_tool_blocks_custom_commands_when_defaults_exist(tmp_path):
+    seen: list[str] = []
+
+    def command_fn(command: str) -> str:
+        seen.append(command)
+        return format_tool_result(command, "PASSED", "ok")
+
+    policy = build_verification_policy(
+        test_cmds=["./tests/runtests.py auth_tests.test_validators"],
+        command_fn=command_fn,
+    )
+    tool = build_run_tests_tool(repo_root=str(tmp_path), verification_policy=policy)
+
+    assert tool is not None
+    result = tool.run("pytest tests/auth_tests/test_validators.py -v")
+
+    assert seen == []
+    assert "BLOCKED" in result
+    assert 'test_cmd="default"' in result
+
+
 def test_run_tests_tool_appends_failure_report_snippets(tmp_path):
     report_dir = tmp_path / "build" / "test-results" / "test"
     report_dir.mkdir(parents=True)

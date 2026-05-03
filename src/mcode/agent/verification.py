@@ -230,6 +230,15 @@ def build_run_tests_tool(
                     "No default test command is declared. Pass a concrete test command instead.",
                 )
             )
+        if command_fn is not None and test_cmds and test_cmd.strip().lower() != "default":
+            return _record(
+                format_tool_result(
+                    test_cmd,
+                    "BLOCKED",
+                    "Declared task checks exist for this task. Call run_tests with "
+                    '`test_cmd="default"` instead of inventing alternate verification commands.',
+                )
+            )
         commands = test_cmds if test_cmd.strip().lower() == "default" else [test_cmd]
         outputs: list[str] = []
         for command in commands:
