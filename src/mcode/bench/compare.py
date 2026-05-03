@@ -124,6 +124,11 @@ def format_comparison(report: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
+def _iter_db_paths(dir_path: str) -> list[Path]:
+    root = Path(dir_path)
+    return [root] if root.is_file() else sorted(root.glob("*.db"))
+
+
 def _load_results_from_dir(
     dir_path: str,
     task_ids: list[str] | None,
@@ -133,9 +138,7 @@ def _load_results_from_dir(
     suite_entry_name: str | None = None,
 ) -> dict[str, bool]:
     results: dict[str, bool] = {}
-    root = Path(dir_path)
-    db_paths = [root] if root.is_file() else sorted(root.glob("*.db"))
-    for db_file in db_paths:
+    for db_file in _iter_db_paths(dir_path):
         results.update(
             _load_results(
                 str(db_file),
@@ -168,9 +171,7 @@ def _load_artifact_summary_from_dir(
     suite_entry_name: str | None = None,
 ) -> dict[str, int]:
     summary = _empty_artifact_summary()
-    root = Path(dir_path)
-    db_paths = [root] if root.is_file() else sorted(root.glob("*.db"))
-    for db_file in db_paths:
+    for db_file in _iter_db_paths(dir_path):
         partial = _load_artifact_summary(
             str(db_file),
             task_ids=task_ids,

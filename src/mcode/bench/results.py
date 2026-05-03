@@ -52,6 +52,35 @@ class ResultsDB:
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
 
+    def _run_filter_sql(
+        self,
+        *,
+        benchmark: str | None,
+        model_id: str | None,
+        backend_name: str | None = None,
+        timeout_s: int | None = None,
+        suite_name: str | None = None,
+        suite_entry_name: str | None = None,
+        loop_budget: int | None = None,
+    ) -> tuple[str, list[object]]:
+        where = ["1=1"]
+        params: list[object] = []
+        filters = (
+            ("r.benchmark = ?", benchmark),
+            ("r.model_id = ?", model_id),
+            ("r.backend_name = ?", backend_name),
+            ("r.timeout_s = ?", int(timeout_s) if timeout_s is not None else None),
+            ("r.suite_name = ?", suite_name),
+            ("r.suite_entry_name = ?", suite_entry_name),
+            ("r.loop_budget = ?", int(loop_budget) if loop_budget is not None else None),
+        )
+        for clause, value in filters:
+            if value is None:
+                continue
+            where.append(clause)
+            params.append(value)
+        return " AND ".join(where), params
+
     def _init_schema(self) -> None:
         self.conn.execute(
             """
@@ -767,29 +796,15 @@ class ResultsDB:
         if any(g not in group_map for g in group_by):
             raise ValueError(f"Unsupported group_by: {group_by}")
 
-        where = ["1=1"]
-        params: list[object] = []
-        if benchmark:
-            where.append("r.benchmark = ?")
-            params.append(benchmark)
-        if model_id:
-            where.append("r.model_id = ?")
-            params.append(model_id)
-        if backend_name:
-            where.append("r.backend_name = ?")
-            params.append(backend_name)
-        if timeout_s is not None:
-            where.append("r.timeout_s = ?")
-            params.append(int(timeout_s))
-        if suite_name:
-            where.append("r.suite_name = ?")
-            params.append(suite_name)
-        if suite_entry_name:
-            where.append("r.suite_entry_name = ?")
-            params.append(suite_entry_name)
-        if loop_budget is not None:
-            where.append("r.loop_budget = ?")
-            params.append(int(loop_budget))
+        where_sql, params = self._run_filter_sql(
+            benchmark=benchmark,
+            model_id=model_id,
+            backend_name=backend_name,
+            timeout_s=timeout_s,
+            suite_name=suite_name,
+            suite_entry_name=suite_entry_name,
+            loop_budget=loop_budget,
+        )
 
         if not group_by:
             sql = f"""
@@ -819,7 +834,7 @@ class ResultsDB:
                 FROM artifact_tasks at
                 GROUP BY at.run_id
               ) a ON a.run_id = r.id
-              WHERE {" AND ".join(where)}
+              WHERE {where_sql}
                 AND (tr.id IS NOT NULL OR a.generated_tasks IS NOT NULL)
               GROUP BY r.id
               ORDER BY r.timestamp DESC
@@ -889,7 +904,7 @@ class ResultsDB:
             FROM artifact_tasks at
             GROUP BY at.run_id
           ) a ON a.run_id = r.id
-          WHERE {" AND ".join(where)}
+          WHERE {where_sql}
             AND (tr.id IS NOT NULL OR a.generated_tasks IS NOT NULL)
           GROUP BY {", ".join(group_cols)}
           ORDER BY
@@ -951,29 +966,15 @@ class ResultsDB:
         if any(g not in group_map for g in group_by):
             raise ValueError(f"Unsupported group_by: {group_by}")
 
-        where = ["1=1"]
-        params: list[object] = []
-        if benchmark:
-            where.append("r.benchmark = ?")
-            params.append(benchmark)
-        if model_id:
-            where.append("r.model_id = ?")
-            params.append(model_id)
-        if backend_name:
-            where.append("r.backend_name = ?")
-            params.append(backend_name)
-        if timeout_s is not None:
-            where.append("r.timeout_s = ?")
-            params.append(int(timeout_s))
-        if suite_name:
-            where.append("r.suite_name = ?")
-            params.append(suite_name)
-        if suite_entry_name:
-            where.append("r.suite_entry_name = ?")
-            params.append(suite_entry_name)
-        if loop_budget is not None:
-            where.append("r.loop_budget = ?")
-            params.append(int(loop_budget))
+        where_sql, params = self._run_filter_sql(
+            benchmark=benchmark,
+            model_id=model_id,
+            backend_name=backend_name,
+            timeout_s=timeout_s,
+            suite_name=suite_name,
+            suite_entry_name=suite_entry_name,
+            loop_budget=loop_budget,
+        )
 
         reason_selects = ",\n".join(
             (
@@ -1124,7 +1125,7 @@ class ResultsDB:
                   ON ac.run_id = at.run_id AND ac.task_id = at.task_id AND ac.selected = 1
                 GROUP BY at.run_id
               ) a ON a.run_id = r.id
-              WHERE {" AND ".join(where)}
+              WHERE {where_sql}
                 AND (tr.id IS NOT NULL OR a.generated_tasks IS NOT NULL)
               GROUP BY r.id
               ORDER BY r.timestamp DESC
@@ -1279,7 +1280,7 @@ class ResultsDB:
                 ON ac.run_id = at.run_id AND ac.task_id = at.task_id AND ac.selected = 1
               GROUP BY at.run_id
             ) a ON a.run_id = r.id
-            WHERE {" AND ".join(where)}
+            WHERE {where_sql}
               AND (tr.id IS NOT NULL OR a.generated_tasks IS NOT NULL)
             GROUP BY r.id
           )
@@ -1370,7 +1371,7 @@ class ResultsDB:
                 tr.time_ms AS time_ms
               FROM runs r
               JOIN task_results tr ON tr.run_id = r.id
-              WHERE {" AND ".join(where)}
+              WHERE {where_sql}
             """
             detail_rows = self.conn.execute(detail_sql, params).fetchall()
             times_by_key: dict[tuple, list[int]] = {}

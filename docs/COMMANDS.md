@@ -96,6 +96,8 @@ uv run mcode bench smoke           --model M  [flags]
 uv run mcode bench suite           --model M  [flags]
 ```
 
+The normal benchmark path is intentionally small: one solver loop, the built-in code tools, optional split phases, SQLite results, artifacts, replay, and suite runs. Treat the flags below as controls for measurement and operations first. New capability should show up in results before it becomes part of the default path.
+
 ### Common flags (`swebench-live` / `swebench-lite` / `aider-polyglot` / `smoke` / `suite`)
 
 - `--model M` — Mellea model id (required)
@@ -110,11 +112,11 @@ uv run mcode bench suite           --model M  [flags]
 - `--phase {run,generate,evaluate}` — `run` generates and evaluates in one pass; `generate` writes task artifacts only; `evaluate` loads those artifacts and records eval rows
 - `--artifact-dir DIR` — directory for generated task artifacts; defaults next to `--db` as `<db-stem>-artifacts`
 - `--shards N` — run N shard workers, merge per-shard DBs into `--db`
-- `--shard-count C / --shard-index I` — manual single-shard mode
 - `--on {local,bluevela}` — where to run (default `local`)
 - `--fetch-db / --no-fetch-db` — rsync the DB back from Blue Vela
-- `--diagnostic-traces / --no-diagnostic-traces` — persist compact bench trace events
 - `--json` — machine-readable event stream (one JSON object per line, monotonic `seq`)
+- Advanced: `--shard-count C / --shard-index I` runs one manual shard. The auto `--shards` path uses this internally
+- Advanced: `--diagnostic-traces / --no-diagnostic-traces` persists compact bench trace events for debugging
 
 Re-running the same bench command against the same `--db` resumes the matching run. Completed task rows are skipped, retryable infra rows are retried, and sharded runs reuse stable shard DBs before merging whatever completed rows exist.
 
@@ -161,8 +163,8 @@ uv run mcode bench suite \
 
 - `--suite-file PATH` — optional JSON manifest overriding the bundled suite
 - `--shards N` — run N suite shard workers and merge all run DBs back into `--db`
-- `--shard-count C / --shard-index I` — manual shard mode for the whole suite; each slice applies the same shard split
 - `--retry-loop-budget N` — Aider Polyglot retry budget inside the suite
+- Advanced: `--shard-count C / --shard-index I` runs one manual shard for the whole suite. Each slice applies the same shard split
 
 ### Artifact inspection
 
@@ -184,6 +186,8 @@ uv run mcode bench artifacts-fetch --db experiments/results/mixed-suite-generate
 - `artifacts-replay` re-evaluates one saved candidate into a fresh DB, optionally with `--candidate-index N`, `--out-db PATH`, and `--benchmark-root PATH` for cross-machine polyglot artifacts
 - `artifacts-fetch` downloads the saved remote artifact directory later, using either a recorded run id or the latest fetchable run for a local `--db` path. Add `--json` when another script needs the resolved local and remote paths
 ### `swebench-live` / `swebench-lite` extras
+
+The SWE-bench extras below are mostly eval controls and ablation knobs. The default kernel does not need multiple samples or candidate selection to run; use those flags when measuring variance or isolating a change.
 
 - `--split` — `test` / `lite` / `verified` / `full` / `dev`
 - `--mem-limit` — eval container memory limit; default `4g`
@@ -297,7 +301,6 @@ MCODE_MELLEA_PATH=/path/to/mellea-checkout mcode deps sync ...
 |`MCODE_CONTEXT_WINDOW`|LLM context window override (int)|
 |`MCODE_MAX_NEW_TOKENS`|LLM max output tokens|
 |`MCODE_REACT_TIMEOUT`|ReACT loop timeout in seconds|
-|`MCODE_COMPRESS_CONTEXT`|`1` enables context compression|
 |`MCODE_AIDER_POLYGLOT_ROOT`|Aider polyglot benchmark root override|
 |`MCODE_PODMAN_PULL_ATTEMPTS`|Podman pull retry count|
 |`MCODE_PODMAN_PULL_RETRY_DELAY`|Seconds between podman pull retries|

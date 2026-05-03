@@ -51,11 +51,6 @@ def _resolve_artifact_dir(db: Path, artifact_dir: Path | None) -> Path:
     return _default_artifact_dir(db)
 
 
-def _configure_mellea_logging(verbose: bool) -> None:
-    """Back-compat shim. Logic now lives in mcode.ui.console.configure_logging."""
-    _configure_logging(verbose=verbose)
-
-
 def _optional_str(v: str) -> str | None:
     if v.strip().lower() in {"", "none", "null"}:
         return None
@@ -219,7 +214,7 @@ def _root(
     ] = False,
 ) -> None:
     """mCode benchmarking harness."""
-    _configure_mellea_logging(verbose)
+    _configure_logging(verbose=verbose)
 
 
 @deps_app.command("sync")

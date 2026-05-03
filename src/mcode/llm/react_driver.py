@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import inspect
 import json
-import os
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -262,7 +261,6 @@ async def run_react_loop(
             getattr(session.backend, "model_id", None)
         )
 
-        compress_context = os.environ.get("MCODE_COMPRESS_CONTEXT", "0") == "1"
         has_run_tests_tool = any(getattr(tool, "name", "") == "run_tests" for tool in tools)
         edit_since_verification = False
         reminded_after_edit = False
@@ -270,9 +268,6 @@ async def run_react_loop(
         for turn in range(1, loop_budget + 1):
             collector.note_turn(turn)
             FancyLogger.get_logger().info(f"## ReACT TURN NUMBER {turn}")
-
-            if compress_context and turn == max(3, loop_budget // 2):
-                context = _compress_old_tool_outputs(context)
 
             if (
                 has_run_tests_tool
@@ -496,34 +491,6 @@ async def run_react_loop(
         return None, "budget_exhausted"
 
 
-def _compress_old_tool_outputs(context):
-    from mellea.stdlib.components.chat import ToolMessage
-    from mellea.stdlib.context import ChatContext
-
-    messages = context.view_for_generation()
-    if messages is None or len(messages) < 6:
-        return context
-
-    new_ctx = ChatContext()
-    keep_tail = 4
-    for index, message in enumerate(messages):
-        if index < 2 or index >= len(messages) - keep_tail:
-            new_ctx = new_ctx.add(message)
-            continue
-        if isinstance(message, ToolMessage) and len(str(message.content)) > 200:
-            summary = str(message.content)[:150] + "..."
-            compressed = ToolMessage(
-                role=message.role,
-                name=message.name,
-                content=f"[compressed] {summary}",
-                tool_output=getattr(message, "_tool_output", message.content),
-                args=message.arguments,
-                tool=getattr(message, "_tool"),
-            )
-            new_ctx = new_ctx.add(compressed)
-            continue
-        new_ctx = new_ctx.add(message)
-    return new_ctx
 
 
 _REDACTED_KEYS = {

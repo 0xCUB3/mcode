@@ -59,8 +59,8 @@ def configure_logging(level: LogLevel | str | int = "warning", *, verbose: bool 
     mcode_logger = logging.getLogger("mcode")
     mcode_logger.setLevel(resolved)
 
-    # Mellea wiring is best-effort — preserve the try/except behavior from
-    # the pre-existing _configure_mellea_logging at cli.py:39.
+    # Mellea logging is optional in some test and install modes. Keep this
+    # best-effort so mcode logging still works without the Mellea helper.
     try:
         from mellea.helpers.fancy_logger import FancyLogger
 
