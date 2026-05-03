@@ -172,18 +172,17 @@ Once a split-phase or suite run has written artifacts, inspect them directly fro
 uv run mcode bench artifacts-list --db experiments/results/mixed-suite-evaluate.db
 uv run mcode bench artifacts-list --db experiments/results/mixed-suite-evaluate.db --task-id python/affine-cipher --phase evaluate --json
 uv run mcode bench artifacts-show python/affine-cipher --db experiments/results/mixed-suite-evaluate.db
-uv run mcode bench artifacts-patch python/affine-cipher --db experiments/results/mixed-suite-evaluate.db
+uv run mcode bench artifacts-patch python/affine-cipher --db experiments/results/mixed-suite-evaluate.db --out candidate.patch
 uv run mcode bench artifacts-replay python/affine-cipher --db experiments/results/mixed-suite-generate.db
 uv run mcode bench artifacts-fetch bench-<run-id> --dest research/mixed-suite/artifacts
 uv run mcode bench artifacts-fetch --db experiments/results/mixed-suite-generate.db --json
 ```
 
 - `artifacts-list` shows task ids, phase, candidate count, evaluation count, and manifest path for one run. Add `--task-id`, `--phase`, or `--json` when you want a narrower machine-readable inventory
-- `artifacts-show` prints the saved task manifest JSON for one task
-- `artifacts-patch` prints the selected candidate diff, or `--candidate-index N` for a specific candidate
+- `artifacts-show` prints the saved task manifest JSON for one task, or one candidate entry with `--candidate-index N`
+- `artifacts-patch` prints the selected candidate diff, or writes it to a file with `--out PATH`
 - `artifacts-replay` re-evaluates one saved candidate into a fresh DB, optionally with `--candidate-index N`, `--out-db PATH`, and `--benchmark-root PATH` for cross-machine polyglot artifacts
 - `artifacts-fetch` downloads the saved remote artifact directory later, using either a recorded run id or the latest fetchable run for a local `--db` path. Add `--json` when another script needs the resolved local and remote paths
-
 ### `swebench-live` / `swebench-lite` extras
 
 - `--split` — `test` / `lite` / `verified` / `full` / `dev`
@@ -227,7 +226,9 @@ Every bench command supports `--json`. Events are line-delimited JSON with stric
 ```
 
 Kinds: `run_start`, `shard_start`, `shard_stdout`, `shard_done`, `shard_failed`, `shard_infra`, `infra_failure`, `merged`, `summary`, `remote_stdout`, `info`.
-`bench list` is sorted newest-first after filtering. Use `--limit N` when the state file is noisy and you only care about the most recent runs.
+`bench list` is sorted newest-first after filtering. Use `--limit N` when the state file is noisy and you only care about the most recent runs. When a remote artifact directory exists, `--artifacts` filters to those runs, and the table marks whether the artifacts were already fetched locally.
+
+
 
 
 ### Cancel semantics

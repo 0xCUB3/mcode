@@ -44,6 +44,7 @@ def test_list_runs_json_includes_cancel_reason(isolated_state: Path, capsys) -> 
             remote={
                 "remote_artifact_dir": "/remote/artifacts",
                 "local_artifact_dir": "artifacts",
+                "artifacts_fetched_at": 123.0,
             },
         )
     )
@@ -56,8 +57,8 @@ def test_list_runs_json_includes_cancel_reason(isolated_state: Path, capsys) -> 
     assert payload[0]["cancel_reason"] == "user"
     assert payload[0]["shards"] == 1
     assert payload[0]["artifacts_fetchable"] is True
+    assert payload[0]["artifacts_fetched_at"] == 123.0
     assert payload[0]["local_artifact_dir"] == "artifacts"
-
 def test_list_runs_filters_benchmark_status_and_artifacts(
     isolated_state: Path, capsys
  ) -> None:
@@ -132,15 +133,16 @@ def test_list_runs_table_marks_fetchable_artifacts(isolated_state: Path, capsys)
             target=Target.BLUEVELA,
             benchmark="suite",
             status=RunStatus.DONE,
-            remote={"remote_artifact_dir": "/remote/artifacts"},
+            remote={
+                "remote_artifact_dir": "/remote/artifacts",
+                "artifacts_fetched_at": 123.0,
+            },
         )
     )
     rc = cancel_mod.list_runs()
     assert rc == 0
     out = capsys.readouterr().out
-    assert "artifacts" in out.lower()
-    assert "yes" in out.lower()
-
+    assert out.lower().count("yes") >= 2
 
 def test_cancel_already_terminal_returns_ok(isolated_state: Path, capsys) -> None:
     _put(

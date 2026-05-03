@@ -370,7 +370,7 @@ def results(
         typer.Option("--time", help="Include time-to-solve metrics (sec/solve, solves/hour, p95)"),
     ] = False,
     json_mode: JsonFlag = False,
- ) -> None:
+) -> None:
     """Query pass rates from the results DB."""
     group_by_config = (
         "suite_name",
@@ -603,7 +603,6 @@ def results(
         console.print(table)
 
 
-
 @app.command("compare")
 def compare(
     baseline_dir: Annotated[
@@ -625,7 +624,7 @@ def compare(
     suite_name: Annotated[str | None, typer.Option("--suite")] = None,
     suite_entry_name: Annotated[str | None, typer.Option("--suite-entry")] = None,
     json_mode: JsonFlag = False,
- ) -> None:
+) -> None:
     from mcode.bench.compare import compare_runs, format_comparison
 
     report = compare_runs(
@@ -1838,7 +1837,7 @@ def _merge_into_results_db(
     db: Path,
     shard_paths: list[Path],
     merge_mode: Literal["single_run", "full_db"] = "single_run",
- ) -> RunSummary:
+) -> RunSummary:
     with temporary_directory(prefix="mcode-merge-") as td:
         merged = Path(td) / "merged.db"
         if merge_mode == "single_run":
@@ -1977,7 +1976,7 @@ def _run_sharded_benchmark(
     timeout_s: int,
     json_mode: bool = False,
     merge_mode: Literal["single_run", "full_db"] = "single_run",
- ) -> None:
+) -> None:
     from mcode.bench import runstate
     from mcode.launch.models import RunStatus, Target
     from mcode.ui.dashboard import open_dashboard
@@ -2197,7 +2196,7 @@ def _suite_cli_args(
     artifact_dir: Path,
     diagnostic_traces: bool,
     check_image_digests: bool,
- ) -> list[str]:
+) -> list[str]:
     argv = [
         "--model",
         model,
@@ -2231,9 +2230,7 @@ def _suite_entry_timeout(entry: SuiteEntry, swebench_timeout_s: int) -> int:
     return 300 if entry.benchmark == "aider-polyglot" else swebench_timeout_s
 
 
-def _suite_entry_loop_budget(
-    entry: SuiteEntry, *, loop_budget: int, retry_loop_budget: int
- ) -> int:
+def _suite_entry_loop_budget(entry: SuiteEntry, *, loop_budget: int, retry_loop_budget: int) -> int:
     if entry.benchmark != "aider-polyglot":
         return loop_budget
     return loop_budget + (0 if entry.no_retry else retry_loop_budget)
@@ -2271,7 +2268,7 @@ def _run_suite_entry(
     shard_count: int | None,
     shard_index: int | None,
     diagnostic_traces: bool,
- ) -> None:
+) -> None:
     task_ids = task_ids_arg(entry)
     entry_timeout = _suite_entry_timeout(entry, timeout_s)
     entry_loop_budget = _suite_entry_loop_budget(
@@ -2409,7 +2406,7 @@ def _run_bluevela_benchmark(
     db: Path,
     fetch_db: bool,
     fetch_artifacts: bool = False,
- ) -> None:
+) -> None:
     from mcode.bench.remote import RemoteBenchError, run_bench_on_bluevela
 
     try:
@@ -2448,7 +2445,7 @@ def _swebench_live_cli_args(
     check_image_digests: bool,
     phase: str,
     artifact_dir: Path,
- ) -> list[str]:
+) -> list[str]:
     argv = [
         "--model",
         model,
@@ -2629,7 +2626,7 @@ def bench_list(
         typer.Option("--artifacts", help="Only show runs with remote artifact metadata"),
     ] = False,
     limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
- ) -> None:
+) -> None:
     """List historical bench runs from the launch state file."""
     from mcode.bench.cancel import list_runs
 
@@ -2661,6 +2658,8 @@ def bench_cancel(
             raise typer.Exit(rc)
 
     _do()
+
+
 def _artifact_replay_config(
     *,
     source_db: Path,
@@ -2669,7 +2668,7 @@ def _artifact_replay_config(
     candidate_index: int | None,
     benchmark_root: Path | None = None,
     artifact_dir_override: Path | None = None,
- ) -> tuple[str, BenchConfig, Path]:
+) -> tuple[str, BenchConfig, Path]:
     with ResultsDB(source_db) as rdb:
         row = rdb.conn.execute(
             """
@@ -2686,9 +2685,7 @@ def _artifact_replay_config(
             (run_id, task_id),
         ).fetchone()
     if row is None:
-        raise typer.BadParameter(
-            f"No artifact manifest for task {task_id!r} in run {run_id}"
-        )
+        raise typer.BadParameter(f"No artifact manifest for task {task_id!r} in run {run_id}")
     manifest_path = Path(str(row["manifest_path"]))
     if artifact_dir_override is not None:
         manifest_path = artifact_dir_override / str(row["artifact_root"]) / "manifest.json"
@@ -2721,7 +2718,7 @@ def bench_artifacts_list(
     task_id: Annotated[str | None, typer.Option("--task-id")] = None,
     phase: Annotated[str | None, typer.Option("--phase")] = None,
     json_mode: JsonFlag = False,
- ) -> None:
+) -> None:
     """List artifact-backed tasks for one run."""
     with ResultsDB(db) as rdb:
         resolved_run_id = _resolve_results_run_id(rdb, run_id)
@@ -2792,13 +2789,18 @@ def bench_artifacts_fetch(
         typer.Option("--dest", help="Override the local artifact directory destination"),
     ] = None,
     json_mode: JsonFlag = False,
- ) -> None:
+) -> None:
     """Fetch a remote artifact directory for a finished Blue Vela run."""
     from mcode.launch.ssh import SshClient
     from mcode.ui.errors import MCodeError, handle_errors
 
     @handle_errors
     def _do() -> None:
+        import time
+        from dataclasses import replace
+
+        from mcode.launch import state as launch_state
+
         run = _resolve_artifact_fetch_run(run_id=run_id, db=db)
         resolved_run_id = run.id
         login = str(run.remote.get("login") or "")
@@ -2830,6 +2832,19 @@ def bench_artifacts_fetch(
                 why=str(exc),
                 next="check SSH reachability, remote paths, and local disk space, then retry",
             ) from exc
+        launch_state.update(
+            None,
+            lambda state: state.upsert_run(
+                replace(
+                    run,
+                    remote={
+                        **run.remote,
+                        "local_artifact_dir": str(local_artifact_dir),
+                        "artifacts_fetched_at": time.time(),
+                    },
+                )
+            ),
+        )
         payload = {
             "run_id": resolved_run_id,
             "remote_artifact_dir": remote_artifact_dir,
@@ -2838,9 +2853,13 @@ def bench_artifacts_fetch(
         if json_mode:
             console.print_json(data=payload)
             return
+            console.print_json(data=payload)
+            return
         console.print(f"fetched artifacts to {local_artifact_dir}")
 
     _do()
+
+
 @bench_app.command("artifacts-show")
 def bench_artifacts_show(
     task_id: Annotated[str, typer.Argument(..., help="Task id to inspect")],
@@ -2853,7 +2872,7 @@ def bench_artifacts_show(
         int | None,
         typer.Option("--candidate-index", help="Show only one candidate entry"),
     ] = None,
- ) -> None:
+) -> None:
     """Show one task artifact manifest."""
     with ResultsDB(db) as rdb:
         resolved_run_id = _resolve_results_run_id(rdb, run_id)
@@ -2877,6 +2896,8 @@ def bench_artifacts_show(
         console.print_json(data=asdict(candidate))
         return
     console.print(json.dumps(asdict(manifest), indent=2, sort_keys=True, default=str))
+
+
 @bench_app.command("artifacts-replay")
 def bench_artifacts_replay(
     task_id: Annotated[str, typer.Argument(..., help="Task id to evaluate")],
@@ -2910,7 +2931,7 @@ def bench_artifacts_replay(
             help="Override the saved artifact directory when replaying artifacts copied elsewhere",
         ),
     ] = None,
- ) -> None:
+) -> None:
     """Re-evaluate one saved artifact candidate through the benchmark adapter."""
     with ResultsDB(db) as rdb:
         resolved_run_id = _resolve_results_run_id(rdb, run_id)
@@ -2931,14 +2952,14 @@ def bench_artifacts_replay(
         task_ids=task_id,
         backend=config.backend_name,
         model=config.model_id,
-        loop_budget=config.loop_budget + (
+        loop_budget=config.loop_budget
+        + (
             config.aider_polyglot_retry_loop_budget
             if benchmark == "aider-polyglot" and config.aider_polyglot_retry
             else 0
         ),
         timeout_s=config.timeout_s,
     )
-
 
 
 @bench_app.command("artifacts-patch")
@@ -2957,7 +2978,7 @@ def bench_artifacts_patch(
         Path | None,
         typer.Option("--out", help="Write the patch to a file instead of stdout"),
     ] = None,
- ) -> None:
+) -> None:
     """Print one saved candidate patch."""
     with ResultsDB(db) as rdb:
         resolved_run_id = _resolve_results_run_id(rdb, run_id)
@@ -2989,9 +3010,6 @@ def bench_artifacts_patch(
         typer.echo(str(out))
         return
     typer.echo(patch_text)
-
-
-
 
 
 @bench_app.command("swebench-live")
@@ -3834,7 +3852,7 @@ def bench_suite(
         ),
     ] = False,
     json_mode: JsonFlag = False,
- ) -> None:
+) -> None:
     """Run the bundled mixed benchmark suite through the shared phase runner."""
     shards, shard_count, shard_index = _validate_shard_options(
         shards=shards,
