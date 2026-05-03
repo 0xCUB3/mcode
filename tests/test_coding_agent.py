@@ -38,6 +38,7 @@ def test_build_coding_agent_assembles_prompt_and_tools(tmp_path):
     assert "Hint text" in assembly.goal
     assert 'test_cmd="default"' in assembly.goal
     assert "Local workspace context:" not in assembly.goal
+    assert "Spend at most two search/read turns" in assembly.system_prompt
     assert assembly.model_options[ModelOption.TEMPERATURE] == 0.25
     assert assembly.model_options[ModelOption.SEED] == 7
     assert assembly.loop_budget == 9
@@ -51,6 +52,15 @@ def test_build_verification_policy_normalizes_commands():
     assert policy.test_cmds == ["pytest -q tests/test_bug.py"]
     assert 'test_cmd="default"' in policy.prompt_block
     assert "not pass `run_tests default`" in policy.prompt_block
+
+
+def test_verification_policy_without_default_rejects_default():
+    policy = build_verification_policy(command_fn=lambda command: command)
+
+    assert policy.test_cmds == []
+    assert policy.allow_default_test_cmd is False
+    assert "There is no default test command" in policy.prompt_block
+    assert "use `test_cmd=\"default\"`" not in policy.prompt_block
 
 
 def test_build_run_tests_tool_uses_command_fn_for_default_commands(tmp_path):
@@ -72,6 +82,48 @@ def test_build_run_tests_tool_uses_command_fn_for_default_commands(tmp_path):
     assert seen == ["pytest -q tests/test_bug.py"]
     assert "$ pytest -q tests/test_bug.py" in result
     assert "PASSED" in result
+
+
+def test_run_tests_tool_blocks_default_without_declared_commands(tmp_path):
+    seen: list[str] = []
+
+    def command_fn(command: str) -> str:
+        seen.append(command)
+        return format_tool_result(command, "PASSED", "ok")
+
+    policy = build_verification_policy(command_fn=command_fn)
+    tool = build_run_tests_tool(repo_root=str(tmp_path), verification_policy=policy)
+
+    assert tool is not None
+    result = tool.run("default")
+
+    assert seen == []
+    assert "$ default" in result
+    assert "BLOCKED" in result
+    assert "No default test command is declared" in result
+
+
+def test_run_tests_tool_blocks_evasive_pytest_selection(tmp_path):
+    seen: list[str] = []
+
+    def command_fn(command: str) -> str:
+        seen.append(command)
+        return format_tool_result(command, "PASSED", "ok")
+
+    policy = build_verification_policy(command_fn=command_fn)
+    tool = build_run_tests_tool(repo_root=str(tmp_path), verification_policy=policy)
+
+    assert tool is not None
+    result = tool.run('pytest tests/test_bug.py -k "not test_join"')
+
+    assert seen == []
+    assert "BLOCKED" in result
+    assert "without skipping" in result
+
+    result = tool.run("pytest tests/test_bug.py 2>&1 | head -80")
+    assert seen == []
+    assert "BLOCKED" in result
+    assert "masking their exit status" in result
 
 
 def test_run_tests_tool_appends_failure_report_snippets(tmp_path):

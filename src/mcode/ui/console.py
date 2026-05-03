@@ -41,6 +41,13 @@ _LEVEL_MAP = {
     "warning": logging.WARNING,
     "error": logging.ERROR,
 }
+_DEPENDENCY_LOGGERS = (
+    "cpex",
+    "httpcore",
+    "httpx",
+    "openai",
+    "urllib3",
+)
 
 
 def configure_logging(level: LogLevel | str | int = "warning", *, verbose: bool = False) -> None:
@@ -58,6 +65,8 @@ def configure_logging(level: LogLevel | str | int = "warning", *, verbose: bool 
 
     mcode_logger = logging.getLogger("mcode")
     mcode_logger.setLevel(resolved)
+    for logger_name in _DEPENDENCY_LOGGERS:
+        logging.getLogger(logger_name).setLevel(resolved)
 
     # Mellea logging is optional in some test and install modes. Keep this
     # best-effort so mcode logging still works without the Mellea helper.

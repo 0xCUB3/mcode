@@ -24,6 +24,7 @@ class VerificationPolicy:
     test_cmds: list[str]
     test_fn: Callable[[str], str] | None
     command_fn: Callable[[str], str] | None
+    allow_default_test_cmd: bool
     prompt_block: str
 
 
@@ -74,7 +75,7 @@ def normalize_verification_commands(source: object | None) -> list[str]:
     return [text] if text else []
 
 
-def build_verification_prompt(test_cmds: list[str]) -> str:
+def build_verification_prompt(test_cmds: list[str], *, allow_default: bool) -> str:
     if test_cmds:
         formatted = ", ".join(f"`{cmd}`" for cmd in test_cmds[:3])
         more = "" if len(test_cmds) <= 3 else f" and {len(test_cmds) - 3} more"
@@ -86,11 +87,19 @@ def build_verification_prompt(test_cmds: list[str]) -> str:
             "with `&&`; use `default` for the declared command sequence. Keep the "
             "`final_answer` text short."
         )
+    if allow_default:
+        return (
+            "\n\nVerification:\n"
+            "Use `run_tests` before `final_answer`. Pass only the command text in `test_cmd`; "
+            'use `test_cmd="default"` when a default verifier exists. Keep the `final_answer` '
+            "text short."
+        )
     return (
         "\n\nVerification:\n"
-        "Use `run_tests` before `final_answer`. Pass only the command text in `test_cmd`; "
-        'use `test_cmd="default"` when a default verifier exists. Keep the `final_answer` '
-        "text short."
+        "Use `run_tests` before `final_answer`. There is no default test command for "
+        "this task, so pass a concrete existing test or smoke command in `test_cmd`. "
+        "Do not use `default` unless the prompt lists declared task checks. Keep the "
+        "`final_answer` text short."
     )
 
 
@@ -101,11 +110,15 @@ def build_verification_policy(
     command_fn: Callable[[str], str] | None = None,
 ) -> VerificationPolicy:
     verification_cmds = normalize_verification_commands(test_cmds)
+    allow_default = bool(verification_cmds or test_fn is not None)
     return VerificationPolicy(
         test_cmds=verification_cmds,
         test_fn=test_fn,
         command_fn=command_fn,
-        prompt_block=build_verification_prompt(verification_cmds),
+        allow_default_test_cmd=allow_default,
+        prompt_block=build_verification_prompt(
+            verification_cmds, allow_default=allow_default
+        ),
     )
 
 
@@ -120,10 +133,14 @@ def build_turn_requirements(
     return [
         uses_tool("run_tests"),
         tool_arg_validator(
-            "Set `run_tests.test_cmd` to `default` or to one declared test command.",
+            "Set `run_tests.test_cmd` to an allowed verification command.",
             "run_tests",
             "test_cmd",
-            lambda value: _valid_test_command(value, verification_policy.test_cmds),
+            lambda value: _valid_test_command(
+                value,
+                verification_policy.test_cmds,
+                allow_default=verification_policy.allow_default_test_cmd,
+            ),
         ),
     ]
 
@@ -140,12 +157,14 @@ def build_submission_requirements() -> list[object]:
     ]
 
 
-def _valid_test_command(value: object, allowed_commands: list[str]) -> bool:
+def _valid_test_command(
+    value: object, allowed_commands: list[str], *, allow_default: bool
+) -> bool:
     text = str(value).strip()
     if not text:
         return False
     if text.lower() == "default":
-        return True
+        return allow_default
     if not allowed_commands:
         return True
     return text in allowed_commands
@@ -203,10 +222,21 @@ def build_run_tests_tool(
                 return _record(result)
             return _record(format_tool_result(test_cmd, "COMPLETED", result))
 
+        if test_cmd.strip().lower() == "default" and not test_cmds:
+            return _record(
+                format_tool_result(
+                    test_cmd,
+                    "BLOCKED",
+                    "No default test command is declared. Pass a concrete test command instead.",
+                )
+            )
         commands = test_cmds if test_cmd.strip().lower() == "default" else [test_cmd]
         outputs: list[str] = []
         for command in commands:
             if not command.strip():
+                continue
+            if block_reason := _blocked_verification_command_reason(command):
+                outputs.append(format_tool_result(command, "BLOCKED", block_reason))
                 continue
             if command_fn is not None:
                 result = command_fn(command)
@@ -261,6 +291,28 @@ def _patch_run_tests_schema(schema: object) -> object:
             properties["max_output_chars"]["type"] = "integer"
     parameters["required"] = ["test_cmd"]
     return patched
+
+
+def _blocked_verification_command_reason(command: str) -> str | None:
+    normalized = f" {command.lower()} "
+    evasive_markers = (
+        " -k not ",
+        " -k 'not ",
+        ' -k "not ',
+        " --ignore=",
+        " --ignore ",
+        " || true",
+        " | head",
+        " | tail",
+        " | grep",
+    )
+    if any(marker in normalized for marker in evasive_markers):
+        return (
+            "Verification commands must run the relevant failing tests without skipping, "
+            "excluding, or masking their exit status. Run the direct failing test command "
+            "instead."
+        )
+    return None
 
 
 def _append_failure_artifacts(

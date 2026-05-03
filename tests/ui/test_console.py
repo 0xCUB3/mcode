@@ -39,3 +39,15 @@ def test_configure_logging_sets_mellea_logger_level():
     assert all(handler.level == logging.ERROR for handler in logger.handlers)
 
     configure_logging("warning")
+
+
+def test_configure_logging_quiets_dependency_loggers():
+    configure_logging("warning")
+    assert logging.getLogger("httpx").level == logging.WARNING
+    assert logging.getLogger("cpex").level == logging.WARNING
+
+    configure_logging(verbose=True)
+    assert logging.getLogger("httpx").level == logging.INFO
+    assert logging.getLogger("cpex").level == logging.INFO
+
+    configure_logging("warning")
