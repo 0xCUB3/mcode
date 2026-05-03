@@ -19,6 +19,7 @@ from mcode.execution.swebench import (
     _build_agent_setup_script,
     _build_agent_shell_command,
     _ensure_image,
+    _extract_agent_test_commands,
     _is_retryable_podman_image_error,
 )
 
@@ -51,6 +52,20 @@ def test_build_agent_setup_script_keeps_eval_setup_and_drops_patch_steps():
     assert "git checkout abc123 path/to/test_file.py" not in script
     assert "git apply -v - <<'EOF'" not in script
     assert ">>>>> Start Test Output" not in script
+
+
+def test_extract_agent_test_commands_from_eval_script():
+    commands = _extract_agent_test_commands(
+        [
+            "python -m pip install -e .",
+            ": '>>>>> Start Test Output'",
+            "./tests/runtests.py --verbosity 2 auth_tests.test_validators",
+            ": '>>>>> End Test Output'",
+            "git checkout abc tests/foo.py",
+        ]
+    )
+
+    assert commands == ["./tests/runtests.py --verbosity 2 auth_tests.test_validators"]
 
 
 def test_build_agent_shell_command_activates_testbed_and_rewrites_repo_root():

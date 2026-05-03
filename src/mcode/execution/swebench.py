@@ -320,6 +320,21 @@ def _build_agent_setup_script(eval_script_list: list[str]) -> str:
     return "\n".join(setup_commands)
 
 
+def _extract_agent_test_commands(eval_script_list: list[str]) -> list[str]:
+    commands: list[str] = []
+    in_test_output = False
+    for raw_command in eval_script_list:
+        command = raw_command.strip()
+        if command == ": '>>>>> Start Test Output'":
+            in_test_output = True
+            continue
+        if command == ": '>>>>> End Test Output'":
+            break
+        if in_test_output and command:
+            commands.append(command)
+    return commands
+
+
 def _exec_agent_command_in_container(
     container,
     cmd: str,
@@ -584,6 +599,7 @@ class SWEbenchSandbox:
                 exec_container.start()
 
                 setup_script = _build_agent_setup_script(test_spec.eval_script_list)
+                test_commands = _extract_agent_test_commands(test_spec.eval_script_list)
                 if setup_script:
                     setup_output, setup_exit_code, setup_timed_out = (
                         _exec_agent_command_in_container(
@@ -625,6 +641,7 @@ class SWEbenchSandbox:
                     repo_root=testbed,
                     visible_repo_root="/testbed",
                     command_fn=command_fn,
+                    test_cmds={"test_cmds": test_commands} if test_commands else None,
                 )
             except Exception as exc:
                 reraise_docker_unavailable(exc, scope="SWE-bench Lite evaluation")

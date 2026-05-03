@@ -85,16 +85,19 @@ class PatchRepoContext:
     repo_root: Path | str
     command_fn: Callable[[str], str] | None = None
     visible_repo_root: str | None = None
+    test_cmds: object | None = None
 
 
 def _coerce_patch_repo_context(repo_context: object) -> PatchRepoContext:
     repo_root = getattr(repo_context, "repo_root", repo_context)
     command_fn = getattr(repo_context, "command_fn", None)
     visible_repo_root = getattr(repo_context, "visible_repo_root", None)
+    test_cmds = getattr(repo_context, "test_cmds", None)
     return PatchRepoContext(
         repo_root=repo_root,
         command_fn=command_fn,
         visible_repo_root=visible_repo_root,
+        test_cmds=test_cmds,
     )
 
 
@@ -997,8 +1000,11 @@ class BenchmarkRunner:
         repo_root: Path | str,
         command_fn: Callable[[str], str] | None = None,
         visible_repo_root: str | None = None,
+        test_cmds: object | None = None,
     ) -> tuple[str, dict[str, object] | None]:
-        verification_metadata = getattr(task, "raw_instance", None)
+        verification_metadata = test_cmds
+        if verification_metadata is None:
+            verification_metadata = getattr(task, "raw_instance", None)
         if verification_metadata is None:
             verification_metadata = getattr(task, "test_cmds", None)
 
@@ -1128,6 +1134,7 @@ class BenchmarkRunner:
                             repo_root=patch_context.repo_root,
                             command_fn=patch_context.command_fn,
                             visible_repo_root=patch_context.visible_repo_root,
+                            test_cmds=patch_context.test_cmds,
                         )
                         elapsed_ms = int((time.time() - start) * 1000)
                         scaffold_result = _scaffold_metrics(scaffold_metrics)
