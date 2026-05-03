@@ -201,4 +201,7 @@ def test_make_agent_tools_normalizes_visible_repo_paths(tmp_path):
     result = tools["edit"].run("c:/users/user/tmp/repo/pkg/mod.py", "value = 1", "value = 2")
 
     assert "APPLIED" in result
-    assert (target / "mod.py").read_text() == "value = 2\n"
+    result = tools["edit"].run(str(target / "mod.py"), "value = 2", "value = 3")
+
+    assert "APPLIED" in result
+    assert (target / "mod.py").read_text() == "value = 3\n"

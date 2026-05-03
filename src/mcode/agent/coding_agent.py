@@ -113,9 +113,11 @@ def build_coding_agent(
 _VISIBLE_REPO_ALIASES = ("/testbed", "/home/user/repo", "c:/users/user/tmp/repo")
 
 
-def _normalize_tool_path(path: str, *, visible_repo_root: str | None) -> str:
+def _normalize_tool_path(
+    path: str, *, visible_repo_root: str | None, repo_root: str | None = None
+) -> str:
     text = path.strip()
-    aliases = [alias for alias in (visible_repo_root, *_VISIBLE_REPO_ALIASES) if alias]
+    aliases = [alias for alias in (visible_repo_root, repo_root, *_VISIBLE_REPO_ALIASES) if alias]
     lowered = text.lower()
     for alias in aliases:
         normalized_alias = alias.rstrip("/")
@@ -140,7 +142,11 @@ def make_agent_tools(
 
     def _edit(path: str, old_str: str, new_str: str) -> str:
         result = str_replace_edit(
-            _normalize_tool_path(path, visible_repo_root=visible_repo_root),
+            _normalize_tool_path(
+                path,
+                visible_repo_root=visible_repo_root,
+                repo_root=repo_root,
+            ),
             old_str,
             new_str,
             repo_root=repo_root,
@@ -151,7 +157,11 @@ def make_agent_tools(
 
     def _read(path: str, start_line: int | None = None, end_line: int | None = None) -> str:
         return read_file(
-            _normalize_tool_path(path, visible_repo_root=visible_repo_root),
+            _normalize_tool_path(
+                path,
+                visible_repo_root=visible_repo_root,
+                repo_root=repo_root,
+            ),
             start_line or 1,
             end_line,
             repo_root=repo_root,
@@ -162,7 +172,11 @@ def make_agent_tools(
 
     def _list(path: str | None = None) -> str:
         return list_dir(
-            _normalize_tool_path(path or ".", visible_repo_root=visible_repo_root),
+            _normalize_tool_path(
+                path or ".",
+                visible_repo_root=visible_repo_root,
+                repo_root=repo_root,
+            ),
             repo_root=repo_root,
         )
 
