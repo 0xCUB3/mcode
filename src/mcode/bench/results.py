@@ -699,10 +699,24 @@ class ResultsDB:
             return {}
         rows = self.conn.execute(
             """
-            SELECT task_id, phase, artifact_root, manifest_path, schema_version, candidate_count,
-                   evaluation_count, repo_id, task_digest, metadata_json
-            FROM artifact_tasks
-            WHERE run_id = ?
+            SELECT
+              at.task_id,
+              at.phase,
+              at.artifact_root,
+              at.manifest_path,
+              at.schema_version,
+              at.candidate_count,
+              at.evaluation_count,
+              at.repo_id,
+              at.task_digest,
+              at.metadata_json,
+              ac.candidate_index AS selected_candidate_index,
+              ac.patch_byte_count AS selected_patch_byte_count,
+              ac.verification_succeeded AS selected_verification_succeeded
+            FROM artifact_tasks at
+            LEFT JOIN artifact_candidates ac
+              ON ac.run_id = at.run_id AND ac.task_id = at.task_id AND ac.selected = 1
+            WHERE at.run_id = ?
             """,
             (run_id,),
         ).fetchall()
@@ -722,6 +736,11 @@ class ResultsDB:
                 "evaluation_count": int(row["evaluation_count"] or 0),
                 "repo_id": _row_value(row, "repo_id"),
                 "task_digest": _row_value(row, "task_digest"),
+                "selected_candidate_index": _row_value(row, "selected_candidate_index"),
+                "selected_patch_byte_count": _row_value(row, "selected_patch_byte_count"),
+                "selected_verification_succeeded": bool(
+                    _row_value(row, "selected_verification_succeeded", 0) or 0
+                ),
                 "metadata": metadata,
             }
         return out

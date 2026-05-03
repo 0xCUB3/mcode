@@ -178,7 +178,7 @@ uv run mcode bench artifacts-fetch bench-<run-id> --dest research/mixed-suite/ar
 uv run mcode bench artifacts-fetch --db experiments/results/mixed-suite-generate.db --json
 ```
 
-- `artifacts-list` shows task ids, phase, candidate count, evaluation count, and manifest path for one run. Add `--task-id`, `--phase`, or `--json` when you want a narrower machine-readable inventory
+- `artifacts-list` shows task ids, phase, selected candidate index, whether that candidate verified, selected patch bytes, candidate count, evaluation count, and manifest path for one run. Add `--task-id`, `--phase`, or `--json` when you want a narrower machine-readable inventory
 - `artifacts-show` prints the saved task manifest JSON for one task, or one candidate entry with `--candidate-index N`
 - `artifacts-patch` prints the selected candidate diff, or writes it to a file with `--out PATH`
 - `artifacts-replay` re-evaluates one saved candidate into a fresh DB, optionally with `--candidate-index N`, `--out-db PATH`, and `--benchmark-root PATH` for cross-machine polyglot artifacts

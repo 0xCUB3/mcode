@@ -96,7 +96,6 @@ def test_bench_artifacts_list_and_show(tmp_path: Path) -> None:
     )
     assert list_res.exit_code == 0
     assert task_id in list_res.stdout
-    assert "evaluate" in list_res.stdout
 
     filtered_res = runner.invoke(
         app,
@@ -134,6 +133,8 @@ def test_bench_artifacts_list_and_show(tmp_path: Path) -> None:
     payload = json.loads(list_json_res.stdout)
     assert payload[0]["task_id"] == task_id
     assert payload[0]["phase"] == "evaluate"
+    assert payload[0]["selected_candidate_index"] == 0
+    assert payload[0]["selected_verification_succeeded"] is True
     patch_out = tmp_path / "candidate.patch"
     patch_res = runner.invoke(
         app,

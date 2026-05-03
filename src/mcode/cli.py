@@ -2750,6 +2750,9 @@ def bench_artifacts_list(
     table = Table(title=f"Artifacts for run {resolved_run_id}")
     table.add_column("task_id", no_wrap=True)
     table.add_column("phase")
+    table.add_column("selected", justify="right")
+    table.add_column("verified")
+    table.add_column("patch_bytes", justify="right")
     table.add_column("candidates", justify="right")
     table.add_column("evaluations", justify="right")
     table.add_column("manifest", overflow="fold")
@@ -2757,6 +2760,9 @@ def bench_artifacts_list(
         table.add_row(
             row["task_id"],
             str(row.get("phase") or "-"),
+            str(row.get("selected_candidate_index") or "-"),
+            "yes" if row.get("selected_verification_succeeded") else "-",
+            str(row.get("selected_patch_byte_count") or "-"),
             str(row.get("candidate_count", 0)),
             str(row.get("evaluation_count", 0)),
             str(row.get("manifest_path") or "-"),
