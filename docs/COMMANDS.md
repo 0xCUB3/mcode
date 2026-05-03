@@ -283,9 +283,14 @@ mcode deps sync --extra swebench --extra datasets
 mcode deps sync --extra swebench --extra datasets --extra observability
 mcode deps sync --no-dev                       # skip dev extras
 MCODE_MELLEA_PATH=/path/to/mellea-checkout mcode deps sync ...
+
+mcode deps toolchains --benchmark aider-polyglot
+mcode deps toolchains --benchmark aider-polyglot --language go --language rust
+mcode deps toolchains --benchmark aider-polyglot --install
 ```
 
 `MCODE_MELLEA_PATH` overrides the pinned upstream Mellea with a local working copy.
+`deps toolchains` checks the local Aider Polyglot runtimes before long suite runs. With `--install`, it uses the local platform package manager when supported: Homebrew on macOS, winget/choco on Windows, and apt/dnf/pacman on Linux. Aider Polyglot runs now fail fast on missing language runtimes instead of spending a task budget on `command not found` loops.
 
 ## Environment variables
 

@@ -76,6 +76,76 @@ def deps_sync(
         console.print("Using upstream mellea package")
 
 
+@deps_app.command("toolchains")
+def deps_toolchains(
+    benchmark: Annotated[
+        str,
+        typer.Option("--benchmark", help="Toolchain group to check or install"),
+    ] = "aider-polyglot",
+    language: Annotated[
+        list[str] | None,
+        typer.Option("--language", help="Aider Polyglot language to check (repeatable, or all)"),
+    ] = None,
+    install: Annotated[
+        bool,
+        typer.Option(
+            "--install",
+            help="Install missing runtimes with the local platform package manager",
+        ),
+    ] = False,
+    json_mode: JsonFlag = False,
+) -> None:
+    """Check or install benchmark language runtimes."""
+    if benchmark not in {"aider-polyglot", "polyglot"}:
+        raise typer.BadParameter("only --benchmark aider-polyglot is supported")
+
+    from mcode.bench.toolchains import (
+        check_polyglot_toolchains,
+        install_hint,
+        install_polyglot_toolchains,
+        normalize_polyglot_languages,
+    )
+
+    languages = normalize_polyglot_languages(language or "all")
+    if install:
+        install_polyglot_toolchains(languages)
+    checks = check_polyglot_toolchains(languages)
+    rows = [
+        {
+            "language": check.language,
+            "name": check.name,
+            "ok": check.ok,
+            "detail": check.detail,
+            "next": check.next,
+        }
+        for check in checks
+    ]
+    if json_mode:
+        console.print_json(data=rows)
+    else:
+        table = Table(title="Aider Polyglot toolchains")
+        table.add_column("language")
+        table.add_column("check")
+        table.add_column("status")
+        table.add_column("detail")
+        table.add_column("next")
+        for row in rows:
+            table.add_row(
+                str(row["language"]),
+                str(row["name"]),
+                "ok" if row["ok"] else "missing",
+                str(row["detail"]),
+                str(row["next"] or "-"),
+            )
+        console.print(table)
+        missing_languages = sorted({str(row["language"]) for row in rows if not row["ok"]})
+        hint = install_hint(missing_languages)
+        if hint:
+            console.print(f"install: {hint}")
+    if any(not row["ok"] for row in rows):
+        raise typer.Exit(1)
+
+
 @app.command("doctor")
 def doctor_cmd(
     target: str = typer.Argument(

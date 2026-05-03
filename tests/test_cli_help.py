@@ -6,6 +6,7 @@ from pathlib import Path
 from typer.main import get_command
 from typer.testing import CliRunner
 
+from mcode.bench.toolchains import ToolchainCheck
 from mcode.cli import app
 
 EXPECTED_OPTIONS: dict[tuple[str, ...], set[str]] = {
@@ -89,6 +90,7 @@ HELP_COMMANDS = [
     ("report", "--help"),
     ("compare", "--help"),
     ("deps", "sync", "--help"),
+    ("deps", "toolchains", "--help"),
 ]
 
 
@@ -183,3 +185,34 @@ def test_cli_deps_sync_allows_disabling_dev_and_adding_extras(monkeypatch) -> No
     assert res.exit_code == 0
     assert captured["project_root"] == Path.cwd()
     assert captured["sync_args"] == ["--extra", "swebench", "--extra", "datasets"]
+
+
+def test_cli_deps_toolchains_reports_missing_runtime(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "mcode.bench.toolchains.check_polyglot_toolchains",
+        lambda languages: (
+            ToolchainCheck("go", "go", False, "go not found on PATH", "install Go"),
+        ),
+    )
+
+    res = _invoke("deps", "toolchains", "--language", "go")
+
+    assert res.exit_code == 1
+    assert "go not found on PATH" in _strip_ansi(res.output)
+
+
+def test_cli_deps_toolchains_install_invokes_installer(monkeypatch) -> None:
+    installed: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        "mcode.bench.toolchains.install_polyglot_toolchains",
+        lambda languages: installed.append(tuple(languages)),
+    )
+    monkeypatch.setattr(
+        "mcode.bench.toolchains.check_polyglot_toolchains",
+        lambda languages: (ToolchainCheck("go", "go", True, "/usr/bin/go", ""),),
+    )
+
+    res = _invoke("deps", "toolchains", "--language", "go", "--install")
+
+    assert res.exit_code == 0
+    assert installed == [("go",)]

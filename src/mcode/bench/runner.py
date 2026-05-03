@@ -645,6 +645,11 @@ class BenchmarkRunner:
 
         if name in {"aider-polyglot", "aider_polyglot"}:
             from mcode.bench.aider_polyglot import load_aider_polyglot
+            from mcode.bench.toolchains import ensure_polyglot_toolchains
+
+            def prepare_polyglot_environment(tasks: list[object]) -> None:
+                languages = sorted({str(getattr(task, "language")) for task in tasks})
+                ensure_polyglot_toolchains(languages)
 
             return _BenchmarkAdapter(
                 benchmark="aider-polyglot",
@@ -666,7 +671,7 @@ class BenchmarkRunner:
                     "retry": self.config.aider_polyglot_retry,
                     "retry_loop_budget": self.config.aider_polyglot_retry_loop_budget,
                 },
-                prepare_environment=lambda _tasks: None,
+                prepare_environment=prepare_polyglot_environment,
                 run_task=lambda task, _environment, run_id: self._run_aider_polyglot_task(
                     task,
                     run_id=run_id,
@@ -1338,6 +1343,7 @@ def _is_retryable_infra_text(text: str) -> bool:
             "podman socket",
             "docker socket",
             "database is locked",
+            "polyglot toolchain unavailable",
         )
     )
 
