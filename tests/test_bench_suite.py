@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from typer.main import get_command
 from typer.testing import CliRunner
 
 from mcode.bench.suite import SuiteEntry, load_suite_manifest
@@ -26,13 +27,18 @@ def test_bench_suite_help_exposes_phase_and_manifest_flags() -> None:
     res = runner.invoke(app, ["bench", "suite", "--help"], color=False)
 
     assert res.exit_code == 0
-    output = res.stdout
-    assert "--suite-file" in output
-    assert "--phase" in output
-    assert "--artifact-dir" in output
-    assert "--shard-count" in output
-    assert "--shard-index" in output
-
+    command = get_command(app)
+    bench_command = command.get_command(None, "bench")
+    assert bench_command is not None
+    suite_command = bench_command.get_command(None, "suite")
+    assert suite_command is not None
+    option_names = {param.name for param in suite_command.params}
+    assert "suite_file" in option_names
+    assert "phase" in option_names
+    assert "artifact_dir" in option_names
+    assert "shards" in option_names
+    assert "shard_count" in option_names
+    assert "shard_index" in option_names
 
 def test_bench_suite_runs_each_manifest_entry(monkeypatch, tmp_path: Path) -> None:
     runner = CliRunner()
