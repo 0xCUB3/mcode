@@ -1394,3 +1394,70 @@ def test_pass_rates_grouped_exposes_suite_metadata(tmp_path: Path) -> None:
         )
     assert rows[0]["suite_name"] == "tiny-polyglot-suite"
     assert rows[0]["suite_entry_name"] == "polyglot-python"
+
+
+def test_export_csv_includes_suite_columns(tmp_path: Path) -> None:
+    db_path = tmp_path / "results.db"
+    with ResultsDB(db_path) as rdb:
+        run_id = rdb.start_run(
+            "aider-polyglot",
+            {
+                "backend_name": "openai",
+                "model_id": "test-model",
+                "loop_budget": 23,
+                "timeout_s": 300,
+                "suite_name": "tiny-polyglot-suite",
+                "suite_entry_name": "polyglot-python",
+            },
+        )
+        rdb.save_task_result(
+            run_id,
+            {
+                "task_id": "python/affine-cipher",
+                "passed": True,
+                "attempts_used": 1,
+                "time_ms": 100,
+                "exit_code": 0,
+                "timed_out": False,
+                "stdout": "",
+                "stderr": "",
+                "error": None,
+                "code_sha256": "abc",
+            },
+        )
+
+    out = export_csv(inputs=[db_path], out_dir=tmp_path / "csv")
+    with Path(out["runs_csv"]).open(newline="", encoding="utf-8") as f:
+        run_rows = list(DictReader(f))
+    with Path(out["task_results_csv"]).open(newline="", encoding="utf-8") as f:
+        task_rows = list(DictReader(f))
+
+    assert run_rows[0]["suite_name"] == "tiny-polyglot-suite"
+    assert run_rows[0]["suite_entry_name"] == "polyglot-python"
+    assert task_rows[0]["suite_name"] == "tiny-polyglot-suite"
+    assert task_rows[0]["suite_entry_name"] == "polyglot-python"
+
+
+def test_export_csv_includes_suite_columns_on_artifact_rows(tmp_path: Path) -> None:
+    db_path = tmp_path / "results.db"
+    manifest, manifest_path = _sample_task_manifest(tmp_path, benchmark="aider-polyglot")
+    with ResultsDB(db_path) as rdb:
+        run_id = rdb.start_run(
+            "aider-polyglot",
+            {
+                "backend_name": "openai",
+                "model_id": "test-model",
+                "loop_budget": 23,
+                "timeout_s": 300,
+                "suite_name": "tiny-polyglot-suite",
+                "suite_entry_name": "polyglot-python",
+            },
+        )
+        rdb.save_task_artifact_manifest(run_id, manifest, manifest_path=manifest_path)
+
+    out = export_csv(inputs=[db_path], out_dir=tmp_path / "csv")
+    with Path(out["artifact_tasks_csv"]).open(newline="", encoding="utf-8") as f:
+        artifact_rows = list(DictReader(f))
+
+    assert artifact_rows[0]["suite_name"] == "tiny-polyglot-suite"
+    assert artifact_rows[0]["suite_entry_name"] == "polyglot-python"

@@ -2359,6 +2359,8 @@ def export_csv(
         "benchmark",
         "backend_name",
         "model_id",
+        "suite_name",
+        "suite_entry_name",
         "loop_budget",
         "timeout_s",
         "total",
@@ -2374,6 +2376,8 @@ def export_csv(
         "benchmark",
         "backend_name",
         "model_id",
+        "suite_name",
+        "suite_entry_name",
         "loop_budget",
         "timeout_s",
         "task_id",
@@ -2454,6 +2458,8 @@ def export_csv(
                             "benchmark": str(r["benchmark"]),
                             "backend_name": str(r["backend_name"]),
                             "model_id": str(r["model_id"]),
+                            "suite_name": _row_value(r, "suite_name"),
+                            "suite_entry_name": _row_value(r, "suite_entry_name"),
                             "loop_budget": int(r["loop_budget"]),
                             "timeout_s": int(r["timeout_s"]),
                             "total": total,
@@ -2481,6 +2487,8 @@ def export_csv(
                             "benchmark": str(r["benchmark"]),
                             "backend_name": str(r["backend_name"]),
                             "model_id": str(r["model_id"]),
+                            "suite_name": _row_value(r, "suite_name"),
+                            "suite_entry_name": _row_value(r, "suite_entry_name"),
                             "loop_budget": int(r["loop_budget"]),
                             "timeout_s": int(r["timeout_s"]),
                             "task_id": str(tr["task_id"]),
@@ -2504,7 +2512,9 @@ def export_csv(
                                 tr, "turns_after_first_edit_before_first_verification"
                             ),
                             "zero_edit": int(_row_value(tr, "zero_edit", 1) or 0),
-                            "zero_verification": int(_row_value(tr, "zero_verification", 1) or 0),
+                            "zero_verification": int(
+                                _row_value(tr, "zero_verification", 1) or 0
+                            ),
                             "verification_succeeded": int(
                                 _row_value(tr, "verification_succeeded", 0) or 0
                             ),
@@ -2601,6 +2611,8 @@ def export_csv(
                 "run_id",
                 "task_id",
                 "benchmark",
+                "suite_name",
+                "suite_entry_name",
                 "phase",
                 "artifact_root",
                 "manifest_path",
@@ -2619,6 +2631,8 @@ def export_csv(
             [
                 "run_id",
                 "task_id",
+                "suite_name",
+                "suite_entry_name",
                 "candidate_index",
                 "selected",
                 "patch_path",
@@ -2652,6 +2666,8 @@ def export_csv(
             [
                 "run_id",
                 "task_id",
+                "suite_name",
+                "suite_entry_name",
                 "evaluation_index",
                 "source_candidate_index",
                 "evaluator_name",
@@ -2673,6 +2689,8 @@ def export_csv(
             [
                 "run_id",
                 "task_id",
+                "suite_name",
+                "suite_entry_name",
                 "candidate_index",
                 "evidence_index",
                 "verifier_name",
@@ -2701,9 +2719,16 @@ def export_csv(
                 conn = sqlite3.connect(db_path)
                 conn.row_factory = sqlite3.Row
                 try:
-                    if not _sqlite_table_exists(conn, table):
-                        continue
-                    rows = conn.execute(f"SELECT * FROM {table} ORDER BY {order_by}").fetchall()
+                    rows = conn.execute(
+                        f"""
+                        SELECT t.*,
+                               r.suite_name AS suite_name,
+                               r.suite_entry_name AS suite_entry_name
+                        FROM {table} t
+                        JOIN runs r ON r.id = t.run_id
+                        ORDER BY {order_by}
+                        """
+                    ).fetchall()
                     for row in rows:
                         writer.writerow(
                             {
