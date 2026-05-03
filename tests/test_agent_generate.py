@@ -12,7 +12,13 @@ from mcode.bench import runner as runner_module
 from mcode.bench.results import ResultsDB
 from mcode.bench.runner import BenchConfig, BenchmarkRunner
 from mcode.execution.sandbox import DockerUnavailableError
-from mcode.llm.session import LLMSession, PatchSubmission, SolveResult, _coerce_submission
+from mcode.llm.session import (
+    LLMSession,
+    PatchSubmission,
+    SolveResult,
+    _coerce_submission,
+    _ignore_async_client_close_noise,
+)
 
 
 def _init_repo(tmp_path: Path) -> None:
@@ -146,6 +152,81 @@ def test_generate_patch_discards_unverified_diff(tmp_path, monkeypatch):
         tests_ran=[],
     )
 
+
+def test_generate_patch_closes_backend_async_clients(tmp_path, monkeypatch):
+    _init_repo(tmp_path)
+    session = LLMSession(model_id="test", backend_name="openai", loop_budget=4)
+
+    class FakeAsyncClient:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    fake_client = FakeAsyncClient()
+    fake_backend = SimpleNamespace(_client_cache=SimpleNamespace(cache={1: fake_client}))
+
+    async def fake_solve_patch(**kwargs):
+        del kwargs
+        assert fake_client.closed is False
+        return SolveResult(
+            patch="diff --git a/foo.py b/foo.py\n+x = 2\n",
+            submission=PatchSubmission(summary="Updated foo.py", tests_ran=["default"]),
+            terminal_reason="submitted",
+            verification_succeeded=True,
+            zero_edit=False,
+            zero_verification=False,
+        )
+
+    monkeypatch.setattr(
+        session,
+        "_start_session",
+        lambda **kwargs: _session_context(
+            SimpleNamespace(backend=fake_backend, solve_patch=fake_solve_patch)
+        ),
+    )
+
+    session.generate_patch(
+        repo="test/repo",
+        problem_statement="Fix the bug",
+        repo_root=str(tmp_path),
+        test_cmds={"test_cmds": ["python -c pass"]},
+    )
+
+    assert fake_client.closed is True
+
+
+def test_ignores_async_client_close_noise():
+    calls: list[dict[str, object]] = []
+
+    class FakeLoop:
+        def default_exception_handler(self, context: dict[str, object]) -> None:
+            calls.append(context)
+
+    class FakeFuture:
+        def __repr__(self) -> str:
+            return "<Task coro=<AsyncClient.aclose() done>>"
+
+    _ignore_async_client_close_noise(
+        FakeLoop(),
+        {"exception": RuntimeError("Event loop is closed"), "future": FakeFuture()},
+    )
+
+    assert calls == []
+
+
+def test_delegates_unexpected_loop_exceptions():
+    calls: list[dict[str, object]] = []
+
+    class FakeLoop:
+        def default_exception_handler(self, context: dict[str, object]) -> None:
+            calls.append(context)
+
+    context = {"exception": RuntimeError("boom"), "future": object()}
+    _ignore_async_client_close_noise(FakeLoop(), context)
+
+    assert calls == [context]
 
 def test_coerce_submission_accepts_json_string():
     submission = _coerce_submission('{"summary":"done","tests_ran":["default"]}')

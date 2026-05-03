@@ -291,7 +291,7 @@ async def run_react_loop(
                 has_run_tests_tool
                 and collector.turns_to_first_edit is None
                 and not reminded_without_edit
-                and turn >= max(4, loop_budget // 3)
+                and turn >= max(2, loop_budget // 3)
             ):
                 context = context.add(
                     Message(

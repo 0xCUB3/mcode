@@ -371,9 +371,11 @@ class LLMSession:
                     restore_repo_snapshot(repo_root, snapshot_dir)
                 collector = SolveTraceCollector(diagnostic_enabled=self.diagnostic_traces)
                 runtime_plugins = [SolveTracePlugin(collector)] if enable_hooks else None
-                with self._start_session(plugins=runtime_plugins) as session:
-                    result = asyncio.run(
-                        session.solve_patch(
+                async def _solve_once() -> SolveResult:
+                    loop = asyncio.get_running_loop()
+                    loop.set_exception_handler(_ignore_async_client_close_noise)
+                    try:
+                        return await session.solve_patch(
                             repo_root=repo_root,
                             goal=agent.goal,
                             tools=agent.tools,
@@ -386,7 +388,11 @@ class LLMSession:
                             sampling_budget=sampling_budget,
                             hooks_enabled=enable_hooks,
                         )
-                    )
+                    finally:
+                        await _close_backend_async_clients(getattr(session, "backend", None))
+
+                with self._start_session(plugins=runtime_plugins) as session:
+                    result = asyncio.run(_solve_once())
                 attempts.append(result)
                 if not select_best_attempt and result.patch and result.verification_succeeded:
                     self._last_result = result
@@ -514,6 +520,34 @@ def _patch_stats(patch: str) -> dict[str, object]:
         "byte_count": len(patch.encode("utf-8", errors="ignore")),
         "sha256": hashlib.sha256(patch.encode("utf-8", errors="ignore")).hexdigest(),
     }
+
+
+def _ignore_async_client_close_noise(
+    loop: asyncio.AbstractEventLoop, context: dict[str, object]
+) -> None:
+    exc = context.get("exception")
+    future = context.get("future") or context.get("task")
+    if (
+        isinstance(exc, RuntimeError)
+        and str(exc) == "Event loop is closed"
+        and "AsyncClient.aclose" in repr(future)
+    ):
+        return
+    loop.default_exception_handler(context)
+
+
+async def _close_backend_async_clients(backend: object | None) -> None:
+    cache = getattr(getattr(backend, "_client_cache", None), "cache", None)
+    if not cache:
+        return
+    for client in list(cache.values()):
+        aclose = getattr(client, "aclose", None)
+        if not callable(aclose):
+            continue
+        try:
+            await aclose()
+        except Exception:
+            pass
 
 
 def _none_if_zero(value: int | None) -> int | None:

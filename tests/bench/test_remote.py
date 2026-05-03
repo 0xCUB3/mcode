@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -85,6 +86,20 @@ def _set_attempt_context(monkeypatch, *, timestamp: float, pid: int = 4242) -> s
 
 def _ignore_stream(ssh, remote_log, *, exit_sentinel, job_id, json_mode=False) -> None:
     del ssh, remote_log, exit_sentinel, job_id, json_mode
+
+
+def test_remote_json_stdout_omits_duplicate_message(capsys) -> None:
+    remote._emit_remote_event(True, "remote_stdout", "plain line", line="plain line")
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"kind": "remote_stdout", "data": {"line": "plain line"}}
+
+
+def test_remote_json_drops_tail_lifecycle_lines() -> None:
+    assert remote._drop_remote_json_line("tail: cannot open '/tmp/log' for reading")
+    assert remote._drop_remote_json_line("tail: '/tmp/log' has appeared;  following new file")
+    assert remote._drop_remote_json_line("WARNING: benchmark finished but LSF job 1 is still RUN")
+    assert not remote._drop_remote_json_line("podman storage host=h")
 
 
 def test_bluevela_bench_submits_lsf_job_with_podman_on_compute(tmp_path, monkeypatch) -> None:

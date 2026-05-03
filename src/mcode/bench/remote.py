@@ -34,7 +34,12 @@ def _emit_remote_event(json_mode: bool, kind: str, message: str, **data: object)
     if not json_mode:
         print(message)
         return
-    payload = {"kind": kind, "data": {"message": message, **data}}
+    event_data = dict(data)
+    if kind == "remote_stdout" and event_data.get("line") == message:
+        payload_data = event_data
+    else:
+        payload_data = {"message": message, **event_data}
+    payload = {"kind": kind, "data": payload_data}
     print(json.dumps(payload, sort_keys=True), flush=True)
 
 
@@ -871,6 +876,8 @@ def _stream_remote_log(
             else:
                 print(stripped, flush=True)
                 continue
+        if _drop_remote_json_line(stripped):
+            continue
         _emit_remote_event(json_mode, "remote_stdout", line, line=line)
     rc = proc.wait()
     if rc != 0:
@@ -880,6 +887,14 @@ def _stream_remote_log(
             f"log-stream ssh exited {rc}; remote job may still be running",
             returncode=rc,
         )
+
+
+def _drop_remote_json_line(line: str) -> bool:
+    return (
+        line.startswith("tail: cannot open ")
+        or (line.startswith("tail: '") and " has appeared;" in line)
+        or line.startswith("WARNING: benchmark finished but LSF job ")
+    )
 
 
 __all__ = ["RemoteBenchError", "run_bench_on_bluevela"]
