@@ -41,25 +41,48 @@ class PreparedPolyglotTask:
     tempdir: TemporaryDirectory[str] = field(repr=False, compare=False)
 
     def build_first_prompt(self) -> str:
-        stub_line = (
-            f"The stub file you need to implement is at {self.stub_paths[0]}."
-            if self.stub_paths
-            else ""
+        stub_line = _path_list(
+            "Implementation file(s) you may edit",
+            self.stub_paths,
+            self.work_dir,
         )
+        test_line = _path_list("Relevant test file(s)", self.test_paths, self.work_dir)
+        command_line = ", ".join(self.test_commands)
+        docs = _docs_excerpt(self.work_dir)
+        docs_block = f"\nExercise instructions:\n{docs}\n" if docs else ""
         return (
             f"Please implement the '{self.task.exercise}' exercise. "
-            f"The working directory is {self.work_dir}. "
-            f"{stub_line} "
-            "Explore the directory if you need more context, then implement "
-            "the solution and run the tests to verify."
+            f"The working directory is {self.work_dir}.\n"
+            f"{stub_line}\n"
+            f"{test_line}\n"
+            f"Test command: {command_line}\n"
+            f"{docs_block}\n"
+            "Only edit the listed implementation file(s). Do not edit tests, docs, "
+            "build files, dependency files, wrappers, or generated files. Read the "
+            "implementation and relevant tests, make the smallest correct edit, then "
+            "run the default tests."
         ).strip()
 
     def build_retry_prompt(self, test_output: str) -> str:
-        stub_line = f"The stub file is at {self.stub_paths[0]}." if self.stub_paths else ""
+        stub_line = _path_list(
+            "Implementation file(s) you may edit",
+            self.stub_paths,
+            self.work_dir,
+        )
+        test_line = _path_list("Relevant test file(s)", self.test_paths, self.work_dir)
+        docs = _docs_excerpt(self.work_dir)
+        docs_block = f"\nExercise instructions:\n{docs}\n" if docs else ""
         return (
-            f"The tests for '{self.task.exercise}' failed. Here is the test output:\n\n"
+            f"The tests for '{self.task.exercise}' failed. The working directory is "
+            f"{self.work_dir}; paths below are relative to that directory. Here is "
+            f"the test output:\n\n"
             f"```\n{test_output[:2000]}\n```\n\n"
-            f"{stub_line} Please fix the implementation so the tests pass."
+            f"{stub_line}\n"
+            f"{test_line}\n"
+            f"{docs_block}\n"
+            "Fix only the listed implementation file(s). Do not edit tests, docs, "
+            "build files, dependency files, wrappers, or generated files. Run the "
+            "default tests after the edit."
         ).strip()
 
 
@@ -69,6 +92,35 @@ class CommandOutcome:
     output: str
     exit_code: int | None
     timed_out: bool
+
+
+def _path_list(label: str, paths: tuple[str, ...], root: Path) -> str:
+    if not paths:
+        return f"{label}: (none)"
+    rel_paths = []
+    for path in paths:
+        candidate = Path(path)
+        try:
+            rel_paths.append(str(candidate.relative_to(root)))
+        except ValueError:
+            rel_paths.append(str(candidate))
+    return f"{label}: {', '.join(rel_paths)}"
+
+
+def _docs_excerpt(work_dir: Path, *, max_chars: int = 5000) -> str:
+    docs_dir = work_dir / ".docs"
+    if not docs_dir.is_dir():
+        return ""
+    parts: list[str] = []
+    for path in sorted(docs_dir.glob("*.md")):
+        text = path.read_text(errors="replace").strip()
+        if not text:
+            continue
+        parts.append(f"## {path.name}\n{text}")
+    text = "\n\n".join(parts).strip()
+    if len(text) > max_chars:
+        return text[:max_chars].rstrip() + "\n[docs truncated]"
+    return text
 
 
 @dataclass(frozen=True)

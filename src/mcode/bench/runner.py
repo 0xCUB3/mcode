@@ -129,6 +129,7 @@ class BenchmarkRunner:
         self.results_db = results_db
         self.json_mode = json_mode
         self._active_reporter = None
+        self._live_trace_attempt_label: str | None = None
         self.llm = self._build_llm(loop_budget=config.loop_budget)
 
     def _build_llm(self, *, loop_budget: int) -> LLMSession:
@@ -150,6 +151,8 @@ class BenchmarkRunner:
             return
         text = _format_live_trace_event(event_type, event)
         if text:
+            if self._live_trace_attempt_label and text.startswith("turn "):
+                text = f"{self._live_trace_attempt_label}: {text}"
             self._active_reporter.event("info", text)
 
     def _start_or_resume_run(self, benchmark: str, config: dict) -> _RunResume:
@@ -832,6 +835,7 @@ class BenchmarkRunner:
                 prepared=prepared,
                 prompt=prepared.build_first_prompt(),
                 loop_budget=self.config.loop_budget,
+                attempt_label="attempt 1/2" if self.config.aider_polyglot_retry else "attempt 1/1",
             )
             attempts_used = 1
             diff = get_git_diff(str(prepared.work_dir))
@@ -860,6 +864,7 @@ class BenchmarkRunner:
                     prepared=prepared,
                     prompt=prepared.build_retry_prompt(evaluation.output),
                     loop_budget=self.config.aider_polyglot_retry_loop_budget,
+                    attempt_label="attempt 2/2",
                 )
                 evaluation = run_test_commands(prepared)
                 if not evaluation.passed and final_pass_snapshot is not None:
@@ -944,6 +949,7 @@ class BenchmarkRunner:
         prepared,
         prompt: str,
         loop_budget: int,
+        attempt_label: str,
     ) -> tuple[dict[str, object] | None, object | None]:
         import shutil
 
@@ -951,6 +957,8 @@ class BenchmarkRunner:
         from mcode.bench.aider_polyglot import run_command_sequence, run_single_command
         from mcode.util import temporary_directory
 
+        if self._active_reporter is not None:
+            self._active_reporter.event("info", attempt_label)
         llm = self._build_llm(loop_budget=loop_budget)
         pass_snapshot = None
         allowed_commands = tuple(prepared.test_commands)
@@ -1001,6 +1009,8 @@ class BenchmarkRunner:
             status = "PASSED" if outcome.passed else ("TIMEOUT" if outcome.timed_out else "FAILED")
             return format_tool_result(label, status, outcome.output)
 
+        previous_attempt_label = self._live_trace_attempt_label
+        self._live_trace_attempt_label = attempt_label
         try:
             llm.solve(
                 repo=task.repo,
@@ -1010,6 +1020,7 @@ class BenchmarkRunner:
                 test_cmds={"test_cmds": list(prepared.test_commands)},
                 test_fn=test_fn,
                 visible_repo_root=str(prepared.work_dir),
+                editable_paths=prepared.stub_paths,
             )
         except Exception as exc:
             if pass_snapshot is None:
@@ -1027,6 +1038,8 @@ class BenchmarkRunner:
                 }
             )
             return metrics, pass_snapshot
+        finally:
+            self._live_trace_attempt_label = previous_attempt_label
         return _generation_result(llm), pass_snapshot
 
     def _generate_task_patch(
@@ -1344,6 +1357,7 @@ def _is_retryable_infra_text(text: str) -> bool:
             "docker socket",
             "database is locked",
             "polyglot toolchain unavailable",
+            "xml syntax error",
         )
     )
 

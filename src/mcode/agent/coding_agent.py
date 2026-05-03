@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from mellea.backends.tools import MelleaTool
@@ -73,6 +73,7 @@ def build_coding_agent(
     test_cmds: object | None = None,
     test_fn=None,
     command_fn: Callable[[str], str] | None = None,
+    editable_paths: Sequence[str] | None = None,
 ) -> CodingAgentAssembly:
 
     budget = max(1, session.loop_budget)
@@ -95,6 +96,7 @@ def build_coding_agent(
         repo_root,
         verification_policy=verification_policy,
         visible_repo_root=visible_repo_root,
+        editable_paths=editable_paths,
     )
 
     return CodingAgentAssembly(
@@ -129,24 +131,46 @@ def _normalize_tool_path(
     return path
 
 
+def _repo_relative_path(repo_root: str, path: str) -> str:
+    root = os.path.abspath(repo_root)
+    candidate = path if os.path.isabs(path) else os.path.join(root, path)
+    try:
+        return os.path.relpath(os.path.abspath(candidate), root).replace(os.sep, "/")
+    except ValueError:
+        return path.replace(os.sep, "/")
+
+
+def _allowed_edit_paths(repo_root: str, editable_paths: Sequence[str] | None) -> set[str] | None:
+    if editable_paths is None:
+        return None
+    return {_repo_relative_path(repo_root, path) for path in editable_paths}
+
+
 def make_agent_tools(
     repo_root: str,
     *,
     verification_policy: VerificationPolicy,
     visible_repo_root: str | None = None,
+    editable_paths: Sequence[str] | None = None,
 ):
     progress = VerificationProgress()
+    allowed_edits = _allowed_edit_paths(repo_root, editable_paths)
 
     def _search(query: str) -> str:
         return search_code(query, repo_root=repo_root)
 
     def _edit(path: str, old_str: str, new_str: str) -> str:
+        normalized_path = _normalize_tool_path(
+            path,
+            visible_repo_root=visible_repo_root,
+            repo_root=repo_root,
+        )
+        normalized_edit_path = _repo_relative_path(repo_root, normalized_path)
+        if allowed_edits is not None and normalized_edit_path not in allowed_edits:
+            allowed = ", ".join(sorted(allowed_edits))
+            return f"REJECTED: edit only the benchmark implementation file(s): {allowed}"
         result = str_replace_edit(
-            _normalize_tool_path(
-                path,
-                visible_repo_root=visible_repo_root,
-                repo_root=repo_root,
-            ),
+            normalized_path,
             old_str,
             new_str,
             repo_root=repo_root,

@@ -203,6 +203,31 @@ def test_make_agent_tools_uses_native_mellea_tools(tmp_path):
     assert tools["list_dir"].as_json_tool["function"]["parameters"].get("required") == []
 
 
+def test_make_agent_tools_restricts_editable_paths(tmp_path):
+    allowed = tmp_path / "src" / "allowed.py"
+    blocked = tmp_path / "build.gradle"
+    allowed.parent.mkdir()
+    allowed.write_text("value = 1\n")
+    blocked.write_text("value = 1\n")
+    policy = build_verification_policy(test_cmds=[])
+    tools = {
+        tool.name: tool
+        for tool in make_agent_tools(
+            str(tmp_path),
+            verification_policy=policy,
+            editable_paths=[str(allowed)],
+        )
+    }
+
+    blocked_result = tools["edit"].run(str(blocked), "value = 1", "value = 2")
+    allowed_result = tools["edit"].run(str(allowed), "value = 1", "value = 2")
+
+    assert "REJECTED" in blocked_result
+    assert "APPLIED" in allowed_result
+    assert blocked.read_text() == "value = 1\n"
+    assert allowed.read_text() == "value = 2\n"
+
+
 def test_make_agent_tools_normalizes_visible_repo_paths(tmp_path):
     target = tmp_path / "pkg"
     target.mkdir()

@@ -181,12 +181,19 @@ def _command_check(
 def _command_candidates(command: list[str]) -> list[list[str]]:
     binary = command[0]
     path = shutil.which(binary)
-    candidates = [[path, *command[1:]]] if path else []
+    candidates: list[list[str]] = []
     if platform.system().lower() == "darwin" and binary in {"java", "javac"}:
-        for root in ("/opt/homebrew/opt/openjdk/bin", "/usr/local/opt/openjdk/bin"):
+        for root in (
+            "/opt/homebrew/opt/openjdk@21/bin",
+            "/usr/local/opt/openjdk@21/bin",
+            "/opt/homebrew/opt/openjdk/bin",
+            "/usr/local/opt/openjdk/bin",
+        ):
             candidate = Path(root) / binary
             if candidate.exists():
                 candidates.append([str(candidate), *command[1:]])
+    if path:
+        candidates.append([path, *command[1:]])
     return candidates
 
 
@@ -282,7 +289,7 @@ def _install_commands(packages: Sequence[str]) -> list[list[str]]:
 
 
 def _macos_packages(packages: Sequence[str]) -> list[str]:
-    mapping = {"rust": "rust", "node": "node", "java": "openjdk", "c++": "llvm"}
+    mapping = {"rust": "rust", "node": "node", "java": "openjdk@21", "c++": "llvm"}
     return [mapping.get(package, package) for package in packages]
 
 

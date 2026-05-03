@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import json
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -320,6 +320,7 @@ class LLMSession:
         test_fn: object | None = None,
         command_fn: object | None = None,
         visible_repo_root: str | None = None,
+        editable_paths: Sequence[str] | None = None,
     ) -> str:
         return self.solve(
             repo=repo,
@@ -331,6 +332,7 @@ class LLMSession:
             test_fn=test_fn,
             command_fn=command_fn,
             visible_repo_root=visible_repo_root,
+            editable_paths=editable_paths,
         ).patch
 
     def solve(
@@ -345,6 +347,7 @@ class LLMSession:
         test_fn: object | None = None,
         command_fn: object | None = None,
         visible_repo_root: str | None = None,
+        editable_paths: Sequence[str] | None = None,
     ) -> SolveResult:
         self._last_result = None
         agent = build_coding_agent(
@@ -357,6 +360,7 @@ class LLMSession:
             test_cmds=test_cmds,
             test_fn=test_fn,
             command_fn=command_fn,
+            editable_paths=editable_paths,
         )
 
         attempts: list[SolveResult] = []
