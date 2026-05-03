@@ -76,6 +76,30 @@ def _parse_lsf_job_id(text: str) -> str:
     return match.group(1)
 
 
+def _current_git_sha() -> str | None:
+    sha = os.environ.get("MCODE_GIT_SHA") or os.environ.get("GITHUB_SHA")
+    if sha:
+        return sha
+    try:
+        repo_root = Path(__file__).resolve().parents[3]
+        if not (repo_root / ".git").exists():
+            return None
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    resolved = (result.stdout or "").strip()
+    return resolved or None
+
+
 def _resolve_endpoint(model: str, *, cfg: launch_config.LaunchConfig) -> str:
     if endpoint := os.environ.get("OPENAI_BASE_URL"):
         return endpoint
@@ -234,6 +258,7 @@ def run_bench_on_bluevela(
     remote_log = f"{remote_logs_dir}/bench-{attempt_token}.log"
     exit_sentinel = f"{remote_dir}/exit-{attempt_token}.code"
     remote_script_path = f"{remote_dir}/bench-{attempt_token}.sh"
+    bench_repo = f"{remote_dir}/repo"
     svc_log = f"{remote_logs_dir}/podman-svc-{attempt_token}.log"
     # Podman storage and temporary testbeds go under shared_root on /proj.
     # /tmp on login3 is small + shared, and workspace_root may be under a
@@ -247,11 +272,12 @@ def run_bench_on_bluevela(
     forwarded_exports = "".join(
         f"export {name}={shlex.quote(value)}\n" for name, value in forwarded_env.items()
     )
+    source_sha = _current_git_sha()
 
     # Replace/append --db so the bench writes to the remote path.
     argv = [*bench_argv]
     local_artifact_fetch = _resolve_remote_artifact_dir(
-        workspace_root=bv.workspace_root,
+        workspace_root=bench_repo,
         argv=argv,
     )
     if "--db" in argv:
@@ -262,7 +288,7 @@ def run_bench_on_bluevela(
 
     remote_benchmark_setup = _prepare_remote_benchmark_root(
         argv,
-        workspace_root=bv.workspace_root,
+        workspace_root=bench_repo,
         shared_root=bv.shared_root,
     )
 
@@ -279,7 +305,14 @@ if [ -z "${{LSB_JOBID:-}}" ]; then
   echo "refusing to start podman outside an LSF compute job" >&2
   exit 98
 fi
-cd {shlex.quote(bv.workspace_root)}
+REMOTE_WORKTREE={shlex.quote(bench_repo)}
+SOURCE_SHA={shlex.quote(source_sha or '')}
+git clone --quiet --no-hardlinks {shlex.quote(bv.workspace_root)} "$REMOTE_WORKTREE"
+if [ -n "$SOURCE_SHA" ]; then
+  git -C "$REMOTE_WORKTREE" fetch --depth=1 origin "$SOURCE_SHA"
+  git -C "$REMOTE_WORKTREE" checkout --detach "$SOURCE_SHA"
+fi
+cd "$REMOTE_WORKTREE"
 [ -f {shlex.quote(hf_env)} ] && source {shlex.quote(hf_env)}
 export XDG_RUNTIME_DIR={shlex.quote(runtime_dir)}
 export WORKSPACE_TMP={shlex.quote(tmp_dir)}
