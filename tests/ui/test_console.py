@@ -27,3 +27,15 @@ def test_configure_logging_handles_unknown_level():
     configure_logging("totally-bogus")
     # Falls back to WARNING.
     assert logging.getLogger("mcode").level == logging.WARNING
+
+
+
+def test_configure_logging_sets_mellea_logger_level():
+    from mellea.core.utils import FancyLogger
+
+    configure_logging("error")
+    logger = FancyLogger.get_logger()
+    assert logger.level == logging.ERROR
+    assert all(handler.level == logging.ERROR for handler in logger.handlers)
+
+    configure_logging("warning")

@@ -608,6 +608,37 @@ def test_aider_polyglot_cli_forwards_config(monkeypatch, tmp_path: Path) -> None
     assert config.artifact_dir == tmp_path / "polyglot-artifacts"
     assert captured["loop_budget"] == 20
 
+    assert captured["json_mode"] is False
+
+
+def test_aider_polyglot_local_forwards_json(monkeypatch, tmp_path: Path) -> None:
+    runner = CliRunner()
+    captured: dict[str, object] = {}
+
+    def fake_run_single_benchmark(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("mcode.cli._run_single_benchmark", fake_run_single_benchmark)
+
+    res = runner.invoke(
+        app,
+        [
+            "bench",
+            "aider-polyglot",
+            "--model",
+            "test-model",
+            "--language",
+            "python",
+            "--exercise",
+            "hello-world",
+            "--benchmark-root",
+            str(tmp_path / "polyglot"),
+            "--json",
+        ],
+    )
+
+    assert res.exit_code == 0
+    assert captured["json_mode"] is True
 
 def test_aider_polyglot_bluevela_forwards_args(monkeypatch, tmp_path: Path) -> None:
     runner = CliRunner()

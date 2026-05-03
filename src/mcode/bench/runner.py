@@ -114,9 +114,16 @@ def _noop_cleanup(_task: object, _environment: object | None) -> None:
 
 
 class BenchmarkRunner:
-    def __init__(self, *, config: BenchConfig, results_db: ResultsDB):
+    def __init__(
+        self,
+        *,
+        config: BenchConfig,
+        results_db: ResultsDB,
+        json_mode: bool = False,
+    ) -> None:
         self.config = config
         self.results_db = results_db
+        self.json_mode = json_mode
         self.llm = self._build_llm(loop_budget=config.loop_budget)
 
     def _build_llm(self, *, loop_budget: int) -> LLMSession:
@@ -697,7 +704,7 @@ class BenchmarkRunner:
                 error=exc,
             )
 
-        with choose_task_reporter() as reporter:
+        with choose_task_reporter(json_mode=self.json_mode) as reporter:
             reporter.total(len(pending_tasks))
             for task in pending_tasks:
                 result = adapter.run_task(task, environment, resume.run_id)

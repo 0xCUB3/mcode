@@ -62,7 +62,7 @@ def configure_logging(level: LogLevel | str | int = "warning", *, verbose: bool 
     # Mellea logging is optional in some test and install modes. Keep this
     # best-effort so mcode logging still works without the Mellea helper.
     try:
-        from mellea.helpers.fancy_logger import FancyLogger
+        from mellea.core.utils import FancyLogger
 
         mellea_logger = FancyLogger.get_logger()
         mellea_logger.setLevel(resolved)

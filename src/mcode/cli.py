@@ -2270,6 +2270,7 @@ def _run_suite_entry(
     shard_count: int | None,
     shard_index: int | None,
     diagnostic_traces: bool,
+    json_mode: bool = False,
 ) -> None:
     task_ids = task_ids_arg(entry)
     entry_timeout = _suite_entry_timeout(entry, timeout_s)
@@ -2348,6 +2349,7 @@ def _run_suite_entry(
         model=model,
         loop_budget=entry_loop_budget,
         timeout_s=entry_timeout,
+        json_mode=json_mode,
     )
 
 
@@ -2362,12 +2364,13 @@ def _run_single_benchmark(
     model: str,
     loop_budget: int,
     timeout_s: int,
+    json_mode: bool = False,
 ) -> None:
     from mcode.bench import runstate
     from mcode.launch.models import RunStatus, Target
 
     parsed_task_ids = _parse_task_ids(task_ids)
-    runner = BenchmarkRunner(config=config, results_db=ResultsDB(db))
+    runner = BenchmarkRunner(config=config, results_db=ResultsDB(db), json_mode=json_mode)
     run_id = runstate.make_run_id(benchmark)
     runstate.open_run(run_id=run_id, benchmark=benchmark, target=Target.LOCAL_VLLM, db_path=db)
     final_status: RunStatus = RunStatus.FAILED
@@ -2384,14 +2387,35 @@ def _run_single_benchmark(
                 typer.echo(f"✗ retryable infra failure before task loop: {e}", err=True)
                 raise typer.Exit(SHARDED_INFRA_EXIT_CODE) from e
             raise
-        _print_run_summary(
-            summary=summary,
-            benchmark=benchmark,
-            backend=backend,
-            model=model,
-            loop_budget=loop_budget,
-            timeout_s=timeout_s,
-        )
+        if json_mode:
+            print(
+                json.dumps(
+                    {
+                        "kind": "summary",
+                        "data": {
+                            "run_id": summary.run_id,
+                            "benchmark": benchmark,
+                            "backend": backend,
+                            "model": model,
+                            "loop_budget": loop_budget,
+                            "timeout_s": timeout_s,
+                            "total": summary.total,
+                            "passed": summary.passed,
+                            "pass_rate": summary.pass_rate,
+                        },
+                    },
+                    sort_keys=True,
+                )
+            )
+        else:
+            _print_run_summary(
+                summary=summary,
+                benchmark=benchmark,
+                backend=backend,
+                model=model,
+                loop_budget=loop_budget,
+                timeout_s=timeout_s,
+            )
         final_status = RunStatus.DONE
     finally:
         try:
@@ -2989,6 +3013,7 @@ def bench_artifacts_replay(
             else 0
         ),
         timeout_s=config.timeout_s,
+        json_mode=False,
     )
 
 
@@ -3292,6 +3317,7 @@ def bench_swebench_live(
         model=model,
         loop_budget=loop_budget,
         timeout_s=timeout_s,
+        json_mode=json_mode,
     )
 
 
@@ -3581,6 +3607,7 @@ def bench_swebench_lite(
         model=model,
         loop_budget=loop_budget,
         timeout_s=timeout_s,
+        json_mode=json_mode,
     )
 
 
@@ -3791,6 +3818,7 @@ def bench_aider_polyglot(
         model=model,
         loop_budget=loop_budget + (0 if no_retry else retry_loop_budget),
         timeout_s=300,
+        json_mode=json_mode,
     )
 
 
@@ -3972,6 +4000,7 @@ def bench_suite(
             shard_count=shard_count,
             shard_index=shard_index,
             diagnostic_traces=diagnostic_traces,
+            json_mode=json_mode,
         )
 
 
