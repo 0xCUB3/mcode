@@ -18,8 +18,6 @@ from mellea.plugins.types import PluginMode
 
 from mcode.mellea_compat import acall_tools_with_arg_compat, inspect_tool_call_arg_compat
 
-_EXPLORATION_TOOL_NAMES = {"find_file", "list_dir", "read_file", "search_code"}
-
 
 @dataclass
 class SolveTraceCollector:
@@ -388,16 +386,6 @@ async def run_react_loop(
                             "final_answer requires successful verification first"
                         )
                         continue
-                    if (
-                        tool_name in _EXPLORATION_TOOL_NAMES
-                        and reminded_without_edit
-                        and collector.turns_to_first_edit is None
-                    ):
-                        invalid_calls.append(
-                            f"{tool_name} is blocked now because an edit is required. "
-                            "Call edit on the best candidate source file instead."
-                        )
-                        continue
                     missing_args = _missing_required_args(tool_call)
                     if _should_autofill_finalizer(
                         tool_name,
@@ -559,7 +547,7 @@ def _recover_text_tool_calls(
         return {}
     tool_by_name = {str(getattr(tool, "name", "")): tool for tool in tools}
     recovered: dict[str, object] = {}
-    for index, payload in enumerate(_iter_json_objects(text)):
+    for payload in _iter_json_objects(text):
         if not isinstance(payload, dict):
             continue
         raw_name = str(
@@ -577,7 +565,7 @@ def _recover_text_tool_calls(
             args = {}
         from mellea.core.base import ModelToolCall
 
-        recovered[f"text_tool_{index}_{name}"] = ModelToolCall(
+        recovered[name] = ModelToolCall(
             name=name,
             func=tool,
             args=args,
