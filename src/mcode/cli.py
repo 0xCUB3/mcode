@@ -621,6 +621,7 @@ def compare(
             help="Comma-separated task IDs to compare (or path to JSON/text file)",
         ),
     ] = None,
+    benchmark: Annotated[str | None, typer.Option("--benchmark")] = None,
     suite_name: Annotated[str | None, typer.Option("--suite")] = None,
     suite_entry_name: Annotated[str | None, typer.Option("--suite-entry")] = None,
     json_mode: JsonFlag = False,
@@ -631,6 +632,7 @@ def compare(
         baseline_dir=str(baseline_dir),
         candidate_dir=str(candidate_dir),
         task_ids=_parse_task_ids(task_ids),
+        benchmark=benchmark,
         suite_name=suite_name,
         suite_entry_name=suite_entry_name,
     )

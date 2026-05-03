@@ -326,3 +326,42 @@ def test_compare_runs_includes_artifact_only_summary(tmp_path: Path) -> None:
         report["candidate_artifacts"]["selected_patch_byte_count_total"]
         > (report["baseline_artifacts"]["selected_patch_byte_count_total"])
     )
+
+
+
+def test_compare_cli_json_filters_benchmark(tmp_path: Path) -> None:
+    baseline_dir = tmp_path / "baseline-benchmark"
+    candidate_dir = tmp_path / "candidate-benchmark"
+    baseline_dir.mkdir()
+    candidate_dir.mkdir()
+
+    _write_compare_db(
+        baseline_dir / "a.db",
+        suite_entry_name="polyglot-python",
+        results={"python/affine-cipher": False},
+    )
+    _write_compare_db(
+        candidate_dir / "a.db",
+        suite_entry_name="polyglot-python",
+        results={"python/affine-cipher": True},
+    )
+
+    runner = CliRunner()
+    res = runner.invoke(
+        app,
+        [
+            "compare",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--candidate-dir",
+            str(candidate_dir),
+            "--benchmark",
+            "aider-polyglot",
+            "--json",
+        ],
+        color=False,
+    )
+
+    assert res.exit_code == 0
+    payload = json.loads(res.stdout)
+    assert payload["gained"] == ["python/affine-cipher"]

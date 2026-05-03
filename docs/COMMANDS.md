@@ -245,12 +245,14 @@ State transitions to `RunStatus.STOPPED` with `metadata.cancel_reason = "user"`.
 ## Results
 
 ```bash
-uv run mcode results [--db PATH | --db-glob 'g' | --db-dir DIR] [--benchmark X] [--model M] [--backend B] [--loop-budget N] [--timeout N] [--compare-configs] [--time]
-uv run mcode compare --baseline-dir A --candidate-dir B [--task-ids file]
+uv run mcode results [--db PATH | --db-glob 'g' | --db-dir DIR] [--benchmark X] [--model M] [--backend B] [--suite S] [--suite-entry E] [--loop-budget N] [--timeout N] [--compare-configs] [--time] [--json]
+uv run mcode compare --baseline-dir A --candidate-dir B [--benchmark X] [--suite S] [--suite-entry E] [--task-ids file] [--json]
 mcode report [--db ... | --db-dir DIR] [--benchmark X] --out report.html
 mcode merge-shards --shards-glob 'glob' --out merged.db
 mcode export-csv -i DIR --out-dir DIR --prefix mcode [--include-logs]
 ```
+
+`compare` accepts either DB files or directories on both sides. For generate-only runs, `--json` includes artifact summary fields like generated task count, evaluated task count, selected verified candidate count, and total selected patch bytes so you can compare two unevaluated scaffolds before paying for official eval.
 
 `results` flags:
 
