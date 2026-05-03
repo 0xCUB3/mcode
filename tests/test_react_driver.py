@@ -625,6 +625,10 @@ def test_run_react_loop_executes_valid_calls_when_batch_has_malformed_finalizer(
 
 def test_run_react_loop_blocks_final_answer_until_verification_succeeds(monkeypatch):
     finalizer_tool = MelleaTool.from_callable(lambda answer: answer, name="final_answer")
+    edit_tool = MelleaTool.from_callable(
+        lambda path, old_str, new_str: path,
+        name="edit",
+    )
     run_tests_tool = MelleaTool.from_callable(
         lambda test_cmd="default": test_cmd,
         name="run_tests",
@@ -638,6 +642,18 @@ def test_run_react_loop_blocks_final_answer_until_verification_succeeds(monkeypa
                             name="final_answer",
                             func=finalizer_tool,
                             args={"answer": "done early"},
+                        )
+                    }
+                ),
+                ChatContext(),
+            ),
+            (
+                SimpleNamespace(
+                    tool_calls={
+                        "edit": ModelToolCall(
+                            name="edit",
+                            func=edit_tool,
+                            args={"path": "foo.py", "old_str": "x", "new_str": "y"},
                         )
                     }
                 ),
@@ -679,6 +695,8 @@ def test_run_react_loop_blocks_final_answer_until_verification_succeeds(monkeypa
         del backend
         name = next(iter(result.tool_calls))
         executed.append(name)
+        if name == "edit":
+            return [SimpleNamespace(name="edit", content="$ edit foo.py\nAPPLIED\nok")]
         if name == "run_tests":
             return [SimpleNamespace(name="run_tests", content="$ pytest\nPASSED\nok")]
         return [SimpleNamespace(name="final_answer", content="done")]
@@ -691,9 +709,9 @@ def test_run_react_loop_blocks_final_answer_until_verification_succeeds(monkeypa
         run_react_loop(
             session,
             goal="Fix it",
-            tools=[SimpleNamespace(name="run_tests")],
+            tools=[SimpleNamespace(name="run_tests"), SimpleNamespace(name="edit")],
             model_options={},
-            loop_budget=3,
+            loop_budget=4,
             timeout_s=5,
             submission_format=None,
             collector=SolveTraceCollector(),
@@ -706,7 +724,7 @@ def test_run_react_loop_blocks_final_answer_until_verification_succeeds(monkeypa
 
     assert submission == "done"
     assert terminal_reason == "submitted"
-    assert executed == ["run_tests", "final_answer"]
+    assert executed == ["edit", "run_tests", "final_answer"]
 
 
 
