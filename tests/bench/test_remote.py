@@ -109,7 +109,6 @@ def test_bluevela_bench_submits_lsf_job_with_podman_on_compute(tmp_path, monkeyp
     monkeypatch.setattr(remote, "_resolve_endpoint", lambda model, cfg: "http://host:8321/v1")
     monkeypatch.setattr(remote, "SshClient", _FakeSshClient)
     attempt_token = _set_attempt_context(monkeypatch, timestamp=1777000000.0)
-    monkeypatch.setattr(remote, "_current_git_sha", lambda: "deadbeef")
 
     def fake_stream(ssh, remote_log, *, exit_sentinel, job_id, json_mode=False) -> None:
         del ssh, json_mode
@@ -158,14 +157,6 @@ def test_bluevela_bench_submits_lsf_job_with_podman_on_compute(tmp_path, monkeyp
     assert ssh.uploads
     script_text = ssh.uploads[0][0]
     assert ssh.uploads[0][1].endswith(f"/bench-{attempt_token}.sh")
-    assert f"REMOTE_WORKTREE=/u/skula/mcode-launch/bench-runs/{run_id}/repo" in script_text
-    assert (
-        'git clone --quiet --no-hardlinks /u/skula/mcode-launch "$REMOTE_WORKTREE"'
-        in script_text
-    )
-    assert 'git -C "$REMOTE_WORKTREE" fetch --depth=1 origin "$SOURCE_SHA"' in script_text
-    assert 'git -C "$REMOTE_WORKTREE" checkout --detach "$SOURCE_SHA"' in script_text
-    assert 'SOURCE_SHA=deadbeef' in script_text
     assert 'if [ -z "${LSB_JOBID:-}" ]; then' in script_text
     assert "refusing to start podman outside an LSF compute job" in script_text
     assert f"export XDG_RUNTIME_DIR=/u/skula/mcode-shared/podman-runtime/{run_id}" in script_text
@@ -214,7 +205,6 @@ def test_bluevela_bench_uses_graphroot_override(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(remote, "SshClient", _FakeSshClient)
     monkeypatch.setattr(remote, "_stream_remote_log", _ignore_stream)
     _set_attempt_context(monkeypatch, timestamp=1777000000.5)
-    monkeypatch.setattr(remote, "_current_git_sha", lambda: "deadbeef")
 
     remote.run_bench_on_bluevela(
         bench_argv=["smoke", "--model", "Qwen/Qwen3.5-35B-A3B"],
@@ -259,7 +249,6 @@ def test_run_bench_on_bluevela_fetches_artifacts_when_requested(tmp_path, monkey
     monkeypatch.setattr(remote, "SshClient", _FakeSshClient)
     monkeypatch.setattr(remote, "_stream_remote_log", _ignore_stream)
     _set_attempt_context(monkeypatch, timestamp=1777000001.5)
-    monkeypatch.setattr(remote, "_current_git_sha", lambda: "deadbeef")
 
     local_db = tmp_path / "results.db"
     exit_code = remote.run_bench_on_bluevela(
@@ -278,21 +267,9 @@ def test_run_bench_on_bluevela_fetches_artifacts_when_requested(tmp_path, monkey
     assert exit_code == 0
     ssh = _FakeSshClient.last
     assert ssh is not None
-    run_id = remote._remote_run_key(
-        model="Qwen/Qwen3.5-35B-A3B",
-        local_db=local_db,
-        bench_argv=[
-            "smoke",
-            "--model",
-            "Qwen/Qwen3.5-35B-A3B",
-            "--artifact-dir",
-            "experiments/results/smoke/artifacts",
-        ],
-        forwarded_env={},
-    )
     assert ssh.download_trees == [
         (
-            f"/u/skula/mcode-launch/bench-runs/{run_id}/repo/experiments/results/smoke/artifacts",
+            "/u/skula/mcode-launch/experiments/results/smoke/artifacts",
             Path("experiments/results/smoke/artifacts"),
             300,
         )
@@ -330,7 +307,6 @@ def test_run_bench_on_bluevela_sets_up_aider_polyglot_root(tmp_path, monkeypatch
     monkeypatch.setattr(remote, "SshClient", _FakeSshClient)
     monkeypatch.setattr(remote, "_stream_remote_log", _ignore_stream)
     _set_attempt_context(monkeypatch, timestamp=1777000003.0)
-    monkeypatch.setattr(remote, "_current_git_sha", lambda: "deadbeef")
 
     remote.run_bench_on_bluevela(
         bench_argv=[
@@ -347,24 +323,9 @@ def test_run_bench_on_bluevela_sets_up_aider_polyglot_root(tmp_path, monkeypatch
     ssh = _FakeSshClient.last
     assert ssh is not None
     script_text = ssh.uploads[0][0]
-    run_id = remote._remote_run_key(
-        model="Qwen/Qwen3.6-35B-A3B",
-        local_db=tmp_path / "results.db",
-        bench_argv=[
-            "aider-polyglot",
-            "--model",
-            "Qwen/Qwen3.6-35B-A3B",
-            "--benchmark-root",
-            "/Users/skula/Documents/polyglot-benchmark",
-        ],
-        forwarded_env={},
-    )
-    remote_root = f"/u/skula/mcode-launch/bench-runs/{run_id}/repo/benchmarks/polyglot-benchmark"
+    remote_root = "/u/skula/mcode-launch/benchmarks/polyglot-benchmark"
     assert "git clone --depth=1 https://github.com/Aider-AI/polyglot-benchmark.git" in script_text
-    assert (
-        f") 9>/u/skula/mcode-launch/bench-runs/{run_id}/repo/benchmarks/"
-        ".polyglot-benchmark.lock" in script_text
-    )
+    assert ") 9>/u/skula/mcode-launch/benchmarks/.polyglot-benchmark.lock" in script_text
     assert f"--benchmark-root {remote_root}" in script_text
     assert "/Users/skula/Documents/polyglot-benchmark" not in script_text
     toolchain_root = "/u/skula/mcode-shared/toolchains/aider-polyglot"
