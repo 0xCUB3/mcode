@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 
+from mcode.agent.tooling import format_tool_result
 from mcode.agent.verification import (
     VerificationProgress,
     build_run_tests_tool,
@@ -61,3 +62,14 @@ def test_run_tests_suppresses_repeat_failed_run_without_edit(tmp_path):
     assert "Edit the code before rerunning" in second
     assert "FAILED" in third
     assert calls == ["pytest", "pytest"]
+
+
+def test_format_tool_result_keeps_status_visible_for_multiline_commands():
+    command = "python - <<'PY'\n" + "print('x')\n" * 80 + "PY"
+    result = format_tool_result(command, "FAILED", "actual failure")
+    lines = result.splitlines()
+
+    assert lines[0].startswith("$ python - <<'PY'")
+    assert len(lines[0]) <= 302
+    assert lines[1] == "FAILED"
+    assert lines[2] == "actual failure"

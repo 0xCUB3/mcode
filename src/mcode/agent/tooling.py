@@ -105,9 +105,16 @@ def _truncate_output(output: str) -> str:
     )
 
 
+def _format_tool_command(command: str, *, max_chars: int = 300) -> str:
+    label = " ".join(command.strip().split())
+    if len(label) <= max_chars:
+        return label
+    return label[: max_chars - 24].rstrip() + " ... [command truncated]"
+
+
 def format_tool_result(command: str, status: str, output: str) -> str:
     body = output.rstrip() if output.strip() else "(no output)"
-    return f"$ {command}\n{status}\n{body}"
+    return f"$ {_format_tool_command(command)}\n{status}\n{body}"
 
 
 def is_tool_result(output: str) -> bool:
