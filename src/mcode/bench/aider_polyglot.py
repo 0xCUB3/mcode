@@ -52,6 +52,7 @@ class PreparedPolyglotTask:
         docs = _docs_excerpt(self.work_dir)
         docs_block = f"\nExercise instructions:\n{docs}\n" if docs else ""
         language_note = _language_note(self.task.language)
+        reactive_note = _reactive_note(self.work_dir, self.stub_paths, self.test_paths)
         return (
             f"Please implement the '{self.task.exercise}' exercise. "
             f"The working directory is {self.work_dir}.\n"
@@ -60,6 +61,7 @@ class PreparedPolyglotTask:
             f"Test command: {command_line}\n"
             f"{docs_block}\n"
             f"{language_note}"
+            f"{reactive_note}"
             "Only edit the listed implementation file(s). Do not edit tests, docs, "
             "build files, dependency files, wrappers, or generated files. Read the "
             "implementation and relevant tests, make the smallest correct edit, then "
@@ -76,6 +78,12 @@ class PreparedPolyglotTask:
         docs = _docs_excerpt(self.work_dir)
         docs_block = f"\nExercise instructions:\n{docs}\n" if docs else ""
         language_note = _language_note(self.task.language)
+        reactive_note = _reactive_note(
+            self.work_dir,
+            self.stub_paths,
+            self.test_paths,
+            test_output,
+        )
         return (
             f"The tests for '{self.task.exercise}' failed. The working directory is "
             f"{self.work_dir}; paths below are relative to that directory. Here is "
@@ -85,6 +93,7 @@ class PreparedPolyglotTask:
             f"{test_line}\n"
             f"{docs_block}\n"
             f"{language_note}"
+            f"{reactive_note}"
             "Fix only the listed implementation file(s). Do not edit tests, docs, "
             "build files, dependency files, wrappers, or generated files. Run the "
             "default tests after the edit."
@@ -119,6 +128,35 @@ def _path_list(label: str, paths: tuple[str, ...], root: Path) -> str:
         except ValueError:
             rel_paths.append(str(candidate))
     return f"{label}: {', '.join(rel_paths)}"
+
+
+def _reactive_note(
+    work_dir: Path,
+    stub_paths: tuple[str, ...],
+    test_paths: tuple[str, ...],
+    test_output: str = "",
+) -> str:
+    for rel_path in (*stub_paths, *test_paths):
+        path = Path(rel_path)
+        if not path.is_absolute():
+            path = work_dir / path
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        if "io.reactivex.Observable" in text or "rx.Observable" in text:
+            note = (
+                "Reactive stream APIs can often be implemented with a simple Observable.create "
+                "and ordinary local state when the tests use synchronous observables; avoid "
+                "complex combinators unless they directly match the required event ordering."
+            )
+            if "TIMEOUT" in test_output or "Command timed out" in test_output:
+                note += (
+                    " A timeout in reactive tests often means the returned stream never "
+                    "completed; make sure finite source completion reaches the returned stream."
+                )
+            return f"{note}\n"
+    return ""
 
 
 def _language_note(language: str) -> str:

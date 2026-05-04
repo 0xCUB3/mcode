@@ -186,6 +186,43 @@ def test_run_tests_tool_appends_failure_report_snippets(tmp_path):
     assert "assertThat(value).isEqualTo(1)" in result
 
 
+def test_run_tests_tool_adds_failed_test_helper_snippets(tmp_path):
+    report_dir = tmp_path / "build" / "test-results" / "test"
+    report_dir.mkdir(parents=True)
+    (report_dir / "TEST-example.xml").write_text(
+        '<testsuite><testcase name="usesHelpers" classname="ExampleTest">'
+        '<failure message="expected 2 but was 0">stack trace</failure>'
+        "</testcase></testsuite>"
+    )
+    test_src = tmp_path / "src" / "test" / "java" / "ExampleTest.java"
+    test_src.parent.mkdir(parents=True)
+    test_src.write_text(
+        "class ExampleTest {\n"
+        "  @Test\n"
+        "  void usesHelpers() {\n"
+        "    Object value = createValue();\n"
+        "    assertThat(value).isNotNull();\n"
+        "  }\n"
+        "  Object createValue() {\n"
+        "    return new Object();\n"
+        "  }\n"
+        "}\n"
+    )
+
+    def command_fn(command: str) -> str:
+        return format_tool_result(command, "FAILED", "There were failing tests.")
+
+    policy = build_verification_policy(test_cmds=["./gradlew test"], command_fn=command_fn)
+    tool = build_run_tests_tool(repo_root=str(tmp_path), verification_policy=policy)
+
+    assert tool is not None
+    result = tool.run("default")
+
+    assert "helper createValue" in result
+    assert "return new Object()" in result
+    assert "helper assertThat" not in result
+
+
 def test_run_tests_tool_preserves_status_when_truncating(tmp_path):
     def command_fn(command: str) -> str:
         return format_tool_result(command, "FAILED", "start\n" + ("filler\n" * 200) + "final error")

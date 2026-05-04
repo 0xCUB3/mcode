@@ -456,7 +456,7 @@ def _failure_source_snippets(repo_root: Path, failed_cases: list[tuple[str, str,
         if path is None or not method or (path, method) in seen:
             continue
         seen.add((path, method))
-        snippet = _source_method_snippet(path, method)
+        snippet = _source_method_with_local_helpers(path, method)
         if snippet:
             rel = path.relative_to(repo_root).as_posix()
             snippets.append(f"{rel}::{method}\n{snippet}")
@@ -612,6 +612,57 @@ def _find_test_source(repo_root: Path, classname: str) -> Path | None:
 
 def _test_method_name(test_name: str) -> str:
     return test_name.split("(", 1)[0].strip()
+
+
+def _source_method_with_local_helpers(path: Path, method: str, *, max_lines: int = 45) -> str:
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return ""
+    target = re.compile(rf"\b{re.escape(method)}\b")
+    index = next((i for i, line in enumerate(lines) if target.search(line)), None)
+    if index is None:
+        return ""
+    primary = _source_block_from_lines(lines, index, max_lines=max_lines)
+    helpers: list[str] = []
+    local_methods = _local_method_indices(lines)
+    block_text = _raw_source_block(lines, index, max_lines=max_lines)
+    for helper, helper_index in local_methods.items():
+        if helper == method or helper_index == index:
+            continue
+        if not re.search(rf"\b{re.escape(helper)}\s*\(", block_text):
+            continue
+        helper_snippet = _source_block_from_lines(lines, helper_index, max_lines=30)
+        if helper_snippet:
+            helpers.append(f"helper {helper}\n{helper_snippet}")
+        if len(helpers) >= 2:
+            break
+    return "\n\n".join([primary, *helpers])[:3000]
+
+
+def _raw_source_block(lines: list[str], index: int, *, max_lines: int) -> str:
+    start = _enclosing_test_block_start(lines, index)
+    end = _method_end(lines, index, max_lines=max_lines)
+    return "\n".join(lines[start:end])
+
+
+def _local_method_indices(lines: list[str]) -> dict[str, int]:
+    methods: dict[str, int] = {}
+    pattern = re.compile(
+        r"^\s*(?:public|private|protected)?\s*(?:static\s+)?"
+        r"[\w<>\[\], ?]+\s+(?P<name>[A-Za-z_]\w*)\s*\("
+    )
+    for index, line in enumerate(lines):
+        match = pattern.match(line)
+        if not match:
+            continue
+        next_line = lines[index + 1].strip() if index + 1 < len(lines) else ""
+        if "{" not in line and next_line != "{":
+            continue
+        name = match.group("name")
+        if name not in methods:
+            methods[name] = index
+    return methods
 
 
 def _source_method_snippet(path: Path, method: str, *, max_lines: int = 45) -> str:

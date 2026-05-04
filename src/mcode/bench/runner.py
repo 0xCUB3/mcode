@@ -1490,7 +1490,7 @@ def _should_run_final_polyglot_repair(output: str) -> bool:
     if not output.strip():
         return False
     if "TIMEOUT" in output or "Command timed out" in output:
-        return False
+        return _looks_like_repairable_reactive_timeout(output)
     if _should_reset_before_retry(output):
         return False
     return (
@@ -1498,6 +1498,16 @@ def _should_run_final_polyglot_repair(output: str) -> bool:
         or "error[E" in output
         or "Compilation failed" in output
         or "compileJava" in output
+    )
+
+
+def _looks_like_repairable_reactive_timeout(output: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:Observable|reactive|stream|blockingLast|subscribe)\b",
+            output,
+            re.IGNORECASE,
+        )
     )
 
 

@@ -76,6 +76,52 @@ def test_prepare_task_strips_meta_and_javascript_skip_markers(tmp_path: Path) ->
         cleanup_prepared_task(prepared)
 
 
+def test_first_prompt_notes_synchronous_reactive_stream_simplification(tmp_path: Path) -> None:
+    _make_exercise(
+        tmp_path,
+        "java",
+        "stream-game",
+        {
+            "src/main/java/Game.java": "import io.reactivex.Observable;\nclass Game {}\n",
+            "src/test/java/GameTest.java": "import io.reactivex.Observable;\nclass GameTest {}\n",
+            "build.gradle": "",
+        },
+    )
+
+    task = load_aider_polyglot(tmp_path, language="java")[0]
+    prepared = prepare_task(task, benchmark_root=tmp_path)
+    try:
+        prompt = prepared.build_first_prompt()
+
+        assert "simple Observable.create" in prompt
+        assert "synchronous observables" in prompt
+    finally:
+        cleanup_prepared_task(prepared)
+
+
+def test_retry_prompt_notes_reactive_timeout_completion(tmp_path: Path) -> None:
+    _make_exercise(
+        tmp_path,
+        "java",
+        "stream-game",
+        {
+            "src/main/java/Game.java": "import io.reactivex.Observable;\nclass Game {}\n",
+            "src/test/java/GameTest.java": "import io.reactivex.Observable;\nclass GameTest {}\n",
+            "build.gradle": "",
+        },
+    )
+
+    task = load_aider_polyglot(tmp_path, language="java")[0]
+    prepared = prepare_task(task, benchmark_root=tmp_path)
+    try:
+        prompt = prepared.build_retry_prompt("Command timed out after 300s")
+
+        assert "returned stream never completed" in prompt
+        assert "finite source completion" in prompt
+    finally:
+        cleanup_prepared_task(prepared)
+
+
 def test_retry_prompt_keeps_final_failure_diagnostics(tmp_path: Path) -> None:
     _make_exercise(
         tmp_path,
