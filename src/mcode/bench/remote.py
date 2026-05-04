@@ -159,12 +159,13 @@ def _prepare_remote_benchmark_root(
     workspace_root: str,
     shared_root: str,
 ) -> str:
-    if not argv or argv[0] != "aider-polyglot":
+    if not argv or argv[0] not in {"aider-polyglot", "suite"}:
         return ""
 
     remote_root = f"{workspace_root}/benchmarks/polyglot-benchmark"
     toolchain_root = f"{shared_root}/toolchains/aider-polyglot"
-    _replace_or_append_option(argv, "--benchmark-root", remote_root)
+    if argv[0] == "aider-polyglot":
+        _replace_or_append_option(argv, "--benchmark-root", remote_root)
     root_q = shlex.quote(remote_root)
     parent_q = shlex.quote(str(Path(remote_root).parent))
     toolchain_q = shlex.quote(toolchain_root)

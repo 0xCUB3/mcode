@@ -328,7 +328,7 @@ def _append_failure_artifacts(
 ) -> str:
     if _tool_result_passed(tool_result):
         return _truncate_tool_result(tool_result, max_output_chars)
-    artifact_text = _collect_failure_artifacts(Path(repo_root))
+    artifact_text = _collect_failure_artifacts(Path(repo_root), tool_result)
     if not artifact_text:
         return _truncate_tool_result(tool_result, max_output_chars)
     combined = f"{tool_result.rstrip()}\n\nFailure report snippets:\n{artifact_text}"
@@ -360,7 +360,7 @@ def _truncate_tool_result(value: str, max_output_chars: int) -> str:
     return value[-max_output_chars:]
 
 
-def _collect_failure_artifacts(repo_root: Path) -> str:
+def _collect_failure_artifacts(repo_root: Path, output: str = "") -> str:
     if not repo_root.is_dir():
         return ""
     candidates = _failure_artifact_candidates(repo_root)
@@ -369,8 +369,17 @@ def _collect_failure_artifacts(repo_root: Path) -> str:
         if path.suffix.lower() == ".xml":
             failed_cases.extend(_failed_test_cases(path))
     snippets: list[str] = []
-    if source_snippets := _failure_source_snippets(repo_root, failed_cases):
-        snippets.append(f"Failing test source snippets:\n{source_snippets}")
+    source_blocks = [
+        block
+        for block in (
+            _failure_source_snippets(repo_root, failed_cases),
+            _failure_source_snippets_from_output(repo_root, output),
+        )
+        if block
+    ]
+    if source_blocks:
+        source_text = "\n\n".join(source_blocks)
+        snippets.append(f"Failing test source snippets:\n{source_text}")
     for path in candidates[:4]:
         snippet = _failure_artifact_snippet(path)
         if snippet:
@@ -434,6 +443,67 @@ def _failure_source_snippets(repo_root: Path, failed_cases: list[tuple[str, str,
     return "\n\n".join(snippets)
 
 
+def _failure_source_snippets_from_output(repo_root: Path, output: str) -> str:
+    failed_names = _failed_test_names_from_output(output)
+    if not failed_names:
+        return ""
+    snippets: list[str] = []
+    seen: set[tuple[Path, int]] = set()
+    for name in failed_names[:4]:
+        for path, index in _find_named_test_sources(repo_root, name):
+            if (path, index) in seen:
+                continue
+            seen.add((path, index))
+            snippet = _source_block_snippet(path, index)
+            if snippet:
+                rel = path.relative_to(repo_root).as_posix()
+                snippets.append(f"{rel}::{name}\n{snippet}")
+            if len(snippets) >= 4:
+                return "\n\n".join(snippets)
+    return "\n\n".join(snippets)
+
+
+def _failed_test_names_from_output(output: str) -> list[str]:
+    names: list[str] = []
+    for line in output.splitlines():
+        match = re.match(r"\s*[✕×x]\s+(.+?)(?:\s+\(\d+\s*ms\))?\s*$", line)
+        if match:
+            names.append(match.group(1).strip())
+    return names
+
+
+def _find_named_test_sources(repo_root: Path, test_name: str) -> list[tuple[Path, int]]:
+    matches: list[tuple[Path, int]] = []
+    escaped = re.escape(test_name)
+    patterns = (
+        re.compile(rf"\b(?:test|it)\s*\(\s*['\"]{escaped}['\"]"),
+        re.compile(rf"\b(?:xtest|xit)\s*\(\s*['\"]{escaped}['\"]"),
+    )
+    for path in _test_source_candidates(repo_root):
+        try:
+            lines = path.read_text(errors="replace").splitlines()
+        except OSError:
+            continue
+        for index, line in enumerate(lines):
+            if any(pattern.search(line) for pattern in patterns):
+                matches.append((path, index))
+    return matches
+
+
+def _test_source_candidates(repo_root: Path) -> list[Path]:
+    suffixes = (".java", ".kt", ".py", ".js", ".ts", ".rs", ".go", ".cpp", ".cc", ".cxx")
+    candidates = [
+        path for path in repo_root.rglob("*") if path.is_file() and path.suffix in suffixes
+    ]
+    candidates.sort(
+        key=lambda path: (
+            "test" not in path.name.lower() and "spec" not in path.name.lower(),
+            str(path),
+        )
+    )
+    return candidates
+
+
 def _find_test_source(repo_root: Path, classname: str) -> Path | None:
     simple = classname.rsplit(".", 1)[-1].split("$", 1)[0].strip()
     if not simple:
@@ -459,6 +529,18 @@ def _source_method_snippet(path: Path, method: str, *, max_lines: int = 45) -> s
     index = next((i for i, line in enumerate(lines) if target.search(line)), None)
     if index is None:
         return ""
+    return _source_block_from_lines(lines, index, max_lines=max_lines)
+
+
+def _source_block_snippet(path: Path, index: int, *, max_lines: int = 45) -> str:
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return ""
+    return _source_block_from_lines(lines, index, max_lines=max_lines)
+
+
+def _source_block_from_lines(lines: list[str], index: int, *, max_lines: int) -> str:
     start = index
     while start > 0 and lines[start - 1].lstrip().startswith("@"):
         start -= 1

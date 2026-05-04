@@ -115,6 +115,28 @@ def test_run_bench_on_bluevela_submits_and_uploads_script(tmp_path: Path, monkey
     assert str(tmp_path / "remote-shared") in script
 
 
+def test_suite_remote_prepares_polyglot_toolchains(tmp_path: Path, monkeypatch) -> None:
+    _patch_remote(monkeypatch, tmp_path)
+    local_db = tmp_path / "suite.db"
+
+    assert (
+        remote.run_bench_on_bluevela(
+            bench_argv=["suite", "--model", "Qwen/Qwen3.6-35B-A3B"],
+            model="Qwen/Qwen3.6-35B-A3B",
+            local_db=local_db,
+        )
+        == 0
+    )
+
+    ssh = _Ssh.last
+    assert ssh is not None
+    script, _dst = ssh.uploads[0]
+    assert "polyglot-benchmark.git" in script
+    assert "TOOLCHAIN_ROOT=" in script
+    assert 'export GOROOT="$TOOLCHAIN_ROOT/go"' in script
+    assert "uv run mcode bench suite" in script
+
+
 def test_bench_artifacts_fetch_downloads_saved_remote_dir(tmp_path: Path, monkeypatch) -> None:
     state_path = tmp_path / "state.json"
     monkeypatch.setenv("MCODE_LAUNCH_STATE", str(state_path))

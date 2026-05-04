@@ -75,6 +75,31 @@ def test_prepare_task_strips_meta_and_javascript_skip_markers(tmp_path: Path) ->
         cleanup_prepared_task(prepared)
 
 
+def test_retry_prompt_keeps_final_failure_diagnostics(tmp_path: Path) -> None:
+    _make_exercise(
+        tmp_path,
+        "javascript",
+        "promises",
+        {
+            "promises.js": "export const all = () => {};\n",
+            "promises.spec.js": "test('works', () => expect(true).toBe(true));\n",
+            "package.json": '{"scripts":{"test":"jest"},"devDependencies":{"jest":"latest"}}',
+        },
+    )
+
+    task = load_aider_polyglot(tmp_path, language="javascript")[0]
+    prepared = prepare_task(task, benchmark_root=tmp_path)
+    try:
+        output = "start\n" + ("filler\n" * 700) + "final assertion details\n"
+        prompt = prepared.build_retry_prompt(output)
+
+        assert "start" in prompt
+        assert "[test output truncated, keeping final diagnostics]" in prompt
+        assert "final assertion details" in prompt
+    finally:
+        cleanup_prepared_task(prepared)
+
+
 def test_prepare_task_loads_rust_example_dependencies(tmp_path: Path) -> None:
     _make_exercise(
         tmp_path,

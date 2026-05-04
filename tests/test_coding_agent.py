@@ -186,6 +186,45 @@ def test_run_tests_tool_appends_failure_report_snippets(tmp_path):
     assert "assertThat(value).isEqualTo(1)" in result
 
 
+def test_run_tests_tool_adds_jest_failed_test_source_snippets(tmp_path):
+    spec = tmp_path / "promises.spec.js"
+    spec.write_text(
+        "describe('promises', () => {\n"
+        "  xtest('resolves when given no arguments', () => {\n"
+        "    return expect(allSettled()).resolves.toBeUndefined();\n"
+        "  });\n"
+        "  xtest('resolves when given no arguments', () => {\n"
+        "    return expect(race()).resolves.toBeUndefined();\n"
+        "  });\n"
+        "});\n"
+    )
+
+    def command_fn(command: str) -> str:
+        return format_tool_result(
+            command,
+            "FAILED",
+            "FAIL ./promises.spec.js\n"
+            "    allSettled\n"
+            "      ✕ resolves when given no arguments (1 ms)\n"
+            "    race\n"
+            "      ✕ resolves when given no arguments (1 ms)",
+        )
+
+    policy = build_verification_policy(
+        test_cmds=["npm test --silent"],
+        command_fn=command_fn,
+    )
+    tool = build_run_tests_tool(repo_root=str(tmp_path), verification_policy=policy)
+
+    assert tool is not None
+    result = tool.run("default")
+
+    assert "Failing test source snippets:" in result
+    assert "promises.spec.js::resolves when given no arguments" in result
+    assert "allSettled()).resolves.toBeUndefined()" in result
+    assert "race()).resolves.toBeUndefined()" in result
+
+
 def test_make_agent_tools_appends_run_tests(tmp_path):
     policy = build_verification_policy(test_cmds=["pytest -q"])
 

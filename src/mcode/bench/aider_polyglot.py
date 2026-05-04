@@ -79,7 +79,7 @@ class PreparedPolyglotTask:
             f"The tests for '{self.task.exercise}' failed. The working directory is "
             f"{self.work_dir}; paths below are relative to that directory. Here is "
             f"the test output:\n\n"
-            f"```\n{test_output[:2000]}\n```\n\n"
+            f"```\n{_retry_output_excerpt(test_output)}\n```\n\n"
             f"{stub_line}\n"
             f"{test_line}\n"
             f"{docs_block}\n"
@@ -88,6 +88,15 @@ class PreparedPolyglotTask:
             "build files, dependency files, wrappers, or generated files. Run the "
             "default tests after the edit."
         ).strip()
+
+
+def _retry_output_excerpt(output: str, *, max_chars: int = 3000) -> str:
+    if len(output) <= max_chars:
+        return output
+    edge = max_chars // 2
+    head = output[:edge].rstrip()
+    tail = output[-edge:].lstrip()
+    return f"{head}\n...[test output truncated, keeping final diagnostics]...\n{tail}"
 
 
 @dataclass(frozen=True)

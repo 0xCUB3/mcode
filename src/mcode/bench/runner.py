@@ -863,7 +863,7 @@ class BenchmarkRunner:
 
             if not evaluation.passed and self.config.aider_polyglot_retry:
                 retry_output = evaluation.output
-                if _looks_like_compile_failure(retry_output):
+                if _should_reset_before_retry(retry_output):
                     reset_to_baseline(prepared.work_dir)
                 final_metrics, final_pass_snapshot = self._run_aider_polyglot_attempt(
                     task=task,
@@ -1448,22 +1448,18 @@ def _scaffold_metrics(
     return out
 
 
-def _looks_like_compile_failure(output: str) -> bool:
+def _should_reset_before_retry(output: str) -> bool:
     text = output.lower()
     markers = (
-        "compilation failed",
-        "compile failed",
-        "could not compile",
-        "failed to compile",
-        "compilejava",
-        "compiler error",
-        "syntaxerror",
-        "syntax error",
         "unclosed delimiter",
         "unclosed string literal",
-        "build failed",
-        "linker command failed",
-        "undefined reference",
+        "syntaxerror",
+        "syntax error",
+        "parse error",
+        "unexpected eof",
+        "unexpected end of file",
+        "reached end of file",
+        "expected declaration",
     )
     return any(marker in text for marker in markers)
 
