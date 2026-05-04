@@ -11,6 +11,7 @@ from mcode.agent.verification import build_run_tests_tool, build_verification_po
 from mcode.bench import runner as runner_module
 from mcode.bench.results import ResultsDB
 from mcode.bench.runner import BenchConfig, BenchmarkRunner
+from mcode.bench.toolchains import PolyglotToolchainError
 from mcode.execution.sandbox import DockerUnavailableError
 from mcode.llm.session import (
     LLMSession,
@@ -582,6 +583,43 @@ def test_run_task_records_infra_failure_after_docker_retry(tmp_path):
     assert result["attempts_used"] == 2
     assert result["terminal_reason"] == "infra_failure"
     assert result["error"] == "DockerUnavailableError: socket timed out"
+
+
+def test_polyglot_toolchain_preflight_raises_without_task_rows(tmp_path) -> None:
+    results_db = ResultsDB(tmp_path / "results.db")
+    runner = BenchmarkRunner(
+        config=BenchConfig(model_id="test-model", backend_name="ollama"),
+        results_db=results_db,
+    )
+    task = SimpleNamespace(task_id="go/beer-song", language="go")
+
+    def prepare_environment(_tasks):
+        raise PolyglotToolchainError(
+            "polyglot toolchain unavailable\n"
+            "- go: go not found on PATH\n"
+            "  next: install Go\n"
+            "or run: mcode deps toolchains --benchmark aider-polyglot --install"
+        )
+
+    adapter = runner_module._BenchmarkAdapter(
+        benchmark="aider-polyglot",
+        load_tasks=lambda _limit, _task_ids: [task],
+        task_id=lambda item: item.task_id,
+        dataset_metadata=lambda: {"name": "Aider Polyglot"},
+        prepare_environment=prepare_environment,
+        run_task=lambda _task, _environment, _run_id: None,
+        cleanup_task=lambda _task, _environment: None,
+    )
+
+    try:
+        runner._run_adapter(adapter, limit=None, task_ids=None)
+    except PolyglotToolchainError as exc:
+        assert "mcode deps toolchains" in str(exc)
+    else:
+        raise AssertionError("expected PolyglotToolchainError")
+
+    rows = results_db.conn.execute("SELECT task_id FROM task_results").fetchall()
+    assert rows == []
 
 
 def test_swebench_runner_skips_completed_tasks_without_touching_sandbox(

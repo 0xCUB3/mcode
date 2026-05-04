@@ -187,6 +187,38 @@ def test_cli_deps_sync_allows_disabling_dev_and_adding_extras(monkeypatch) -> No
     assert captured["sync_args"] == ["--extra", "swebench", "--extra", "datasets"]
 
 
+def test_cli_aider_polyglot_reports_missing_toolchain(monkeypatch, tmp_path: Path) -> None:
+    from mcode.bench.toolchains import PolyglotToolchainError
+
+    def fail_toolchain(self, benchmark, *, limit=None, task_ids=None):
+        raise PolyglotToolchainError(
+            "polyglot toolchain unavailable\n"
+            "- go: go not found on PATH\n"
+            "  next: install Go\n"
+            "or run: mcode deps toolchains --benchmark aider-polyglot --install"
+        )
+
+    monkeypatch.setattr("mcode.bench.runner.BenchmarkRunner.run_benchmark", fail_toolchain)
+
+    res = _invoke(
+        "bench",
+        "aider-polyglot",
+        "--model",
+        "test-model",
+        "--language",
+        "go",
+        "--exercise",
+        "beer-song",
+        "--db",
+        str(tmp_path / "results.db"),
+    )
+
+    output = _strip_ansi(res.output)
+    assert res.exit_code == 2
+    assert "polyglot toolchain unavailable" in output
+    assert "mcode deps toolchains --benchmark aider-polyglot --install" in output
+
+
 def test_cli_deps_toolchains_reports_missing_runtime(monkeypatch) -> None:
     monkeypatch.setattr(
         "mcode.bench.toolchains.check_polyglot_toolchains",

@@ -60,6 +60,21 @@ def _run_single_benchmark(
             cancel_reason = "interrupt"
             raise
         except Exception as e:
+            if _is_polyglot_toolchain_exception(e):
+                if json_mode:
+                    print(
+                        json.dumps(
+                            {
+                                "kind": "error",
+                                "error_type": type(e).__name__,
+                                "error": str(e),
+                            },
+                            sort_keys=True,
+                        )
+                    )
+                else:
+                    typer.echo(f"✗ {e}", err=True)
+                raise typer.Exit(2) from e
             if benchmark.startswith("swebench") and _is_retryable_infra_exception(e):
                 typer.echo(f"✗ retryable infra failure before task loop: {e}", err=True)
                 raise typer.Exit(SHARDED_INFRA_EXIT_CODE) from e
@@ -99,6 +114,10 @@ def _run_single_benchmark(
             runstate.close_run(run_id=run_id, status=final_status, cancel_reason=cancel_reason)
         except Exception:
             pass
+
+
+def _is_polyglot_toolchain_exception(exc: object) -> bool:
+    return exc.__class__.__name__ == "PolyglotToolchainError"
 
 
 def _run_bluevela_benchmark(

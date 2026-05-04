@@ -716,6 +716,8 @@ class BenchmarkRunner:
                 max_sleep_s=0.5,
             )
         except Exception as exc:
+            if _is_polyglot_toolchain_error(exc):
+                raise
             if not _is_retryable_infra_error(exc):
                 raise
             return self._record_preflight_infra_failure(
@@ -1337,6 +1339,10 @@ def _is_retryable_infra_error(exc: BaseException) -> bool:
     if isinstance(exc, DockerUnavailableError):
         return True
     return _is_retryable_infra_text(str(exc))
+
+
+def _is_polyglot_toolchain_error(exc: BaseException) -> bool:
+    return exc.__class__.__name__ == "PolyglotToolchainError"
 
 
 def _is_retryable_infra_text(text: str) -> bool:
