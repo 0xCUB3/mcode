@@ -396,6 +396,7 @@ async def run_react_loop(
                     tool_name = getattr(tool_call, "name", "") or str(key)
                     if not tool_name:
                         continue
+                    _normalize_tool_call_args(tool_name, tool_call)
                     if must_edit_now and tool_name != "edit":
                         invalid_calls.append(
                             "edit is required now because no source file has been changed yet"
@@ -1052,6 +1053,33 @@ def _requires_strict_tool_ordering(model_id: object | None) -> bool:
         return False
     lowered = text.lower()
     return "minimax" in lowered or "mistral" in lowered
+
+
+def _normalize_tool_call_args(tool_name: str, tool_call: object) -> None:
+    args = getattr(tool_call, "args", None)
+    if not isinstance(args, dict):
+        return
+    if tool_name != "edit":
+        return
+    aliases = {
+        "old_str": ("old_string", "old_text", "old", "target"),
+        "new_str": ("new_string", "new_text", "replacement", "replace_with"),
+        "path": ("file", "filepath", "file_path"),
+    }
+    changed = False
+    for canonical, candidates in aliases.items():
+        if canonical in args:
+            continue
+        for candidate in candidates:
+            if candidate in args:
+                args[canonical] = args[candidate]
+                changed = True
+                break
+    if "new_str" not in args and "content" in args and "old_str" in args:
+        args["new_str"] = args["content"]
+        changed = True
+    if changed:
+        tool_call.args = args
 
 
 def _missing_required_args(tool_call) -> list[str]:

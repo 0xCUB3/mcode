@@ -204,6 +204,35 @@ def test_run_tests_tool_preserves_status_when_truncating(tmp_path):
     assert "final error" in result
 
 
+def test_run_tests_tool_adds_rust_integration_test_source_snippets(tmp_path):
+    test_src = tmp_path / "tests" / "alloc-attack.rs"
+    test_src.parent.mkdir()
+    test_src.write_text(
+        "#[test]\n"
+        "fn alloc_attack() {\n"
+        "    let before = GLOBAL_ALLOCATOR.get_bytes_allocated();\n"
+        "    assert!(before < 1024 * 1024);\n"
+        "}\n"
+    )
+
+    def command_fn(command: str) -> str:
+        return format_tool_result(
+            command,
+            "FAILED",
+            "thread 'alloc_attack' panicked at tests/alloc-attack.rs:4:5:\n"
+            "assertion failed: GLOBAL_ALLOCATOR.get_bytes_allocated() < 1024 * 1024",
+        )
+
+    policy = build_verification_policy(test_cmds=["cargo test"], command_fn=command_fn)
+    tool = build_run_tests_tool(repo_root=str(tmp_path), verification_policy=policy)
+
+    assert tool is not None
+    result = tool.run("default")
+
+    assert "tests/alloc-attack.rs:4" in result
+    assert "fn alloc_attack()" in result
+
+
 def test_run_tests_tool_skips_stale_reports_for_compile_failures(tmp_path):
     report_dir = tmp_path / "build" / "test-results" / "test"
     report_dir.mkdir(parents=True)

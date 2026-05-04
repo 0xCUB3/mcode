@@ -480,8 +480,8 @@ def _failure_source_snippets_from_test_locations(repo_root: Path, output: str) -
 def _failed_test_locations_from_output(output: str) -> list[tuple[str, int]]:
     locations: list[tuple[str, int]] = []
     for line in output.splitlines():
-        match = re.match(
-            r"\s*(?P<path>[\w./\\-]*(?:test|spec)[\w./\\-]*\.[A-Za-z0-9_]+):(?P<line>\d+)(?::\d+)?:",
+        match = re.search(
+            r"(?P<path>(?:[\w./\\-]*(?:test|spec)[\w./\\-]*?|tests/[\w./\\-]+?)\.[A-Za-z0-9_]+):(?P<line>\d+)(?::\d+)?:",
             line,
         )
         if not match:
@@ -654,6 +654,8 @@ def _enclosing_test_block_start(lines: list[str], index: int) -> int:
     for i in range(min(index, len(lines) - 1), -1, -1):
         stripped = lines[i].strip()
         if re.match(r"(?:def|func)\s+test[_A-Za-z0-9]*\b", stripped):
+            return i
+        if re.match(r"fn\s+\w+\s*\(", stripped):
             return i
         if re.match(r"(?:public\s+)?void\s+\w+\s*\(", stripped):
             return i

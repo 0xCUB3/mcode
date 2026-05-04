@@ -30,6 +30,22 @@ def test_str_replace_edit_skips_cpp_syntax_guard(tmp_path: Path, monkeypatch) ->
     assert "class Thing;" in header.read_text()
 
 
+def test_str_replace_edit_rejects_python_ast_syntax_errors(tmp_path: Path) -> None:
+    source = tmp_path / "sample.py"
+    source.write_text("value = (1)\n")
+
+    result = tooling.str_replace_edit(
+        str(source),
+        "value = (1)\n",
+        "value = (1\n",
+        repo_root=str(tmp_path),
+    )
+
+    assert "REJECTED" in result
+    assert "Syntax error" in result
+    assert source.read_text() == "value = (1)\n"
+
+
 def test_str_replace_edit_keeps_python_syntax_guard(tmp_path: Path, monkeypatch) -> None:
     source = tmp_path / "sample.py"
     source.write_text("def value():\n    return 1\n")

@@ -14,6 +14,7 @@ from mcode.llm.react_driver import (
     SolveTraceCollector,
     SolveTracePlugin,
     _model_output_text,
+    _normalize_tool_call_args,
     _should_enforce_first_edit,
     _text_preview,
     run_react_loop,
@@ -24,6 +25,16 @@ from mcode.mellea_compat import (
     apply_provider_compatibility_patches,
     inspect_tool_call_arg_compat,
 )
+
+
+def test_normalize_tool_call_args_maps_edit_aliases():
+    call = SimpleNamespace(args={"file_path": "foo.py", "old_text": "old", "replacement": "new"})
+
+    _normalize_tool_call_args("edit", call)
+
+    assert call.args["path"] == "foo.py"
+    assert call.args["old_str"] == "old"
+    assert call.args["new_str"] == "new"
 
 
 def test_model_output_text_extracts_nested_content():

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import os
 import re
 import subprocess
@@ -301,6 +302,13 @@ _SYNTAX_GUARD_UNRELIABLE_SUFFIXES = {
 
 def _syntax_details(path: str, content: str) -> tuple[int, str | None] | None:
     ext = Path(path).suffix.lower()
+    if ext == ".py":
+        try:
+            ast.parse(content)
+        except SyntaxError as exc:
+            line = exc.lineno or 1
+            column = exc.offset or 1
+            return 1, f"Syntax error at line {line}, column {column}"
     lang = _EXTENSION_TO_LANGUAGE.get(ext)
     if lang is None:
         return None
