@@ -823,10 +823,19 @@ def refresh(
                 host = record.endpoint.split("//", 1)[1].split(":", 1)[0]
             except IndexError:
                 host = None
+        elif (record.metadata or {}).get("run_dir"):
+            try:
+                host = _remote_host_file(ssh, str(record.metadata["run_dir"]))
+            except (LaunchError, TransportError):
+                host = None
         if host:
             try:
                 ok, _ = _http_health(ssh, host, _DEFAULT_VLLM_PORT)
-                record.status = "healthy" if ok else "pending"
+                if ok:
+                    record.endpoint = f"http://{host}:{_DEFAULT_VLLM_PORT}/v1"
+                    record.status = "healthy"
+                else:
+                    record.status = "pending"
             except TransportError:
                 pass  # leave status alone
         else:

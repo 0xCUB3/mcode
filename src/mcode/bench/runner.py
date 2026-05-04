@@ -753,6 +753,7 @@ class BenchmarkRunner:
             apply_patch_to_prepared_task,
             cleanup_prepared_task,
             prepare_task,
+            reset_to_baseline,
             run_test_commands,
         )
         from mcode.llm.repo_state import get_git_diff, restore_repo_snapshot
@@ -861,10 +862,13 @@ class BenchmarkRunner:
                 evaluation = run_test_commands(prepared)
 
             if not evaluation.passed and self.config.aider_polyglot_retry:
+                retry_output = evaluation.output
+                if _looks_like_compile_failure(retry_output):
+                    reset_to_baseline(prepared.work_dir)
                 final_metrics, final_pass_snapshot = self._run_aider_polyglot_attempt(
                     task=task,
                     prepared=prepared,
-                    prompt=prepared.build_retry_prompt(evaluation.output),
+                    prompt=prepared.build_retry_prompt(retry_output),
                     loop_budget=self.config.aider_polyglot_retry_loop_budget,
                     attempt_label="attempt 2/2",
                 )
@@ -1442,6 +1446,26 @@ def _scaffold_metrics(
     if terminal_reason is not None:
         out["terminal_reason"] = terminal_reason
     return out
+
+
+def _looks_like_compile_failure(output: str) -> bool:
+    text = output.lower()
+    markers = (
+        "compilation failed",
+        "compile failed",
+        "could not compile",
+        "failed to compile",
+        "compilejava",
+        "compiler error",
+        "syntaxerror",
+        "syntax error",
+        "unclosed delimiter",
+        "unclosed string literal",
+        "build failed",
+        "linker command failed",
+        "undefined reference",
+    )
+    return any(marker in text for marker in markers)
 
 
 def _merge_polyglot_metrics(

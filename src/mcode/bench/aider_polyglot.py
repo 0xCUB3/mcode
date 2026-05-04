@@ -50,6 +50,7 @@ class PreparedPolyglotTask:
         command_line = ", ".join(self.test_commands)
         docs = _docs_excerpt(self.work_dir)
         docs_block = f"\nExercise instructions:\n{docs}\n" if docs else ""
+        language_note = _language_note(self.task.language)
         return (
             f"Please implement the '{self.task.exercise}' exercise. "
             f"The working directory is {self.work_dir}.\n"
@@ -57,6 +58,7 @@ class PreparedPolyglotTask:
             f"{test_line}\n"
             f"Test command: {command_line}\n"
             f"{docs_block}\n"
+            f"{language_note}"
             "Only edit the listed implementation file(s). Do not edit tests, docs, "
             "build files, dependency files, wrappers, or generated files. Read the "
             "implementation and relevant tests, make the smallest correct edit, then "
@@ -72,6 +74,7 @@ class PreparedPolyglotTask:
         test_line = _path_list("Relevant test file(s)", self.test_paths, self.work_dir)
         docs = _docs_excerpt(self.work_dir)
         docs_block = f"\nExercise instructions:\n{docs}\n" if docs else ""
+        language_note = _language_note(self.task.language)
         return (
             f"The tests for '{self.task.exercise}' failed. The working directory is "
             f"{self.work_dir}; paths below are relative to that directory. Here is "
@@ -80,6 +83,7 @@ class PreparedPolyglotTask:
             f"{stub_line}\n"
             f"{test_line}\n"
             f"{docs_block}\n"
+            f"{language_note}"
             "Fix only the listed implementation file(s). Do not edit tests, docs, "
             "build files, dependency files, wrappers, or generated files. Run the "
             "default tests after the edit."
@@ -105,6 +109,15 @@ def _path_list(label: str, paths: tuple[str, ...], root: Path) -> str:
         except ValueError:
             rel_paths.append(str(candidate))
     return f"{label}: {', '.join(rel_paths)}"
+
+
+def _language_note(language: str) -> str:
+    if language == "rust":
+        return (
+            "Rust Cargo.toml dependencies from the official exercise metadata are already "
+            "loaded when provided; inspect Cargo.toml if the docs mention helper crates.\n"
+        )
+    return ""
 
 
 def _docs_excerpt(work_dir: Path, *, max_chars: int = 5000) -> str:
@@ -219,6 +232,13 @@ def cleanup_prepared_task(task: PreparedPolyglotTask) -> None:
     task.tempdir.cleanup()
 
 
+def reset_to_baseline(work_dir: Path) -> None:
+    subprocess.run(
+        ["git", "reset", "--hard", "HEAD"], cwd=work_dir, capture_output=True, check=True
+    )
+    subprocess.run(["git", "clean", "-fd"], cwd=work_dir, capture_output=True, check=True)
+
+
 def run_test_commands(task: PreparedPolyglotTask) -> CommandOutcome:
     return run_command_sequence(task.work_dir, task.test_commands, timeout_s=task.timeout_s)
 
@@ -280,9 +300,12 @@ def run_command_sequence(
         last_exit_code = outcome.exit_code
         outputs.append(f"$ {command}\n{outcome.output}".strip())
         if not outcome.passed:
+            output = "\n\n".join(part for part in outputs if part)
+            if snippets := _failure_report_snippets(work_dir):
+                output = f"{output}\n\nFailure report snippets:\n{snippets}"
             return CommandOutcome(
                 passed=False,
-                output="\n\n".join(part for part in outputs if part),
+                output=output,
                 exit_code=outcome.exit_code,
                 timed_out=outcome.timed_out,
             )
@@ -292,6 +315,12 @@ def run_command_sequence(
         exit_code=last_exit_code,
         timed_out=False,
     )
+
+
+def _failure_report_snippets(work_dir: Path) -> str:
+    from mcode.agent.verification import _collect_failure_artifacts
+
+    return _collect_failure_artifacts(work_dir)
 
 
 def run_single_command(work_dir: Path, command: str, *, timeout_s: int) -> CommandOutcome:
@@ -383,10 +412,61 @@ def _prepare_go(src: Path, work: Path) -> tuple[list[str], list[str]]:
 
 def _prepare_rust(src: Path, work: Path) -> tuple[list[str], list[str]]:
     _copy_exercise(src, work)
+    _merge_rust_example_dependencies(src, work)
     stubs = [str(work / "src" / "lib.rs")] if (work / "src" / "lib.rs").exists() else []
     tests_dir = work / "tests"
     tests = sorted(str(p) for p in tests_dir.glob("*.rs")) if tests_dir.exists() else []
     return stubs, tests
+
+
+def _merge_rust_example_dependencies(src: Path, work: Path) -> None:
+    example = src / ".meta" / "Cargo-example.toml"
+    cargo = work / "Cargo.toml"
+    if not example.exists() or not cargo.exists():
+        return
+    dependency_lines = _toml_dependency_lines(example.read_text(errors="replace"))
+    if not dependency_lines:
+        return
+    text = cargo.read_text(errors="replace")
+    existing = _toml_dependency_names(_toml_dependency_lines(text))
+    additions = [line for line in dependency_lines if _toml_key(line) not in existing]
+    if not additions:
+        return
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.strip() == "[dependencies]"), None)
+    if start is None:
+        new_text = text.rstrip() + "\n\n[dependencies]\n" + "\n".join(additions) + "\n"
+        cargo.write_text(new_text)
+        return
+    end = next(
+        (i for i in range(start + 1, len(lines)) if lines[i].lstrip().startswith("[")),
+        len(lines),
+    )
+    new_lines = lines[:end] + additions + lines[end:]
+    cargo.write_text("\n".join(new_lines) + "\n")
+
+
+def _toml_dependency_lines(text: str) -> list[str]:
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.strip() == "[dependencies]"), None)
+    if start is None:
+        return []
+    out: list[str] = []
+    for line in lines[start + 1 :]:
+        stripped = line.strip()
+        if stripped.startswith("["):
+            break
+        if stripped and not stripped.startswith("#"):
+            out.append(line)
+    return out
+
+
+def _toml_dependency_names(lines: list[str]) -> set[str]:
+    return {name for line in lines if (name := _toml_key(line))}
+
+
+def _toml_key(line: str) -> str:
+    return line.split("=", 1)[0].strip().strip('"') if "=" in line else ""
 
 
 def _prepare_javascript(src: Path, work: Path) -> tuple[list[str], list[str]]:

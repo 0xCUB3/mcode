@@ -364,7 +364,13 @@ def _collect_failure_artifacts(repo_root: Path) -> str:
     if not repo_root.is_dir():
         return ""
     candidates = _failure_artifact_candidates(repo_root)
+    failed_cases: list[tuple[str, str, str]] = []
+    for path in candidates[:4]:
+        if path.suffix.lower() == ".xml":
+            failed_cases.extend(_failed_test_cases(path))
     snippets: list[str] = []
+    if source_snippets := _failure_source_snippets(repo_root, failed_cases):
+        snippets.append(f"Failing test source snippets:\n{source_snippets}")
     for path in candidates[:4]:
         snippet = _failure_artifact_snippet(path)
         if snippet:
@@ -394,12 +400,111 @@ def _failure_artifact_candidates(repo_root: Path) -> list[Path]:
     return candidates
 
 
+def _failed_test_cases(path: Path) -> list[tuple[str, str, str]]:
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return []
+    cases: list[tuple[str, str, str]] = []
+    for match in re.finditer(r"<testcase\b([^>]*)>(.*?)</testcase>", text, re.DOTALL):
+        body = match.group(2)
+        if "<failure" not in body and "<error" not in body:
+            continue
+        attrs = match.group(1)
+        name = _xml_attr(attrs, "name")
+        classname = _xml_attr(attrs, "classname")
+        message = _xml_attr(body, "message")
+        cases.append((classname, name, message))
+    return cases
+
+
+def _failure_source_snippets(repo_root: Path, failed_cases: list[tuple[str, str, str]]) -> str:
+    snippets: list[str] = []
+    seen: set[tuple[Path, str]] = set()
+    for classname, test_name, _message in failed_cases[:4]:
+        path = _find_test_source(repo_root, classname)
+        method = _test_method_name(test_name)
+        if path is None or not method or (path, method) in seen:
+            continue
+        seen.add((path, method))
+        snippet = _source_method_snippet(path, method)
+        if snippet:
+            rel = path.relative_to(repo_root).as_posix()
+            snippets.append(f"{rel}::{method}\n{snippet}")
+    return "\n\n".join(snippets)
+
+
+def _find_test_source(repo_root: Path, classname: str) -> Path | None:
+    simple = classname.rsplit(".", 1)[-1].split("$", 1)[0].strip()
+    if not simple:
+        return None
+    suffixes = (".java", ".kt", ".py", ".js", ".ts", ".rs", ".go", ".cpp", ".cc", ".cxx")
+    expected = {f"{simple}{suffix}" for suffix in suffixes}
+    for path in repo_root.rglob("*"):
+        if path.is_file() and path.name in expected:
+            return path
+    return None
+
+
+def _test_method_name(test_name: str) -> str:
+    return test_name.split("(", 1)[0].strip()
+
+
+def _source_method_snippet(path: Path, method: str, *, max_lines: int = 45) -> str:
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return ""
+    target = re.compile(rf"\b{re.escape(method)}\b")
+    index = next((i for i, line in enumerate(lines) if target.search(line)), None)
+    if index is None:
+        return ""
+    start = index
+    while start > 0 and lines[start - 1].lstrip().startswith("@"):
+        start -= 1
+    end = _method_end(lines, index, max_lines=max_lines)
+    compact = []
+    for i in range(start, end):
+        stripped = lines[i].strip()
+        if stripped and not stripped.startswith("//"):
+            compact.append(f"{i + 1}: {stripped}")
+    return "\n".join(compact)[:1800]
+
+
+def _method_end(lines: list[str], index: int, *, max_lines: int) -> int:
+    balance = 0
+    seen_open = False
+    for i in range(index, min(len(lines), index + max_lines)):
+        balance += lines[i].count("{") - lines[i].count("}")
+        seen_open = seen_open or "{" in lines[i]
+        if seen_open and balance <= 0:
+            return i + 1
+    return min(len(lines), index + max_lines)
+
+
 def _failure_artifact_snippet(path: Path) -> str:
     try:
         text = path.read_text(errors="replace")
     except OSError:
         return ""
-    if path.suffix.lower() in {".html", ".xml"}:
+    if path.suffix.lower() == ".xml":
+        failed_cases = []
+        for match in re.finditer(r"<testcase\b([^>]*)>(.*?)</testcase>", text, re.DOTALL):
+            body = match.group(2)
+            if "<failure" not in body and "<error" not in body:
+                continue
+            attrs = match.group(1)
+            name = _xml_attr(attrs, "name")
+            classname = _xml_attr(attrs, "classname")
+            message = _xml_attr(body, "message")
+            failed_cases.append(" ".join(p for p in (classname, name, message) if p))
+        if failed_cases:
+            text = "\n".join(failed_cases)
+        else:
+            attributes = re.findall(r'\b(?:message|type|name|classname)="([^"]+)"', text)
+            text = "\n".join(attributes + [re.sub(r"<[^>]+>", " ", text)])
+        text = html.unescape(text)
+    elif path.suffix.lower() == ".html":
         attributes = re.findall(r'\b(?:message|type|name|classname)="([^"]+)"', text)
         text = "\n".join(attributes + [re.sub(r"<[^>]+>", " ", text)])
         text = html.unescape(text)
@@ -416,3 +521,8 @@ def _failure_artifact_snippet(path: Path) -> str:
     selected = interesting or lines
     snippet = "\n".join(selected[:30])
     return snippet[:2000]
+
+
+def _xml_attr(text: str, name: str) -> str:
+    match = re.search(rf'\b{re.escape(name)}="([^"]*)"', text)
+    return html.unescape(match.group(1)) if match else ""

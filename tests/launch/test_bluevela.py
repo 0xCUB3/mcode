@@ -203,6 +203,37 @@ def test_refresh_maps_lsf_and_http_state(
     assert bluevela.refresh(server, cfg=_cfg(tmp_path), ssh_client=ssh).status == expected
 
 
+def test_refresh_recovers_endpoint_from_host_file(tmp_path: Path) -> None:
+    ssh = MagicMock()
+
+    def run(cmd: str, *, timeout: float = 60.0):
+        del timeout
+        if cmd.startswith("bjobs"):
+            return _result(stdout="RUN\n")
+        if "vllm_host.txt" in cmd:
+            return _result(stdout="compute-host\n")
+        if "curl" in cmd:
+            return _result(stdout="200")
+        return _result()
+
+    ssh.run.side_effect = run
+    server = ServerRecord(
+        id="s",
+        target=Target.BLUEVELA,
+        endpoint="",
+        model="m",
+        config_hash="h",
+        job_id="42",
+        status="pending",
+        metadata={"run_dir": "/shared/runs/bv-1"},
+    )
+
+    updated = bluevela.refresh(server, cfg=_cfg(tmp_path), ssh_client=ssh)
+
+    assert updated.status == "healthy"
+    assert updated.endpoint == "http://compute-host:8321/v1"
+
+
 def test_stop_bkills_and_drops_record(tmp_path: Path) -> None:
     state_path = tmp_path / "state.json"
     state.update(

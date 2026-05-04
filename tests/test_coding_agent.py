@@ -155,6 +155,16 @@ def test_run_tests_tool_appends_failure_report_snippets(tmp_path):
         '<failure message="expected 1 but was 2">stack trace</failure>'
         "</testcase></testsuite>"
     )
+    test_src = tmp_path / "src" / "test" / "java" / "ExampleTest.java"
+    test_src.parent.mkdir(parents=True)
+    test_src.write_text(
+        "class ExampleTest {\n"
+        "  @Test\n"
+        "  void badCase() {\n"
+        "    assertThat(value).isEqualTo(1);\n"
+        "  }\n"
+        "}\n"
+    )
 
     def command_fn(command: str) -> str:
         return format_tool_result(command, "FAILED", "There were failing tests.")
@@ -171,6 +181,9 @@ def test_run_tests_tool_appends_failure_report_snippets(tmp_path):
     assert "Failure report snippets:" in result
     assert "build/test-results/test/TEST-example.xml" in result
     assert "expected 1 but was 2" in result
+    assert "Failing test source snippets:" in result
+    assert "src/test/java/ExampleTest.java::badCase" in result
+    assert "assertThat(value).isEqualTo(1)" in result
 
 
 def test_make_agent_tools_appends_run_tests(tmp_path):
