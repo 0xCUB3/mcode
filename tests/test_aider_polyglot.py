@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from mcode.bench.aider_polyglot import (
+    _prepare_cpp_boost_date_time_shim,
     cleanup_prepared_task,
     load_aider_polyglot,
     prepare_task,
@@ -151,6 +152,16 @@ def test_reset_to_baseline_restores_prepared_task(tmp_path: Path) -> None:
         assert not (prepared.work_dir / "scratch.txt").exists()
     finally:
         cleanup_prepared_task(prepared)
+
+
+def test_prepare_cpp_boost_date_time_shim_writes_local_package(tmp_path: Path) -> None:
+    (tmp_path / "CMakeLists.txt").write_text("target_link_libraries(x Boost::date_time)\n")
+
+    _prepare_cpp_boost_date_time_shim(tmp_path)
+
+    shim = tmp_path / ".mcode-boost-shim"
+    assert (shim / "include" / "boost" / "date_time" / "gregorian" / "gregorian.hpp").is_file()
+    assert (shim / "lib" / "libboost_date_time.a").is_file()
 
 
 def test_run_single_command_removes_partial_node_modules_after_npm_timeout(tmp_path: Path) -> None:

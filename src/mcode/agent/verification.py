@@ -369,7 +369,9 @@ def _truncate_tool_result(value: str, max_output_chars: int) -> str:
 def _collect_failure_artifacts(repo_root: Path, output: str = "") -> str:
     if not repo_root.is_dir():
         return ""
-    candidates = _failure_artifact_candidates(repo_root)
+    candidates = (
+        [] if _looks_like_compile_failure(output) else _failure_artifact_candidates(repo_root)
+    )
     failed_cases: list[tuple[str, str, str]] = []
     for path in candidates[:4]:
         if path.suffix.lower() == ".xml":
@@ -394,6 +396,16 @@ def _collect_failure_artifacts(repo_root: Path, output: str = "") -> str:
             rel = path.relative_to(repo_root).as_posix()
             snippets.append(f"{rel}:\n{snippet}")
     return "\n\n".join(snippets)
+
+
+def _looks_like_compile_failure(output: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:compilation failed|compilejava|compileerror|could not compile|error\[E\d+\])\b",
+            output,
+            re.IGNORECASE,
+        )
+    )
 
 
 def _failure_artifact_candidates(repo_root: Path) -> list[Path]:
@@ -626,7 +638,7 @@ def _source_block_snippet(path: Path, index: int, *, max_lines: int = 45) -> str
 
 
 def _source_block_from_lines(lines: list[str], index: int, *, max_lines: int) -> str:
-    start = index
+    start = _enclosing_test_block_start(lines, index)
     while start > 0 and lines[start - 1].lstrip().startswith("@"):
         start -= 1
     end = _method_end(lines, index, max_lines=max_lines)
@@ -636,6 +648,18 @@ def _source_block_from_lines(lines: list[str], index: int, *, max_lines: int) ->
         if stripped and not stripped.startswith("//"):
             compact.append(f"{i + 1}: {stripped}")
     return "\n".join(compact)[:1800]
+
+
+def _enclosing_test_block_start(lines: list[str], index: int) -> int:
+    for i in range(min(index, len(lines) - 1), -1, -1):
+        stripped = lines[i].strip()
+        if re.match(r"(?:def|func)\s+test[_A-Za-z0-9]*\b", stripped):
+            return i
+        if re.match(r"(?:public\s+)?void\s+\w+\s*\(", stripped):
+            return i
+        if re.match(r"TEST_CASE\s*\(", stripped):
+            return i
+    return index
 
 
 def _method_end(lines: list[str], index: int, *, max_lines: int) -> int:

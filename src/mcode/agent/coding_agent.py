@@ -208,6 +208,7 @@ def make_agent_tools(
         MelleaTool.from_callable(_search, name="search_code"),
         MelleaTool.from_callable(_edit, name="edit"),
         MelleaTool.from_callable(_read, name="read_file"),
+        MelleaTool.from_callable(_read, name="run_file"),
         MelleaTool.from_callable(_find, name="find_file"),
         MelleaTool.from_callable(_list, name="list_dir"),
     ]

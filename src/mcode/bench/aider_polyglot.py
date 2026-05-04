@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.resources
 import os
 import re
 import shutil
@@ -350,6 +351,24 @@ def run_single_command(work_dir: Path, command: str, *, timeout_s: int) -> Comma
             break
     if command.startswith("cargo "):
         env["PATH"] = f"{Path.home() / '.cargo' / 'bin'}:{env.get('PATH', '')}"
+    boost_shim = work_dir / ".mcode-boost-shim"
+    if boost_shim.is_dir():
+        env["BOOST_ROOT"] = str(boost_shim)
+        env["BOOST_INCLUDEDIR"] = str(boost_shim / "include")
+        env["BOOST_LIBRARYDIR"] = str(boost_shim / "lib")
+        env["Boost_NO_SYSTEM_PATHS"] = "ON"
+        if command.startswith("cmake -S ") and "BOOST_INCLUDEDIR" not in command:
+            boost_config = boost_shim / "lib" / "cmake" / "Boost-1.74.0"
+            command = (
+                f"{command} -DCMAKE_POLICY_DEFAULT_CMP0167=NEW "
+                f"-DBoost_DIR={boost_config} -DCMAKE_PREFIX_PATH={boost_shim} "
+                f"-DBOOST_ROOT={boost_shim} "
+                f"-DBoost_INCLUDE_DIR={boost_shim / 'include'} "
+                f"-DBOOST_INCLUDEDIR={boost_shim / 'include'} "
+                f"-DBoost_LIBRARY_DIR_RELEASE={boost_shim / 'lib'} "
+                f"-DBoost_DATE_TIME_LIBRARY={boost_shim / 'lib' / 'libboost_date_time.a'} "
+                f"-DBOOST_LIBRARYDIR={boost_shim / 'lib'}"
+            )
     command_timeout = timeout_s
     if command.startswith("npm install "):
         command_timeout = max(120, timeout_s)
@@ -518,6 +537,57 @@ def _prepare_javascript(src: Path, work: Path) -> tuple[list[str], list[str]]:
     return stubs, tests
 
 
+def _prepare_cpp_boost_date_time_shim(work: Path) -> None:
+    cmake = work / "CMakeLists.txt"
+    if not cmake.is_file() or "Boost::date_time" not in cmake.read_text(errors="replace"):
+        return
+    root = work / ".mcode-boost-shim"
+    boost_dir = root / "include" / "boost"
+    include_dir = boost_dir / "date_time" / "gregorian"
+    lib_dir = root / "lib"
+    cmake_dir = lib_dir / "cmake" / "Boost-1.74.0"
+    include_dir.mkdir(parents=True, exist_ok=True)
+    lib_dir.mkdir(parents=True, exist_ok=True)
+    cmake_dir.mkdir(parents=True, exist_ok=True)
+    (boost_dir / "version.hpp").write_text(
+        '#pragma once\n#define BOOST_VERSION 107400\n#define BOOST_LIB_VERSION "1_74"\n',
+        encoding="utf-8",
+    )
+    (include_dir / "gregorian.hpp").write_text(_boost_gregorian_shim(), encoding="utf-8")
+    (lib_dir / "libboost_date_time.a").write_bytes(b"!<arch>\n")
+    (cmake_dir / "BoostConfig.cmake").write_text(
+        f"""
+set(Boost_FOUND TRUE)
+set(Boost_VERSION 1.74.0)
+set(Boost_INCLUDE_DIRS \"{root / "include"}\")
+set(Boost_LIBRARIES Boost::date_time)
+if(NOT TARGET Boost::date_time)
+  add_library(Boost::date_time INTERFACE IMPORTED)
+  target_include_directories(Boost::date_time INTERFACE \"{root / "include"}\")
+endif()
+""".lstrip(),
+        encoding="utf-8",
+    )
+    (cmake_dir / "BoostConfigVersion.cmake").write_text(
+        """
+set(PACKAGE_VERSION 1.74.0)
+set(PACKAGE_VERSION_COMPATIBLE TRUE)
+if(PACKAGE_FIND_VERSION VERSION_EQUAL PACKAGE_VERSION)
+  set(PACKAGE_VERSION_EXACT TRUE)
+endif()
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+
+def _boost_gregorian_shim() -> str:
+    return (
+        importlib.resources.files("mcode.bench.resources")
+        .joinpath("boost_gregorian_shim.hpp")
+        .read_text(encoding="utf-8")
+    )
+
+
 def _prepare_java(src: Path, work: Path) -> tuple[list[str], list[str]]:
     _copy_exercise(src, work)
     test_root = work / "src" / "test" / "java"
@@ -538,6 +608,7 @@ def _prepare_java(src: Path, work: Path) -> tuple[list[str], list[str]]:
 
 def _prepare_cpp(src: Path, work: Path) -> tuple[list[str], list[str]]:
     _copy_exercise(src, work)
+    _prepare_cpp_boost_date_time_shim(work)
     stubs = sorted(
         str(p)
         for p in work.iterdir()

@@ -204,6 +204,27 @@ def test_run_tests_tool_preserves_status_when_truncating(tmp_path):
     assert "final error" in result
 
 
+def test_run_tests_tool_skips_stale_reports_for_compile_failures(tmp_path):
+    report_dir = tmp_path / "build" / "test-results" / "test"
+    report_dir.mkdir(parents=True)
+    (report_dir / "TEST-OldTest.xml").write_text(
+        '<testsuite><testcase classname="OldTest" name="old">'
+        '<failure message="stale" /></testcase></testsuite>'
+    )
+
+    def command_fn(command: str) -> str:
+        return format_tool_result(command, "FAILED", "Compilation failed; see compiler output")
+
+    policy = build_verification_policy(test_cmds=["./gradlew test"], command_fn=command_fn)
+    tool = build_run_tests_tool(repo_root=str(tmp_path), verification_policy=policy)
+
+    assert tool is not None
+    result = tool.run("default")
+
+    assert "Compilation failed" in result
+    assert "OldTest" not in result
+
+
 def test_run_tests_tool_adds_go_table_subtest_source_snippets(tmp_path):
     test_src = tmp_path / "connect_test.go"
     test_src.write_text(
@@ -272,6 +293,7 @@ def test_run_tests_tool_adds_pytest_failed_test_source_snippets(tmp_path):
 
     assert "Failing test source snippets:" in result
     assert "connect_test.py:3" in result
+    assert "def test_illegal_diagonal_does_not_make_a_winner" in result
     assert "board = ['X O . .', ' O X X X']" in result
 
 
@@ -325,6 +347,7 @@ def test_make_agent_tools_appends_run_tests(tmp_path):
         "search_code",
         "edit",
         "read_file",
+        "run_file",
         "find_file",
         "list_dir",
         "run_tests",
@@ -339,6 +362,7 @@ def test_make_agent_tools_uses_native_mellea_tools(tmp_path):
     }
 
     assert callable(tools["read_file"].run)
+    assert callable(tools["run_file"].run)
     assert tools["list_dir"].run()
     assert tools["read_file"].as_json_tool["function"]["parameters"]["required"] == ["path"]
     assert tools["list_dir"].as_json_tool["function"]["parameters"].get("required") == []
