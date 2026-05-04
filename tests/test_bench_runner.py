@@ -1,6 +1,10 @@
 from types import SimpleNamespace
 
-from mcode.bench.runner import _allowed_polyglot_test_commands, _should_reset_before_retry
+from mcode.bench.runner import (
+    _allowed_polyglot_test_commands,
+    _should_reset_before_retry,
+    _should_run_final_polyglot_repair,
+)
 
 
 def test_allowed_polyglot_commands_include_declared_sequence() -> None:
@@ -14,6 +18,18 @@ def test_allowed_polyglot_commands_include_declared_sequence() -> None:
         "npm install --silent --no-audit --no-fund && npm test --silent"
         in _allowed_polyglot_test_commands(prepared)
     )
+
+
+def test_should_run_final_polyglot_repair_for_few_failures() -> None:
+    output = "test result: FAILED. 42 passed; 7 failed; finished in 0.00s"
+
+    assert _should_run_final_polyglot_repair(output)
+
+
+def test_should_not_run_final_polyglot_repair_for_timeouts() -> None:
+    output = "Command timed out after 300s"
+
+    assert not _should_run_final_polyglot_repair(output)
 
 
 def test_should_not_reset_repairable_compile_errors() -> None:

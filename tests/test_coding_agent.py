@@ -204,6 +204,29 @@ def test_run_tests_tool_preserves_status_when_truncating(tmp_path):
     assert "final error" in result
 
 
+def test_run_tests_tool_includes_junit_failure_body_details(tmp_path):
+    report_dir = tmp_path / "build" / "test-results" / "test"
+    report_dir.mkdir(parents=True)
+    (report_dir / "TEST-HangmanTest.xml").write_text(
+        '<testsuite><testcase classname="HangmanTest" name="wonGame">'
+        '<failure message="Expecting actual:">'
+        "but the following elements were unexpected:\n  [a, o]"
+        "</failure></testcase></testsuite>"
+    )
+
+    def command_fn(command: str) -> str:
+        return format_tool_result(command, "FAILED", "1 test completed, 1 failed")
+
+    policy = build_verification_policy(test_cmds=["./gradlew test"], command_fn=command_fn)
+    tool = build_run_tests_tool(repo_root=str(tmp_path), verification_policy=policy)
+
+    assert tool is not None
+    result = tool.run("default")
+
+    assert "but the following elements were unexpected" in result
+    assert "[a, o]" in result
+
+
 def test_run_tests_tool_adds_rust_integration_test_source_snippets(tmp_path):
     test_src = tmp_path / "tests" / "alloc-attack.rs"
     test_src.parent.mkdir()

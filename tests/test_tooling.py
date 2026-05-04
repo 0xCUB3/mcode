@@ -30,6 +30,22 @@ def test_str_replace_edit_skips_cpp_syntax_guard(tmp_path: Path, monkeypatch) ->
     assert "class Thing;" in header.read_text()
 
 
+def test_str_replace_edit_rejects_rust_unclosed_delimiters(tmp_path: Path) -> None:
+    source = tmp_path / "lib.rs"
+    source.write_text("fn value() -> i32 { 1 }\n")
+
+    result = tooling.str_replace_edit(
+        str(source),
+        "fn value() -> i32 { 1 }\n",
+        "fn value() -> i32 { (1 }\n",
+        repo_root=str(tmp_path),
+    )
+
+    assert "REJECTED" in result
+    assert "unclosed" in result or "unexpected" in result
+    assert source.read_text() == "fn value() -> i32 { 1 }\n"
+
+
 def test_str_replace_edit_rejects_python_ast_syntax_errors(tmp_path: Path) -> None:
     source = tmp_path / "sample.py"
     source.write_text("value = (1)\n")

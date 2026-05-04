@@ -692,7 +692,7 @@ def _failure_artifact_snippet(path: Path) -> str:
             message = _xml_attr(body, "message")
             failed_cases.append(" ".join(p for p in (classname, name, message) if p))
         if failed_cases:
-            text = "\n".join(failed_cases)
+            text = "\n".join(_xml_failure_summaries(text))
         else:
             attributes = re.findall(r'\b(?:message|type|name|classname)="([^"]+)"', text)
             text = "\n".join(attributes + [re.sub(r"<[^>]+>", " ", text)])
@@ -702,18 +702,54 @@ def _failure_artifact_snippet(path: Path) -> str:
         text = "\n".join(attributes + [re.sub(r"<[^>]+>", " ", text)])
         text = html.unescape(text)
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    interesting = [
-        line
-        for line in lines
-        if re.search(
-            r"fail|error|expected|actual|assert|exception|traceback",
-            line,
-            re.IGNORECASE,
-        )
-    ]
-    selected = interesting or lines
+    if path.suffix.lower() == ".xml":
+        selected = lines
+    else:
+        interesting = [
+            line
+            for line in lines
+            if re.search(
+                r"fail|error|expected|actual|assert|exception|traceback",
+                line,
+                re.IGNORECASE,
+            )
+        ]
+        selected = interesting or lines
     snippet = "\n".join(selected[:30])
     return snippet[:2000]
+
+
+def _xml_failure_summaries(text: str) -> list[str]:
+    summaries: list[str] = []
+    for match in re.finditer(r"<testcase\b([^>]*)>(.*?)</testcase>", text, re.DOTALL):
+        body = match.group(2)
+        failure_match = re.search(
+            r"<(?:failure|error)\b([^>]*)>(.*?)</(?:failure|error)>", body, re.DOTALL
+        )
+        if failure_match is None:
+            continue
+        attrs = match.group(1)
+        failure_attrs = failure_match.group(1)
+        summary = " ".join(
+            part
+            for part in (
+                _xml_attr(attrs, "classname"),
+                _xml_attr(attrs, "name"),
+                _xml_attr(failure_attrs, "message"),
+            )
+            if part
+        )
+        parts = [summary] if summary else []
+        detail = _xml_text(failure_match.group(2))
+        if detail:
+            detail_lines = [line for line in detail.splitlines() if line.strip()]
+            parts.extend(detail_lines[:10])
+        summaries.append("\n".join(part for part in parts if part))
+    return summaries
+
+
+def _xml_text(text: str) -> str:
+    return html.unescape(re.sub(r"<[^>]+>", " ", text)).strip()
 
 
 def _xml_attr(text: str, name: str) -> str:

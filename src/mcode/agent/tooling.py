@@ -35,7 +35,7 @@ _SKIP_DIRS = {
     ".mypy_cache",
 }
 _MAX_MATCHES = 30
-_MAX_LINES = 200
+_MAX_LINES = 300
 _MAX_RESULTS = 50
 _MAX_SCAN = 10_000
 _TIMEOUT_S = 5
@@ -275,6 +275,65 @@ def read_file(
     return header + "\n" + "\n".join(numbered)
 
 
+def _delimiter_details(content: str) -> tuple[int, str] | None:
+    pairs = {"(": ")", "[": "]", "{": "}"}
+    closers = {value: key for key, value in pairs.items()}
+    stack: list[tuple[str, int, int]] = []
+    in_string: str | None = None
+    escaped = False
+    line = 1
+    column = 0
+    in_line_comment = False
+    in_block_comment = False
+    previous = ""
+    for char in content:
+        if char == "\n":
+            line += 1
+            column = 0
+            in_line_comment = False
+            previous = char
+            continue
+        column += 1
+        if in_line_comment:
+            previous = char
+            continue
+        if in_block_comment:
+            if previous == "*" and char == "/":
+                in_block_comment = False
+            previous = char
+            continue
+        if in_string is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == in_string:
+                in_string = None
+            previous = char
+            continue
+        if previous == "/" and char == "/":
+            in_line_comment = True
+            previous = char
+            continue
+        if previous == "/" and char == "*":
+            in_block_comment = True
+            previous = char
+            continue
+        if char in {'"', "'"}:
+            in_string = char
+        elif char in pairs:
+            stack.append((char, line, column))
+        elif char in closers:
+            if not stack or stack[-1][0] != closers[char]:
+                return 1, f"Syntax error at line {line}, column {column}: unexpected {char}"
+            stack.pop()
+        previous = char
+    if stack:
+        opener, opener_line, opener_column = stack[-1]
+        return 1, f"Syntax error at line {opener_line}, column {opener_column}: unclosed {opener}"
+    return None
+
+
 def _count_errors(tree) -> int:
     count = 0
     stack = [tree.root_node]
@@ -309,6 +368,8 @@ def _syntax_details(path: str, content: str) -> tuple[int, str | None] | None:
             line = exc.lineno or 1
             column = exc.offset or 1
             return 1, f"Syntax error at line {line}, column {column}"
+    if ext in {".java", ".rs"} and (delimiter_error := _delimiter_details(content)):
+        return delimiter_error
     lang = _EXTENSION_TO_LANGUAGE.get(ext)
     if lang is None:
         return None

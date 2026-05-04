@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import time
 import traceback
@@ -861,6 +862,7 @@ class BenchmarkRunner:
                 )
                 evaluation = run_test_commands(prepared)
 
+            repair_metrics = None
             if not evaluation.passed and self.config.aider_polyglot_retry:
                 retry_output = evaluation.output
                 if _should_reset_before_retry(retry_output):
@@ -870,7 +872,7 @@ class BenchmarkRunner:
                     prepared=prepared,
                     prompt=prepared.build_retry_prompt(retry_output),
                     loop_budget=self.config.aider_polyglot_retry_loop_budget,
-                    attempt_label="attempt 2/2",
+                    attempt_label="attempt 2/3",
                 )
                 evaluation = run_test_commands(prepared)
                 if not evaluation.passed and final_pass_snapshot is not None:
@@ -880,6 +882,22 @@ class BenchmarkRunner:
                     )
                     evaluation = run_test_commands(prepared)
                 attempts_used = 2
+                if not evaluation.passed and _should_run_final_polyglot_repair(evaluation.output):
+                    repair_metrics, repair_pass_snapshot = self._run_aider_polyglot_attempt(
+                        task=task,
+                        prepared=prepared,
+                        prompt=prepared.build_retry_prompt(evaluation.output),
+                        loop_budget=self.config.aider_polyglot_retry_loop_budget,
+                        attempt_label="attempt 3/3",
+                    )
+                    evaluation = run_test_commands(prepared)
+                    if not evaluation.passed and repair_pass_snapshot is not None:
+                        restore_repo_snapshot(
+                            str(prepared.work_dir),
+                            Path(repair_pass_snapshot.name) / "snapshot",
+                        )
+                        evaluation = run_test_commands(prepared)
+                    attempts_used = 3
             else:
                 final_metrics = first_metrics
 
@@ -890,6 +908,15 @@ class BenchmarkRunner:
                 first_loop_budget=self.config.loop_budget,
                 terminal_reason=terminal_reason,
             )
+            if repair_metrics is not None:
+                metrics = _merge_polyglot_metrics(
+                    first=metrics,
+                    second=repair_metrics,
+                    first_loop_budget=(
+                        self.config.loop_budget + self.config.aider_polyglot_retry_loop_budget
+                    ),
+                    terminal_reason=terminal_reason,
+                )
             diff = get_git_diff(str(prepared.work_dir))
             manifest = self._write_generation_manifest(
                 run_id=run_id,
@@ -1457,6 +1484,35 @@ def _scaffold_metrics(
     if terminal_reason is not None:
         out["terminal_reason"] = terminal_reason
     return out
+
+
+def _should_run_final_polyglot_repair(output: str) -> bool:
+    if not output.strip():
+        return False
+    if "TIMEOUT" in output or "Command timed out" in output:
+        return False
+    if _should_reset_before_retry(output):
+        return False
+    return (
+        _failed_test_count(output) <= 8
+        or "error[E" in output
+        or "Compilation failed" in output
+        or "compileJava" in output
+    )
+
+
+def _failed_test_count(output: str) -> int:
+    patterns = (
+        r"\b(\d+)\s+failed",
+        r"\b(\d+)\s+tests? completed,\s+(\d+)\s+failed",
+    )
+    counts: list[int] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, output, flags=re.IGNORECASE):
+            groups = [int(group) for group in match.groups() if group is not None]
+            if groups:
+                counts.append(groups[-1])
+    return min(counts) if counts else 999
 
 
 def _should_reset_before_retry(output: str) -> bool:

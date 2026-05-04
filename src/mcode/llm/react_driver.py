@@ -334,6 +334,11 @@ async def run_react_loop(
             ) and _should_enforce_first_edit(
                 turn=turn, loop_budget=loop_budget, collector=collector
             )
+            must_run_tests_now = (
+                has_run_tests_tool
+                and edit_since_verification
+                and not collector.verification_succeeded
+            )
             requirements = turn_requirements(turn, loop_budget, collector)
             result, next_context = await mfuncs.aact(
                 ReactThought(),
@@ -397,6 +402,12 @@ async def run_react_loop(
                     if not tool_name:
                         continue
                     _normalize_tool_call_args(tool_name, tool_call)
+                    if must_run_tests_now and tool_name != "run_tests":
+                        invalid_calls.append(
+                            "run_tests is required now because source files changed "
+                            "since the last verification"
+                        )
+                        continue
                     if must_edit_now and tool_name != "edit":
                         invalid_calls.append(
                             "edit is required now because no source file has been changed yet"
