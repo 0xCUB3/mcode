@@ -329,6 +329,11 @@ async def run_react_loop(
                     )
                 )
                 reminded_without_edit = True
+            must_edit_now = any(
+                getattr(tool, "name", "") == "edit" for tool in tools
+            ) and _should_enforce_first_edit(
+                turn=turn, loop_budget=loop_budget, collector=collector
+            )
             requirements = turn_requirements(turn, loop_budget, collector)
             result, next_context = await mfuncs.aact(
                 ReactThought(),
@@ -390,6 +395,11 @@ async def run_react_loop(
                 for key, tool_call in result.tool_calls.items():
                     tool_name = getattr(tool_call, "name", "") or str(key)
                     if not tool_name:
+                        continue
+                    if must_edit_now and tool_name != "edit":
+                        invalid_calls.append(
+                            "edit is required now because no source file has been changed yet"
+                        )
                         continue
                     if (
                         tool_name == MELLEA_FINALIZER_TOOL
@@ -602,10 +612,29 @@ def _recover_text_tool_calls(
 
 
 def _model_output_text(result: object) -> str:
-    for attr in ("value", "_underlying_value", "parsed_repr", "content", "text"):
-        value = getattr(result, attr, None)
-        if isinstance(value, str) and value.strip():
-            return value
+    return _extract_text(result, seen=set())
+
+
+def _extract_text(value: object, *, seen: set[int]) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if value is None or isinstance(value, (int, float, bool)):
+        return ""
+    value_id = id(value)
+    if value_id in seen:
+        return ""
+    seen.add(value_id)
+    if isinstance(value, Mapping):
+        for key in ("text", "content", "value", "message", "parsed_repr"):
+            if key in value and (text := _extract_text(value[key], seen=seen)):
+                return text
+        return ""
+    if isinstance(value, (list, tuple)):
+        parts = [_extract_text(item, seen=seen) for item in value]
+        return "\n".join(part for part in parts if part).strip()
+    for attr in ("value", "_underlying_value", "parsed_repr", "content", "text", "message"):
+        if hasattr(value, attr) and (text := _extract_text(getattr(value, attr), seen=seen)):
+            return text
     return ""
 
 
@@ -869,6 +898,15 @@ def _run_tests_payload(args: Mapping[str, object], output_text: str) -> dict[str
     }
 
 
+def _should_enforce_first_edit(
+    *,
+    turn: int,
+    loop_budget: int,
+    collector: SolveTraceCollector,
+) -> bool:
+    return collector.turns_to_first_edit is None and turn >= max(10, (loop_budget * 2) // 3)
+
+
 def _verification_evidence_payload(
     *,
     args: Mapping[str, object],
@@ -884,7 +922,7 @@ def _verification_evidence_payload(
     )
     command_label = str(args.get("test_cmd") or "default")
     payload = _run_tests_payload(args, output_text)
-    output_digest = _text_digest(output_text, max_preview=1000)
+    output_digest = _text_digest(output_text, max_preview=4000)
     expanded_command = payload.get("expanded_command")
     command_digest_source = expanded_command or command_label
     return {

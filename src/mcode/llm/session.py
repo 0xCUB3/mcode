@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
+from mellea.stdlib.requirements import uses_tool
 from mellea.stdlib.sampling import MultiTurnStrategy
 from pydantic import BaseModel, Field
 
@@ -18,7 +19,12 @@ from mcode.agent.verification import (
     build_submission_requirements,
     build_turn_requirements,
 )
-from mcode.llm.react_driver import SolveTraceCollector, SolveTracePlugin, run_react_loop
+from mcode.llm.react_driver import (
+    SolveTraceCollector,
+    SolveTracePlugin,
+    _should_enforce_first_edit,
+    run_react_loop,
+)
 from mcode.llm.repo_state import get_git_diff, repo_snapshot, restore_repo_snapshot
 from mcode.mellea_compat import apply_provider_compatibility_patches
 
@@ -128,14 +134,12 @@ class McodeSolverPowerup:
             submission_format=PatchSubmission if use_requirement_sampling else None,
             collector=collector,
             turn_requirements=(
-                lambda turn, budget, state: build_turn_requirements(
+                lambda turn, budget, state: _build_react_turn_requirements(
+                    turn=turn,
+                    loop_budget=budget,
+                    collector=state,
+                    tools=tools,
                     verification_policy=verification_policy,
-                    enforce_run_tests=_should_enforce_run_tests(
-                        turn=turn,
-                        loop_budget=budget,
-                        verification_policy=verification_policy,
-                        verification_succeeded=state.verification_succeeded,
-                    ),
                 )
             )
             if use_requirement_sampling
@@ -448,6 +452,35 @@ def _ensure_powerup_registered() -> None:
         return
     MelleaSession.powerup(McodeSolverPowerup)
     setattr(MelleaSession, "_mcode_solver_powerup", True)
+
+
+def _build_react_turn_requirements(
+    *,
+    turn: int,
+    loop_budget: int,
+    collector: SolveTraceCollector,
+    tools: Sequence[object],
+    verification_policy: VerificationPolicy,
+) -> list[object]:
+    requirements: list[object] = []
+    if any(getattr(tool, "name", "") == "edit" for tool in tools) and _should_enforce_first_edit(
+        turn=turn,
+        loop_budget=loop_budget,
+        collector=collector,
+    ):
+        requirements.append(uses_tool("edit"))
+    requirements.extend(
+        build_turn_requirements(
+            verification_policy=verification_policy,
+            enforce_run_tests=_should_enforce_run_tests(
+                turn=turn,
+                loop_budget=loop_budget,
+                verification_policy=verification_policy,
+                verification_succeeded=collector.verification_succeeded,
+            ),
+        )
+    )
+    return requirements
 
 
 def _should_enforce_run_tests(

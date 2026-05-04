@@ -13,6 +13,8 @@ from mcode.agent.verification import build_run_tests_tool, build_verification_po
 from mcode.llm.react_driver import (
     SolveTraceCollector,
     SolveTracePlugin,
+    _model_output_text,
+    _should_enforce_first_edit,
     _text_preview,
     run_react_loop,
 )
@@ -22,6 +24,24 @@ from mcode.mellea_compat import (
     apply_provider_compatibility_patches,
     inspect_tool_call_arg_compat,
 )
+
+
+def test_model_output_text_extracts_nested_content():
+    result = SimpleNamespace(
+        _underlying_value={"content": [SimpleNamespace(text="nested response")]}
+    )
+
+    assert _model_output_text(result) == "nested response"
+
+
+def test_should_enforce_first_edit_after_browsing_window():
+    collector = SolveTraceCollector()
+
+    assert not _should_enforce_first_edit(turn=9, loop_budget=15, collector=collector)
+    assert _should_enforce_first_edit(turn=10, loop_budget=15, collector=collector)
+
+    collector.turns_to_first_edit = 4
+    assert not _should_enforce_first_edit(turn=10, loop_budget=15, collector=collector)
 
 
 def test_text_preview_keeps_final_diagnostics():

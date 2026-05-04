@@ -380,6 +380,7 @@ def _collect_failure_artifacts(repo_root: Path, output: str = "") -> str:
         for block in (
             _failure_source_snippets(repo_root, failed_cases),
             _failure_source_snippets_from_test_locations(repo_root, output),
+            _go_failed_subtest_source_snippets(repo_root, output),
             _failure_source_snippets_from_output(repo_root, output),
         )
         if block
@@ -482,6 +483,48 @@ def _failed_test_locations_from_output(output: str) -> list[tuple[str, int]]:
     return locations
 
 
+def _go_failed_subtest_source_snippets(repo_root: Path, output: str) -> str:
+    names = _go_failed_subtest_names(output)
+    if not names:
+        return ""
+    snippets: list[str] = []
+    seen: set[tuple[Path, int]] = set()
+    wanted = {_normalized_go_test_name(name): name for name in names[:4]}
+    for path in _test_source_candidates(repo_root):
+        if path.suffix != ".go" or "test" not in path.name.lower():
+            continue
+        try:
+            lines = path.read_text(errors="replace").splitlines()
+        except OSError:
+            continue
+        for index, line in enumerate(lines):
+            for literal in re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', line):
+                normalized = _normalized_go_test_name(literal)
+                if normalized not in wanted or (path, index) in seen:
+                    continue
+                seen.add((path, index))
+                snippet = _source_block_from_lines(lines, index, max_lines=30)
+                if snippet:
+                    rel = path.relative_to(repo_root).as_posix()
+                    snippets.append(f"{rel}::{wanted[normalized]}\n{snippet}")
+                if len(snippets) >= 4:
+                    return "\n\n".join(snippets)
+    return "\n\n".join(snippets)
+
+
+def _go_failed_subtest_names(output: str) -> list[str]:
+    names: list[str] = []
+    for line in output.splitlines():
+        match = re.match(r"\s*--- FAIL: [^\s/]+/(?P<name>[^\s(]+)", line)
+        if match:
+            names.append(match.group("name").strip())
+    return names
+
+
+def _normalized_go_test_name(value: str) -> str:
+    return re.sub(r"\s+", "_", value.strip())
+
+
 def _failure_source_snippets_from_output(repo_root: Path, output: str) -> str:
     failed_names = _failed_test_names_from_output(output)
     if not failed_names:
@@ -576,7 +619,10 @@ def _source_block_snippet(path: Path, index: int, *, max_lines: int = 45) -> str
         lines = path.read_text(errors="replace").splitlines()
     except OSError:
         return ""
-    return _source_block_from_lines(lines, index, max_lines=max_lines)
+    if not lines:
+        return ""
+    clamped_index = min(max(index, 0), len(lines) - 1)
+    return _source_block_from_lines(lines, clamped_index, max_lines=max_lines)
 
 
 def _source_block_from_lines(lines: list[str], index: int, *, max_lines: int) -> str:

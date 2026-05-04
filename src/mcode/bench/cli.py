@@ -298,6 +298,10 @@ def _aider_polyglot_cli_args(
     limit: int | None,
     no_retry: bool,
     task_ids: str | None,
+    sampling: str,
+    sampling_budget: int | None,
+    diagnostic_traces: bool,
+    selection_attempts: int,
     phase: str,
     artifact_dir: Path,
 ) -> list[str]:
@@ -324,6 +328,13 @@ def _aider_polyglot_cli_args(
     _append_option(argv, "--exercise", exercise)
     _append_option(argv, "--limit", limit)
     _append_option(argv, "--task-ids", task_ids)
+    if sampling != "none":
+        argv.extend(["--sampling", sampling])
+    _append_option(argv, "--sampling-budget", sampling_budget)
+    if diagnostic_traces:
+        argv.append("--diagnostic-traces")
+    if selection_attempts != 1:
+        argv.extend(["--selection-attempts", str(selection_attempts)])
     if no_retry:
         argv.append("--no-retry")
     return argv
@@ -961,6 +972,22 @@ def bench_aider_polyglot(
         bool,
         typer.Option("--no-retry", help="Disable the second attempt with test output feedback"),
     ] = False,
+    sampling: Annotated[
+        Literal["none", "multiturn"],
+        typer.Option("--sampling", help="Mellea sampling strategy"),
+    ] = "none",
+    sampling_budget: Annotated[
+        int | None,
+        typer.Option("--sampling-budget", min=1, help="Sampling loop budget override"),
+    ] = None,
+    selection_attempts: Annotated[
+        int,
+        typer.Option(
+            "--selection-attempts",
+            min=1,
+            help="Independent full-budget trajectories; select one before official evaluation",
+        ),
+    ] = 1,
     task_ids: Annotated[
         str | None,
         typer.Option(
@@ -1007,6 +1034,13 @@ def bench_aider_polyglot(
             help="Rsync the artifact directory back when --on bluevela",
         ),
     ] = False,
+    diagnostic_traces: Annotated[
+        bool,
+        typer.Option(
+            "--diagnostic-traces/--no-diagnostic-traces",
+            help="Persist compact benchmark diagnostic trace events",
+        ),
+    ] = False,
     json_mode: JsonFlag = False,
 ) -> None:
     """Run the Aider Polyglot benchmark through mcode's harness."""
@@ -1017,6 +1051,10 @@ def bench_aider_polyglot(
         shards=shards,
         shard_count=shard_count,
         shard_index=shard_index,
+    )
+    sampling, sampling_budget = _validate_sampling(
+        sampling=sampling,
+        sampling_budget=sampling_budget,
     )
     resolved_artifact_dir = _resolve_artifact_dir(db, artifact_dir)
 
@@ -1047,6 +1085,10 @@ def bench_aider_polyglot(
             limit=limit,
             no_retry=no_retry,
             task_ids=task_ids,
+            sampling=sampling,
+            sampling_budget=sampling_budget,
+            diagnostic_traces=diagnostic_traces,
+            selection_attempts=selection_attempts,
             phase=phase,
             artifact_dir=resolved_artifact_dir,
         )
@@ -1082,6 +1124,10 @@ def bench_aider_polyglot(
                 limit=limit,
                 no_retry=no_retry,
                 task_ids=task_ids,
+                sampling=sampling,
+                sampling_budget=sampling_budget,
+                diagnostic_traces=diagnostic_traces,
+                selection_attempts=selection_attempts,
                 phase=phase,
                 artifact_dir=resolved_artifact_dir,
             ),
@@ -1117,6 +1163,10 @@ def bench_aider_polyglot(
         aider_polyglot_retry_loop_budget=retry_loop_budget,
         task_shard_count=shard_count,
         task_shard_index=shard_index,
+        sampling_strategy=sampling,
+        sampling_budget=sampling_budget,
+        diagnostic_traces=diagnostic_traces,
+        selection_attempts=selection_attempts,
     )
     _run_single_benchmark(
         benchmark="aider-polyglot",

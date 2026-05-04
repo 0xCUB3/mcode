@@ -204,6 +204,45 @@ def test_run_tests_tool_preserves_status_when_truncating(tmp_path):
     assert "final error" in result
 
 
+def test_run_tests_tool_adds_go_table_subtest_source_snippets(tmp_path):
+    test_src = tmp_path / "connect_test.go"
+    test_src.write_text(
+        "package connect\n\n"
+        "func TestResultOf(t *testing.T) {\n"
+        "\ttests := []struct {\n"
+        "\t\tdescription string\n"
+        "\t\tboard []string\n"
+        "\t}{\n"
+        "\t\t{\n"
+        '\t\t\tdescription: "illegal diagonal does not make a winner",\n'
+        '\t\t\tboard: []string{"X O . .", " O X X X"},\n'
+        "\t\t},\n"
+        "\t}\n"
+        "}\n"
+    )
+
+    def command_fn(command: str) -> str:
+        return format_tool_result(
+            command,
+            "FAILED",
+            "--- FAIL: TestResultOf (0.00s)\n"
+            "    --- FAIL: TestResultOf/illegal_diagonal_does_not_make_a_winner (0.00s)\n"
+            "        connect_test.go:26: got X want empty",
+        )
+
+    policy = build_verification_policy(
+        test_cmds=["go test ./..."],
+        command_fn=command_fn,
+    )
+    tool = build_run_tests_tool(repo_root=str(tmp_path), verification_policy=policy)
+
+    assert tool is not None
+    result = tool.run("default")
+
+    assert "connect_test.go::illegal_diagonal_does_not_make_a_winner" in result
+    assert 'board: []string{"X O . .", " O X X X"}' in result
+
+
 def test_run_tests_tool_adds_pytest_failed_test_source_snippets(tmp_path):
     test_src = tmp_path / "connect_test.py"
     test_src.write_text(
