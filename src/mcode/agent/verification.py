@@ -357,7 +357,13 @@ def _tool_result_passed(tool_result: str) -> bool:
 def _truncate_tool_result(value: str, max_output_chars: int) -> str:
     if len(value) <= max_output_chars:
         return value
-    return value[-max_output_chars:]
+    lines = value.splitlines()
+    header = "\n".join(lines[:2]).strip()
+    marker = "\n...[tool output truncated, keeping final diagnostics]...\n"
+    keep = max_output_chars - len(header) - len(marker) - 1
+    if keep <= 0:
+        return value[:max_output_chars]
+    return f"{header}{marker}{value[-keep:]}"
 
 
 def _collect_failure_artifacts(repo_root: Path, output: str = "") -> str:
@@ -373,6 +379,7 @@ def _collect_failure_artifacts(repo_root: Path, output: str = "") -> str:
         block
         for block in (
             _failure_source_snippets(repo_root, failed_cases),
+            _failure_source_snippets_from_test_locations(repo_root, output),
             _failure_source_snippets_from_output(repo_root, output),
         )
         if block
@@ -441,6 +448,38 @@ def _failure_source_snippets(repo_root: Path, failed_cases: list[tuple[str, str,
             rel = path.relative_to(repo_root).as_posix()
             snippets.append(f"{rel}::{method}\n{snippet}")
     return "\n\n".join(snippets)
+
+
+def _failure_source_snippets_from_test_locations(repo_root: Path, output: str) -> str:
+    snippets: list[str] = []
+    seen: set[tuple[Path, int]] = set()
+    for rel_path, line_number in _failed_test_locations_from_output(output)[:4]:
+        path = repo_root / rel_path
+        if not path.is_file() or (path, line_number) in seen:
+            continue
+        seen.add((path, line_number))
+        snippet = _source_block_snippet(path, max(0, line_number - 1))
+        if snippet:
+            snippets.append(f"{rel_path}:{line_number}\n{snippet}")
+    return "\n\n".join(snippets)
+
+
+def _failed_test_locations_from_output(output: str) -> list[tuple[str, int]]:
+    locations: list[tuple[str, int]] = []
+    for line in output.splitlines():
+        match = re.match(
+            r"\s*(?P<path>[\w./\\-]*(?:test|spec)[\w./\\-]*\.[A-Za-z0-9_]+):(?P<line>\d+)(?::\d+)?:",
+            line,
+        )
+        if not match:
+            continue
+        path = match.group("path").replace("\\", "/")
+        try:
+            line_number = int(match.group("line"))
+        except ValueError:
+            continue
+        locations.append((path, line_number))
+    return locations
 
 
 def _failure_source_snippets_from_output(repo_root: Path, output: str) -> str:

@@ -186,6 +186,56 @@ def test_run_tests_tool_appends_failure_report_snippets(tmp_path):
     assert "assertThat(value).isEqualTo(1)" in result
 
 
+def test_run_tests_tool_preserves_status_when_truncating(tmp_path):
+    def command_fn(command: str) -> str:
+        return format_tool_result(command, "FAILED", "start\n" + ("filler\n" * 200) + "final error")
+
+    policy = build_verification_policy(
+        test_cmds=["pytest -q"],
+        command_fn=command_fn,
+    )
+    tool = build_run_tests_tool(repo_root=str(tmp_path), verification_policy=policy)
+
+    assert tool is not None
+    result = tool.run("default", max_output_chars=120)
+
+    assert result.startswith("$ pytest -q\nFAILED")
+    assert "[tool output truncated, keeping final diagnostics]" in result
+    assert "final error" in result
+
+
+def test_run_tests_tool_adds_pytest_failed_test_source_snippets(tmp_path):
+    test_src = tmp_path / "connect_test.py"
+    test_src.write_text(
+        "class ConnectTest:\n"
+        "    def test_illegal_diagonal_does_not_make_a_winner(self):\n"
+        "        board = ['X O . .', ' O X X X']\n"
+        "        assert winner == ''\n"
+    )
+
+    def command_fn(command: str) -> str:
+        return format_tool_result(
+            command,
+            "FAILED",
+            "connect_test.py:3: in test_illegal_diagonal_does_not_make_a_winner\n"
+            "    assert winner == ''\n"
+            "E   AssertionError: 'X' != ''",
+        )
+
+    policy = build_verification_policy(
+        test_cmds=["python -m pytest *_test.py -v --tb=short -q"],
+        command_fn=command_fn,
+    )
+    tool = build_run_tests_tool(repo_root=str(tmp_path), verification_policy=policy)
+
+    assert tool is not None
+    result = tool.run("default")
+
+    assert "Failing test source snippets:" in result
+    assert "connect_test.py:3" in result
+    assert "board = ['X O . .', ' O X X X']" in result
+
+
 def test_run_tests_tool_adds_jest_failed_test_source_snippets(tmp_path):
     spec = tmp_path / "promises.spec.js"
     spec.write_text(

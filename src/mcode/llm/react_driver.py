@@ -737,8 +737,19 @@ def _text_digest(text: str, *, max_preview: int) -> dict[str, object]:
     return {
         "chars": len(text),
         "sha256": hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest(),
-        "preview": text[:max_preview],
+        "preview": _text_preview(text, max_preview=max_preview),
     }
+
+
+def _text_preview(text: str, *, max_preview: int) -> str:
+    if len(text) <= max_preview:
+        return text
+    edge = max_preview // 2
+    return (
+        text[:edge].rstrip()
+        + "\n...[output preview truncated, keeping final diagnostics]...\n"
+        + text[-edge:].lstrip()
+    )
 
 
 def _sanitize_diagnostic_payload(value: object, *, max_preview: int = 500) -> object:

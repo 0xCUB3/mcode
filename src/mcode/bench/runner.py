@@ -960,7 +960,11 @@ class BenchmarkRunner:
         import shutil
 
         from mcode.agent.tooling import format_tool_result
-        from mcode.bench.aider_polyglot import run_command_sequence, run_single_command
+        from mcode.bench.aider_polyglot import (
+            _failure_report_snippets,
+            run_command_sequence,
+            run_single_command,
+        )
         from mcode.util import temporary_directory
 
         if self._active_reporter is not None:
@@ -1012,8 +1016,15 @@ class BenchmarkRunner:
                 )
             if outcome.passed:
                 _capture_passing_state()
+            output = outcome.output
+            if (
+                not outcome.passed
+                and "Failure report snippets:" not in output
+                and (snippets := _failure_report_snippets(prepared.work_dir, output))
+            ):
+                output = f"{output}\n\nFailure report snippets:\n{snippets}"
             status = "PASSED" if outcome.passed else ("TIMEOUT" if outcome.timed_out else "FAILED")
-            return format_tool_result(label, status, outcome.output)
+            return format_tool_result(label, status, output)
 
         previous_attempt_label = self._live_trace_attempt_label
         self._live_trace_attempt_label = attempt_label
@@ -1567,6 +1578,8 @@ def _merge_list_metric(left: object, right: object) -> list[object] | None:
 
 def _allowed_polyglot_test_commands(prepared) -> set[str]:
     allowed = set(prepared.test_commands)
+    if len(prepared.test_commands) > 1:
+        allowed.add(" && ".join(prepared.test_commands))
     if prepared.task.language == "python":
         suffix = " -v --tb=short -q"
         prefix = "python -m pytest "

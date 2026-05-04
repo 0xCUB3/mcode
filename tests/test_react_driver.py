@@ -10,13 +10,26 @@ from mellea.stdlib.components.chat import ToolMessage
 from mellea.stdlib.context import ChatContext
 
 from mcode.agent.verification import build_run_tests_tool, build_verification_policy
-from mcode.llm.react_driver import SolveTraceCollector, SolveTracePlugin, run_react_loop
+from mcode.llm.react_driver import (
+    SolveTraceCollector,
+    SolveTracePlugin,
+    _text_preview,
+    run_react_loop,
+)
 from mcode.llm.session import PatchSubmission
 from mcode.mellea_compat import (
     acall_tools_with_arg_compat,
     apply_provider_compatibility_patches,
     inspect_tool_call_arg_compat,
 )
+
+
+def test_text_preview_keeps_final_diagnostics():
+    preview = _text_preview("start\n" + ("filler\n" * 100) + "final error", max_preview=80)
+
+    assert preview.startswith("start")
+    assert "[output preview truncated, keeping final diagnostics]" in preview
+    assert preview.endswith("final error")
 
 
 def test_solve_trace_collector_emits_live_events_without_diagnostics():

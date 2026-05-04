@@ -153,6 +153,38 @@ def test_reset_to_baseline_restores_prepared_task(tmp_path: Path) -> None:
         cleanup_prepared_task(prepared)
 
 
+def test_run_single_command_removes_partial_node_modules_after_npm_timeout(tmp_path: Path) -> None:
+    node_modules = tmp_path / "node_modules"
+    node_modules.mkdir()
+    (node_modules / "partial").write_text("broken\n")
+
+    outcome = run_single_command(tmp_path, "echo npm install; sleep 5", timeout_s=1)
+
+    assert outcome.timed_out
+    assert not node_modules.exists()
+    assert "Removed partial node_modules" in outcome.output
+
+
+def test_run_command_sequence_appends_pytest_source_snippets(tmp_path: Path) -> None:
+    test_file = tmp_path / "connect_test.py"
+    test_file.write_text(
+        "class ConnectTest:\n"
+        "    def test_path(self):\n"
+        "        board = ['X .', ' X']\n"
+        "        assert winner == ''\n"
+    )
+    result = run_command_sequence(
+        tmp_path,
+        ("python - <<'PY'\nprint('connect_test.py:3: in test_path')\nraise SystemExit(1)\nPY",),
+        timeout_s=5,
+    )
+
+    assert not result.passed
+    assert "Failure report snippets:" in result.output
+    assert "connect_test.py:3" in result.output
+    assert "board = ['X .', ' X']" in result.output
+
+
 def test_run_command_sequence_appends_failure_reports(tmp_path: Path) -> None:
     report_dir = tmp_path / "build" / "test-results" / "test"
     report_dir.mkdir(parents=True)

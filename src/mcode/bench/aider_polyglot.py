@@ -310,7 +310,7 @@ def run_command_sequence(
         outputs.append(f"$ {command}\n{outcome.output}".strip())
         if not outcome.passed:
             output = "\n\n".join(part for part in outputs if part)
-            if snippets := _failure_report_snippets(work_dir):
+            if snippets := _failure_report_snippets(work_dir, output):
                 output = f"{output}\n\nFailure report snippets:\n{snippets}"
             return CommandOutcome(
                 passed=False,
@@ -326,10 +326,10 @@ def run_command_sequence(
     )
 
 
-def _failure_report_snippets(work_dir: Path) -> str:
+def _failure_report_snippets(work_dir: Path, output: str = "") -> str:
     from mcode.agent.verification import _collect_failure_artifacts
 
-    return _collect_failure_artifacts(work_dir)
+    return _collect_failure_artifacts(work_dir, output)
 
 
 def run_single_command(work_dir: Path, command: str, *, timeout_s: int) -> CommandOutcome:
@@ -365,9 +365,13 @@ def run_single_command(work_dir: Path, command: str, *, timeout_s: int) -> Comma
             env=env,
         )
     except subprocess.TimeoutExpired:
+        cleanup_note = _cleanup_after_timed_out_command(work_dir, command)
+        output = f"Command timed out after {command_timeout}s"
+        if cleanup_note:
+            output = f"{output}\n{cleanup_note}"
         return CommandOutcome(
             passed=False,
-            output=f"Command timed out after {command_timeout}s",
+            output=output,
             exit_code=None,
             timed_out=True,
         )
@@ -378,6 +382,16 @@ def run_single_command(work_dir: Path, command: str, *, timeout_s: int) -> Comma
         exit_code=result.returncode,
         timed_out=False,
     )
+
+
+def _cleanup_after_timed_out_command(work_dir: Path, command: str) -> str:
+    if "npm install" not in command:
+        return ""
+    node_modules = work_dir / "node_modules"
+    if not node_modules.exists():
+        return ""
+    shutil.rmtree(node_modules, ignore_errors=True)
+    return "Removed partial node_modules after npm install timeout."
 
 
 def _copy_exercise(src_dir: Path, work_dir: Path) -> None:
