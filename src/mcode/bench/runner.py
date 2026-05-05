@@ -419,8 +419,88 @@ class BenchmarkRunner:
                     "turns_to_first_verification"
                 ),
                 "last_model_output": normalized_metrics.get("last_model_output"),
+                "raw_patch_stats": normalized_metrics.get("raw_patch_stats"),
+                "selection_selected_index": normalized_metrics.get("selection_selected_index"),
+                "selection_attempt_count": normalized_metrics.get("selection_attempt_count"),
             },
         )
+        candidates = [candidate]
+        selection_attempts = normalized_metrics.get("selection_attempts")
+        selected_selection_index = _coerce_optional_int(
+            normalized_metrics.get("selection_selected_index")
+        )
+        if isinstance(selection_attempts, list):
+            for index, raw_attempt in enumerate(selection_attempts, start=1):
+                if not isinstance(raw_attempt, dict):
+                    continue
+                attempt_metrics = _scaffold_metrics(raw_attempt)
+                selection_attempt_index = _coerce_optional_int(
+                    attempt_metrics.get("selection_attempt_index")
+                )
+                candidates.append(
+                    store.write_candidate(
+                        candidate_index=index,
+                        patch=_coerce_optional_str(raw_attempt.get("patch")) or "",
+                        terminal_reason=_coerce_optional_str(
+                            attempt_metrics.get("terminal_reason")
+                        ),
+                        selected=False,
+                        submission_json=_coerce_optional_str(
+                            attempt_metrics.get("submission_json")
+                        ),
+                        generation_time_ms=_coerce_optional_int(
+                            attempt_metrics.get("generation_latency_ms")
+                        ),
+                        prompt_tokens=_coerce_optional_int(attempt_metrics.get("prompt_tokens")),
+                        completion_tokens=_coerce_optional_int(
+                            attempt_metrics.get("completion_tokens")
+                        ),
+                        total_tokens=_coerce_optional_int(attempt_metrics.get("total_tokens")),
+                        provider=_coerce_optional_str(attempt_metrics.get("provider")),
+                        response_model=_coerce_optional_str(attempt_metrics.get("response_model")),
+                        validation_passed_count=_coerce_optional_int(
+                            attempt_metrics.get("validation_passed_count")
+                        ),
+                        validation_failed_count=_coerce_optional_int(
+                            attempt_metrics.get("validation_failed_count")
+                        ),
+                        zero_edit=bool(attempt_metrics.get("zero_edit", True)),
+                        zero_verification=bool(attempt_metrics.get("zero_verification", True)),
+                        verification_succeeded=bool(
+                            attempt_metrics.get("verification_succeeded", False)
+                        ),
+                        trace_events=(
+                            attempt_metrics.get("diagnostic_events")
+                            if isinstance(attempt_metrics.get("diagnostic_events"), list)
+                            else None
+                        ),
+                        verification_evidence=self._verification_evidence(
+                            attempt_metrics.get("verification_evidence")
+                        ),
+                        failure_counters=self._artifact_failure_counters(attempt_metrics),
+                        metadata={
+                            "phase": self.config.phase,
+                            "selection_trajectory": True,
+                            "solve_attempt_label": attempt_metrics.get("solve_attempt_label"),
+                            "selection_attempt_index": selection_attempt_index,
+                            "selection_attempt_count": attempt_metrics.get(
+                                "selection_attempt_count"
+                            ),
+                            "selection_selected": (
+                                selection_attempt_index == selected_selection_index
+                                if selection_attempt_index is not None
+                                else False
+                            ),
+                            "selection_selected_index": selected_selection_index,
+                            "turns_to_first_edit": attempt_metrics.get("turns_to_first_edit"),
+                            "turns_to_first_verification": attempt_metrics.get(
+                                "turns_to_first_verification"
+                            ),
+                            "raw_patch_stats": attempt_metrics.get("raw_patch_stats"),
+                            "last_model_output": attempt_metrics.get("last_model_output"),
+                        },
+                    )
+                )
         manifest = TaskArtifactManifest(
             schema_version=task_ref.artifact_version,
             phase=self.config.phase,
@@ -430,7 +510,7 @@ class BenchmarkRunner:
             model_id=self.config.model_id,
             backend_name=self.config.backend_name,
             task=task_ref,
-            candidates=(candidate,),
+            candidates=tuple(candidates),
             evaluations=(),
             metadata={"phase": self.config.phase},
         )
@@ -1069,7 +1149,10 @@ class BenchmarkRunner:
         except Exception as exc:
             if pass_snapshot is None:
                 raise
-            metrics = _generation_result(llm) or {}
+            metrics = _tag_selection_attempt_metrics(
+                _generation_result(llm) or {},
+                attempt_label=attempt_label,
+            )
             metrics.update(
                 {
                     "terminal_reason": "verified_after_model_error",
@@ -1084,7 +1167,13 @@ class BenchmarkRunner:
             return metrics, pass_snapshot
         finally:
             self._live_trace_attempt_label = previous_attempt_label
-        return _generation_result(llm), pass_snapshot
+        return (
+            _tag_selection_attempt_metrics(
+                _generation_result(llm),
+                attempt_label=attempt_label,
+            ),
+            pass_snapshot,
+        )
 
     def _generate_task_patch(
         self,
@@ -1541,6 +1630,22 @@ def _should_reset_before_retry(output: str) -> bool:
     return any(marker in text for marker in markers)
 
 
+def _tag_selection_attempt_metrics(
+    metrics: dict[str, object] | None,
+    *,
+    attempt_label: str,
+) -> dict[str, object] | None:
+    if metrics is None:
+        return None
+    metrics["solve_attempt_label"] = attempt_label
+    attempts = metrics.get("selection_attempts")
+    if isinstance(attempts, list):
+        for attempt in attempts:
+            if isinstance(attempt, dict):
+                attempt["solve_attempt_label"] = attempt_label
+    return metrics
+
+
 def _merge_polyglot_metrics(
     *,
     first: dict[str, object] | None,
@@ -1583,10 +1688,13 @@ def _merge_polyglot_metrics(
         "response_model",
         "submission_json",
         "terminal_reason",
+        "raw_patch_stats",
+        "selection_attempt_count",
+        "selection_selected_index",
     ):
         if second_metrics.get(key) is not None:
             merged[key] = second_metrics[key]
-    for key in ("diagnostic_events", "verification_evidence"):
+    for key in ("diagnostic_events", "verification_evidence", "selection_attempts"):
         merged[key] = _merge_list_metric(merged.get(key), second_metrics.get(key))
     merged["validation_passed_count"] = _sum_metric(
         merged.get("validation_passed_count"),
