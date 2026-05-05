@@ -36,22 +36,6 @@ def restore_repo_snapshot(repo_root: str, snapshot_dir: Path) -> None:
         _copy_path(child, root / child.name)
 
 
-def apply_git_patch(repo_root: str, patch: str) -> bool:
-    if not patch.strip():
-        return True
-    git_dir = os.path.join(repo_root, ".git")
-    if not os.path.exists(git_dir):
-        return False
-    result = subprocess.run(
-        ["git", "apply", "--whitespace=nowarn", "-"],
-        cwd=repo_root,
-        input=patch,
-        capture_output=True,
-        text=True,
-    )
-    return result.returncode == 0
-
-
 def get_git_diff(repo_root: str) -> str:
     git_dir = os.path.join(repo_root, ".git")
     if not os.path.exists(git_dir):

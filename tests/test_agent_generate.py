@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import os
 import subprocess
 from contextlib import contextmanager
@@ -8,19 +7,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from mcode.agent.coding_agent import build_coding_agent
-from mcode.agent.tooling import format_tool_result
 from mcode.agent.verification import build_run_tests_tool, build_verification_policy
 from mcode.bench import runner as runner_module
 from mcode.bench.results import ResultsDB
 from mcode.bench.runner import BenchConfig, BenchmarkRunner
 from mcode.bench.toolchains import PolyglotToolchainError
 from mcode.execution.sandbox import DockerUnavailableError
-from mcode.llm import session as session_module
-from mcode.llm.react_driver import SolveTraceCollector
 from mcode.llm.session import (
     LLMSession,
-    McodeSolverPowerup,
     PatchSubmission,
     SolveResult,
     _coerce_submission,
@@ -51,17 +45,6 @@ def _init_repo(tmp_path: Path) -> None:
 @contextmanager
 def _session_context(fake_session):
     yield fake_session
-
-
-def _foo_patch(value: int) -> str:
-    return (
-        "diff --git a/foo.py b/foo.py\n"
-        "--- a/foo.py\n"
-        "+++ b/foo.py\n"
-        "@@ -1 +1 @@\n"
-        "-x = 1\n"
-        f"+x = {value}\n"
-    )
 
 
 def test_generate_patch_returns_verified_diff(tmp_path, monkeypatch):
@@ -358,50 +341,6 @@ def test_generate_patch_disables_outer_retry_when_sampling_enabled(tmp_path, mon
     assert captured["sampling_budget"] == 4
 
 
-def test_final_default_verification_keeps_passing_patch(tmp_path, monkeypatch):
-    _init_repo(tmp_path)
-    collector = SolveTraceCollector()
-
-    def test_fn(_test_cmd="default"):
-        return format_tool_result("run_tests default", "PASSED", "ok")
-
-    policy = build_verification_policy(test_fn=test_fn)
-    agent = build_coding_agent(
-        session=LLMSession(model_id="test", backend_name="openai", loop_budget=4),
-        repo="test/repo",
-        problem_statement="Fix the bug",
-        repo_root=str(tmp_path),
-        test_fn=test_fn,
-    )
-
-    async def fake_react_loop(*args, **kwargs):
-        del args, kwargs
-        (tmp_path / "foo.py").write_text("x = 2\n", encoding="utf-8")
-        return None, "budget_exhausted"
-
-    monkeypatch.setattr(session_module, "run_react_loop", fake_react_loop)
-
-    result = asyncio.run(
-        McodeSolverPowerup().solve_patch(
-            repo_root=str(tmp_path),
-            goal=agent.goal,
-            tools=agent.tools,
-            model_options=agent.model_options,
-            loop_budget=agent.loop_budget,
-            timeout_s=agent.timeout_s,
-            verification_policy=policy,
-            collector=collector,
-            sampling_strategy_name="none",
-            sampling_budget=1,
-            hooks_enabled=False,
-        )
-    )
-
-    assert result.patch
-    assert result.verification_succeeded is True
-    assert result.terminal_reason == "budget_exhausted"
-
-
 def test_selection_attempts_runs_sampling_trajectories_and_selects_best(tmp_path, monkeypatch):
     _init_repo(tmp_path)
     session = LLMSession(
@@ -420,7 +359,7 @@ def test_selection_attempts_runs_sampling_trajectories_and_selects_best(tmp_path
         attempts["count"] += 1
         if attempts["count"] == 1:
             return SolveResult(
-                patch=_foo_patch(2),
+                patch="diff --git a/foo.py b/foo.py\n+x = 2\n",
                 terminal_reason="budget_exhausted",
                 verification_succeeded=True,
                 zero_edit=False,
@@ -433,7 +372,7 @@ def test_selection_attempts_runs_sampling_trajectories_and_selects_best(tmp_path
                 verification_succeeded=False,
             )
         return SolveResult(
-            patch=_foo_patch(3),
+            patch="diff --git a/foo.py b/foo.py\n+x = 3\n",
             submission=PatchSubmission(summary="Attempt three", tests_ran=["default"]),
             terminal_reason="submitted",
             verification_succeeded=True,
@@ -460,7 +399,6 @@ def test_selection_attempts_runs_sampling_trajectories_and_selects_best(tmp_path
     assert attempts["count"] == 3
     assert captured == ["multiturn", "multiturn", "multiturn"]
     assert "+x = 3" in patch_text
-    assert (tmp_path / "foo.py").read_text(encoding="utf-8") == "x = 3\n"
     assert session.solve_result is not None
     assert session.solve_result.submission == PatchSubmission(
         summary="Attempt three",
