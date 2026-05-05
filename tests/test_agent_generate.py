@@ -404,10 +404,6 @@ def test_selection_attempts_runs_sampling_trajectories_and_selects_best(tmp_path
         summary="Attempt three",
         tests_ran=["default"],
     )
-    metrics = session.solve_result.as_metrics_dict()
-    assert metrics["selection_selected_index"] == 2
-    assert [item["selection_attempt_index"] for item in metrics["selection_attempts"]] == [0, 1, 2]
-    assert metrics["selection_attempts"][2]["patch"]
 
 
 def test_generate_patch_retries_from_clean_repo_snapshot(tmp_path, monkeypatch):
@@ -504,71 +500,6 @@ def test_swebench_runner_passes_task_metadata_to_solver(tmp_path):
     assert captured["test_cmds"] == {"test_cmds": ["pytest -q tests/test_bug.py"]}
     assert captured["command_fn"] is not None
     assert captured["visible_repo_root"] == "/testbed"
-
-
-def test_generation_manifest_records_selection_trajectories(tmp_path):
-    results_db = ResultsDB(tmp_path / "results.db")
-    runner = BenchmarkRunner(
-        config=BenchConfig(model_id="test-model", backend_name="ollama"),
-        results_db=results_db,
-    )
-    run_id = results_db.start_run(
-        "bench",
-        {"model_id": "test-model", "timeout_s": 300, "loop_budget": 4},
-    )
-    task = SimpleNamespace(repo="test/repo", problem_statement="Fix", hints_text="")
-
-    manifest = runner._write_generation_manifest(
-        run_id=run_id,
-        benchmark="bench",
-        task_id="task-1",
-        task=task,
-        patch="diff --git a/foo.py b/foo.py\n+x = 3\n",
-        metrics={
-            "terminal_reason": "submitted",
-            "verification_succeeded": True,
-            "selection_selected_index": 2,
-            "selection_attempt_count": 3,
-            "selection_attempts": [
-                {
-                    "patch": "",
-                    "terminal_reason": "budget_exhausted",
-                    "selection_attempt_index": 0,
-                    "selection_attempt_count": 3,
-                    "verification_succeeded": False,
-                },
-                {
-                    "patch": "diff --git a/foo.py b/foo.py\n+x = 2\n",
-                    "terminal_reason": "submitted",
-                    "selection_attempt_index": 1,
-                    "selection_attempt_count": 3,
-                    "verification_succeeded": True,
-                },
-                {
-                    "patch": "diff --git a/foo.py b/foo.py\n+x = 3\n",
-                    "terminal_reason": "submitted",
-                    "selection_attempt_index": 2,
-                    "selection_attempt_count": 3,
-                    "verification_succeeded": True,
-                },
-            ],
-        },
-    )
-
-    assert len(manifest.candidates) == 4
-    assert manifest.candidates[0].selected is True
-    trajectories = manifest.candidates[1:]
-    assert [item.metadata["selection_attempt_index"] for item in trajectories] == [0, 1, 2]
-    assert [item.metadata["selection_selected"] for item in trajectories] == [
-        False,
-        False,
-        True,
-    ]
-    assert all(item.selected is False for item in trajectories)
-    stored = results_db.conn.execute(
-        "SELECT COUNT(*) FROM artifact_candidates WHERE task_id = 'task-1'"
-    ).fetchone()[0]
-    assert stored == 4
 
 
 def test_run_task_retries_docker_unavailable_once(tmp_path):

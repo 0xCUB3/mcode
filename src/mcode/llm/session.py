@@ -6,7 +6,7 @@ import json
 import os
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any
 
 from mellea.stdlib.requirements import uses_tool
@@ -56,61 +56,32 @@ class SolveResult:
     verification_evidence: list[dict[str, object]] | None = None
     diagnostic_events: list[dict[str, object]] | None = None
     last_model_output: dict[str, object] | None = None
-    raw_patch_stats: dict[str, object] | None = None
-    selection_attempt_index: int | None = None
-    selection_attempt_count: int | None = None
-    selection_selected_index: int | None = None
-    selection_attempts: tuple[SolveResult, ...] | None = None
 
     def as_metrics_dict(self) -> dict[str, object]:
-        metrics = _solve_result_metrics(self)
-        if self.selection_attempts is not None:
-            metrics["selection_attempts"] = [
-                _solve_result_metrics(attempt, include_patch=True)
-                for attempt in self.selection_attempts
-            ]
+        metrics: dict[str, object] = {
+            "terminal_reason": self.terminal_reason,
+            "turns_to_first_edit": self.turns_to_first_edit,
+            "turns_to_first_verification": self.turns_to_first_verification,
+            "zero_edit": self.zero_edit,
+            "zero_verification": self.zero_verification,
+            "verification_succeeded": self.verification_succeeded,
+            "prompt_snapshot": self.prompt_snapshot,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "total_tokens": self.total_tokens,
+            "provider": self.provider,
+            "response_model": self.response_model,
+            "generation_latency_ms": self.generation_latency_ms,
+            "validation_passed_count": self.validation_passed_count,
+            "validation_failed_count": self.validation_failed_count,
+        }
+        if self.verification_evidence is not None:
+            metrics["verification_evidence"] = self.verification_evidence
+        if self.diagnostic_events is not None:
+            metrics["diagnostic_events"] = self.diagnostic_events
+        if self.last_model_output is not None:
+            metrics["last_model_output"] = self.last_model_output
         return metrics
-
-
-def _solve_result_metrics(
-    result: SolveResult,
-    *,
-    include_patch: bool = False,
-) -> dict[str, object]:
-    metrics: dict[str, object] = {
-        "terminal_reason": result.terminal_reason,
-        "turns_to_first_edit": result.turns_to_first_edit,
-        "turns_to_first_verification": result.turns_to_first_verification,
-        "zero_edit": result.zero_edit,
-        "zero_verification": result.zero_verification,
-        "verification_succeeded": result.verification_succeeded,
-        "prompt_snapshot": result.prompt_snapshot,
-        "prompt_tokens": result.prompt_tokens,
-        "completion_tokens": result.completion_tokens,
-        "total_tokens": result.total_tokens,
-        "provider": result.provider,
-        "response_model": result.response_model,
-        "generation_latency_ms": result.generation_latency_ms,
-        "validation_passed_count": result.validation_passed_count,
-        "validation_failed_count": result.validation_failed_count,
-    }
-    if result.raw_patch_stats is not None:
-        metrics["raw_patch_stats"] = result.raw_patch_stats
-    if result.selection_attempt_index is not None:
-        metrics["selection_attempt_index"] = result.selection_attempt_index
-    if result.selection_attempt_count is not None:
-        metrics["selection_attempt_count"] = result.selection_attempt_count
-    if result.selection_selected_index is not None:
-        metrics["selection_selected_index"] = result.selection_selected_index
-    if result.verification_evidence is not None:
-        metrics["verification_evidence"] = result.verification_evidence
-    if result.diagnostic_events is not None:
-        metrics["diagnostic_events"] = result.diagnostic_events
-    if result.last_model_output is not None:
-        metrics["last_model_output"] = result.last_model_output
-    if include_patch:
-        metrics["patch"] = result.patch
-    return metrics
 
 
 def hooks_available() -> bool:
@@ -238,7 +209,6 @@ class McodeSolverPowerup:
                 list(collector.diagnostic_events) if collector.diagnostic_enabled else None
             ),
             last_model_output=collector.last_model_output,
-            raw_patch_stats=_patch_stats(raw_patch),
         )
 
 
@@ -443,12 +413,6 @@ class LLMSession:
 
                 with self._start_session(plugins=runtime_plugins) as session:
                     result = asyncio.run(_solve_once())
-                if select_best_attempt:
-                    result = replace(
-                        result,
-                        selection_attempt_index=index,
-                        selection_attempt_count=outer_attempts,
-                    )
                 attempts.append(result)
                 if not select_best_attempt and result.patch and result.verification_succeeded:
                     self._last_result = result
@@ -458,13 +422,7 @@ class LLMSession:
                 restore_repo_snapshot(repo_root, snapshot_dir)
 
         if attempts:
-            selected_index, selected = _select_solve_result(attempts)
-            selected = replace(
-                selected,
-                selection_attempts=tuple(attempts),
-                selection_selected_index=selected_index,
-                selection_attempt_count=len(attempts),
-            )
+            selected = _select_solve_result(attempts)
             self._last_result = selected
             return selected
 
@@ -472,8 +430,8 @@ class LLMSession:
         return self._last_result
 
 
-def _select_solve_result(attempts: list[SolveResult]) -> tuple[int, SolveResult]:
-    return max(enumerate(attempts), key=lambda item: (_solve_result_score(item[1]), -item[0]))
+def _select_solve_result(attempts: list[SolveResult]) -> SolveResult:
+    return max(enumerate(attempts), key=lambda item: (_solve_result_score(item[1]), -item[0]))[1]
 
 
 def _solve_result_score(result: SolveResult) -> tuple[int, int, int, int, int, int]:
