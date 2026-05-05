@@ -241,6 +241,32 @@ def test_run_tests_tool_preserves_status_when_truncating(tmp_path):
     assert "final error" in result
 
 
+def test_run_tests_tool_adds_reactive_timeout_note_without_stale_reports(tmp_path):
+    report_dir = tmp_path / "build" / "test-results" / "test"
+    report_dir.mkdir(parents=True)
+    (report_dir / "TEST-ExampleTest.xml").write_text(
+        '<testsuite><testcase classname="ExampleTest" name="oldFailure">'
+        '<failure message="stale failure">old stack</failure>'
+        "</testcase></testsuite>"
+    )
+    test_src = tmp_path / "src" / "test" / "java" / "ExampleTest.java"
+    test_src.parent.mkdir(parents=True)
+    test_src.write_text("import io.reactivex.Observable;\nclass ExampleTest {}\n")
+
+    def command_fn(command: str) -> str:
+        return format_tool_result(command, "TIMEOUT", "Command timed out after 300s")
+
+    policy = build_verification_policy(test_cmds=["./gradlew test"], command_fn=command_fn)
+    tool = build_run_tests_tool(repo_root=str(tmp_path), verification_policy=policy)
+
+    assert tool is not None
+    result = tool.run("default")
+
+    assert "Reactive timeout note" in result
+    assert "returned stream" in result
+    assert "stale failure" not in result
+
+
 def test_run_tests_tool_includes_junit_failure_body_details(tmp_path):
     report_dir = tmp_path / "build" / "test-results" / "test"
     report_dir.mkdir(parents=True)

@@ -370,7 +370,9 @@ def _collect_failure_artifacts(repo_root: Path, output: str = "") -> str:
     if not repo_root.is_dir():
         return ""
     candidates = (
-        [] if _looks_like_compile_failure(output) else _failure_artifact_candidates(repo_root)
+        []
+        if _looks_like_unreliable_failure_artifacts(output)
+        else _failure_artifact_candidates(repo_root)
     )
     failed_cases: list[tuple[str, str, str]] = []
     for path in candidates[:4]:
@@ -390,12 +392,22 @@ def _collect_failure_artifacts(repo_root: Path, output: str = "") -> str:
     if source_blocks:
         source_text = "\n\n".join(source_blocks)
         snippets.append(f"Failing test source snippets:\n{source_text}")
+    if reactive_timeout_note := _reactive_timeout_note(repo_root, output):
+        snippets.append(reactive_timeout_note)
     for path in candidates[:4]:
         snippet = _failure_artifact_snippet(path)
         if snippet:
             rel = path.relative_to(repo_root).as_posix()
             snippets.append(f"{rel}:\n{snippet}")
     return "\n\n".join(snippets)
+
+
+def _looks_like_unreliable_failure_artifacts(output: str) -> bool:
+    return _looks_like_compile_failure(output) or _looks_like_timeout(output)
+
+
+def _looks_like_timeout(output: str) -> bool:
+    return "TIMEOUT" in output or "Command timed out" in output
 
 
 def _looks_like_compile_failure(output: str) -> bool:
@@ -406,6 +418,29 @@ def _looks_like_compile_failure(output: str) -> bool:
             re.IGNORECASE,
         )
     )
+
+
+def _reactive_timeout_note(repo_root: Path, output: str) -> str:
+    if not _looks_like_timeout(output):
+        return ""
+    reactive_markers = ("io.reactivex.Observable", "rx.Observable", "Observable.create")
+    suffixes = (".java", ".kt", ".js", ".ts")
+    for path in repo_root.rglob("*"):
+        if not path.is_file() or path.suffix not in suffixes:
+            continue
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        if any(marker in text for marker in reactive_markers):
+            return (
+                "Reactive timeout note:\n"
+                "The test command timed out in a repository using Observable/reactive streams. "
+                "For finite synchronous test inputs, make sure the returned stream emits terminal "
+                "states and completes when its finite sources complete; avoid subscriptions or "
+                "combinators that leave the returned stream open forever."
+            )
+    return ""
 
 
 def _failure_artifact_candidates(repo_root: Path) -> list[Path]:
