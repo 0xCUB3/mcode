@@ -25,7 +25,7 @@ from mcode.llm.react_driver import (
     _should_enforce_first_edit,
     run_react_loop,
 )
-from mcode.llm.repo_state import get_git_diff, repo_snapshot, restore_repo_snapshot
+from mcode.llm.repo_state import apply_git_patch, get_git_diff, repo_snapshot, restore_repo_snapshot
 from mcode.mellea_compat import apply_provider_compatibility_patches
 
 
@@ -188,6 +188,12 @@ class McodeSolverPowerup:
         patch = get_git_diff(repo_root)
         raw_patch = patch
         collector.note_event("patch_stats", {"stage": "raw", **_patch_stats(raw_patch)})
+        if (
+            patch
+            and _has_verification_tool(verification_policy)
+            and not collector.verification_succeeded
+        ):
+            _run_final_default_verification(tools=tools, collector=collector)
         if (
             patch
             and _has_verification_tool(verification_policy)
@@ -459,6 +465,8 @@ class LLMSession:
 
         if attempts:
             selected_index, selected = _select_solve_result(attempts)
+            if select_best_attempt and selected.patch:
+                apply_git_patch(repo_root, selected.patch)
             selected = replace(
                 selected,
                 selection_attempts=tuple(attempts),
@@ -470,6 +478,35 @@ class LLMSession:
 
         self._last_result = SolveResult()
         return self._last_result
+
+
+def _run_final_default_verification(
+    *,
+    tools: Sequence[object],
+    collector: SolveTraceCollector,
+) -> None:
+    run_tests = next((tool for tool in tools if getattr(tool, "name", "") == "run_tests"), None)
+    tool_call = getattr(run_tests, "tool_call", None) or getattr(run_tests, "run", None)
+    if tool_call is None:
+        return
+    try:
+        if collector.turns_to_first_edit is None:
+            collector.turns_to_first_edit = max(1, collector.current_turn or 1)
+        output = tool_call(test_cmd="default")
+        collector.note_tool(
+            tool_name="run_tests",
+            output=output,
+            success=True,
+            tool_args={"test_cmd": "default"},
+        )
+    except Exception as exc:
+        collector.note_tool(
+            tool_name="run_tests",
+            output=str(exc),
+            success=False,
+            tool_args={"test_cmd": "default"},
+            error=exc,
+        )
 
 
 def _select_solve_result(attempts: list[SolveResult]) -> tuple[int, SolveResult]:
