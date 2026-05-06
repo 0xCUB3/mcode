@@ -832,7 +832,7 @@ class SWEbenchSandbox:
                     test_spec=test_spec,
                     prediction=pred,
                     test_log_path=str(p),
-                    include_tests_status=True,
+                    include_tests_status=False,
                 )
 
             inst_report = report.get(str(instance["instance_id"]), {})
