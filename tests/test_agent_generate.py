@@ -690,6 +690,100 @@ def test_swebench_runner_skips_completed_tasks_without_touching_sandbox(
     assert second.passed == 1
 
 
+def test_run_task_repairs_failed_swebench_eval(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner_module, "_runtime_metadata", lambda: {})
+    results_db = ResultsDB(tmp_path / "results.db")
+    runner = BenchmarkRunner(
+        config=BenchConfig(
+            model_id="test-model",
+            backend_name="ollama",
+            swebench_eval_repair_attempts=1,
+        ),
+        results_db=results_db,
+    )
+    task = SimpleNamespace(
+        benchmark="swebench-lite",
+        instance_id="task-repair",
+        repo="test/repo",
+        problem_statement="Fix the bug",
+        hints_text="",
+        raw_instance={"instance_id": "task-repair"},
+    )
+    generated: list[str] = []
+    evaluated: list[str] = []
+
+    @contextmanager
+    def repo_context():
+        yield SimpleNamespace(
+            repo_root=str(tmp_path), command_fn=None, visible_repo_root="/testbed"
+        )
+
+    def generate_patch(task_arg, **kwargs):
+        del kwargs
+        generated.append(task_arg.problem_statement)
+        if len(generated) == 1:
+            return "diff --git a/foo.py b/foo.py\n+x = broken\n", {
+                "terminal_reason": "submitted",
+                "zero_edit": False,
+            }
+        return "diff --git a/foo.py b/foo.py\n+x = fixed\n", {
+            "terminal_reason": "submitted",
+            "zero_edit": False,
+            "verification_succeeded": True,
+        }
+
+    def evaluate_patch(patch: str) -> runner_module._TaskEvaluation:
+        evaluated.append(patch)
+        if len(evaluated) == 1:
+            return runner_module._TaskEvaluation(
+                evaluator_name="swebench-lite",
+                passed=False,
+                timed_out=False,
+                stdout="FAILED tests/test_bug.py::test_case - AssertionError",
+                stderr='{"resolved": false}',
+                error="Not resolved",
+                report={"resolved": False},
+            )
+        return runner_module._TaskEvaluation(
+            evaluator_name="swebench-lite",
+            passed=True,
+            timed_out=False,
+            stdout="ok",
+            stderr='{"resolved": true}',
+            error=None,
+            report={"resolved": True},
+        )
+
+    runner._generate_task_patch = generate_patch  # type: ignore[method-assign]
+    run_id = results_db.start_run(
+        "swebench-lite",
+        {
+            "backend_name": "ollama",
+            "model_id": "test-model",
+            "loop_budget": 15,
+            "timeout_s": 60,
+        },
+    )
+
+    result = runner._run_task(
+        run_id=run_id,
+        task_id=task.instance_id,
+        generation_task=task,
+        repo_context_factory=repo_context,
+        evaluate_patch=evaluate_patch,
+    )
+
+    assert result["passed"] is True
+    assert len(generated) == 2
+    assert len(evaluated) == 2
+    assert "Official evaluation feedback" in generated[1]
+    assert "FAILED tests/test_bug.py::test_case" in generated[1]
+    assert "+x = fixed" in evaluated[-1]
+    artifact_rows = results_db.task_artifact_rows(run_id)
+    assert artifact_rows[task.instance_id]["candidate_count"] == 2
+    assert artifact_rows[task.instance_id]["evaluation_count"] == 2
+
+
 def test_swebench_runner_retries_prior_infra_failure(tmp_path, monkeypatch) -> None:
     task = SimpleNamespace(
         raw_instance={"instance_id": "task-retry"},

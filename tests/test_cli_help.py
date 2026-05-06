@@ -17,6 +17,7 @@ EXPECTED_OPTIONS: dict[tuple[str, ...], set[str]] = {
         "sampling",
         "sampling_budget",
         "selection_attempts",
+        "eval_repair_attempts",
         "on",
         "fetch_db",
         "fetch_artifacts",

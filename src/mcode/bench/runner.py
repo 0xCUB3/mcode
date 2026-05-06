@@ -5,11 +5,13 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import time
 import traceback
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
+from types import SimpleNamespace
 
 from mcode.bench.artifacts import (
     TaskArtifactManifest,
@@ -59,6 +61,7 @@ class BenchConfig:
     swebench_pids_limit: int = 512
     swebench_cpu_limit: float | None = None
     swebench_check_image_digests: bool = False
+    swebench_eval_repair_attempts: int = 0
     swebench_dataset: str = "SWE-bench/SWE-bench_Lite"
     aider_polyglot_root: Path | None = None
     aider_polyglot_language: str = "all"
@@ -479,6 +482,79 @@ class BenchmarkRunner:
         return candidate.candidate_index, (store.task_root / candidate.patch_path).read_text(
             encoding="utf-8"
         )
+
+    def _append_generation_candidate(
+        self,
+        *,
+        run_id: int,
+        store: TaskArtifactStore,
+        manifest: TaskArtifactManifest,
+        candidate_index: int,
+        patch: str,
+        metrics: dict[str, object] | None,
+        metadata: dict[str, object] | None = None,
+    ) -> TaskArtifactManifest:
+        normalized_metrics = _scaffold_metrics(metrics)
+        candidate = store.write_candidate(
+            candidate_index=candidate_index,
+            patch=patch,
+            terminal_reason=_coerce_optional_str(normalized_metrics.get("terminal_reason")),
+            selected=True,
+            submission_json=_coerce_optional_str(normalized_metrics.get("submission_json")),
+            generation_time_ms=_coerce_optional_int(
+                normalized_metrics.get("generation_latency_ms")
+            ),
+            prompt_tokens=_coerce_optional_int(normalized_metrics.get("prompt_tokens")),
+            completion_tokens=_coerce_optional_int(normalized_metrics.get("completion_tokens")),
+            total_tokens=_coerce_optional_int(normalized_metrics.get("total_tokens")),
+            provider=_coerce_optional_str(normalized_metrics.get("provider")),
+            response_model=_coerce_optional_str(normalized_metrics.get("response_model")),
+            validation_passed_count=_coerce_optional_int(
+                normalized_metrics.get("validation_passed_count")
+            ),
+            validation_failed_count=_coerce_optional_int(
+                normalized_metrics.get("validation_failed_count")
+            ),
+            zero_edit=bool(normalized_metrics.get("zero_edit", True)),
+            zero_verification=bool(normalized_metrics.get("zero_verification", True)),
+            verification_succeeded=bool(normalized_metrics.get("verification_succeeded", False)),
+            trace_events=(
+                normalized_metrics.get("diagnostic_events")
+                if isinstance(normalized_metrics.get("diagnostic_events"), list)
+                else None
+            ),
+            verification_evidence=self._verification_evidence(
+                normalized_metrics.get("verification_evidence")
+            ),
+            failure_counters=self._artifact_failure_counters(normalized_metrics),
+            metadata={
+                "phase": self.config.phase,
+                "turns_to_first_edit": normalized_metrics.get("turns_to_first_edit"),
+                "turns_to_first_verification": normalized_metrics.get(
+                    "turns_to_first_verification"
+                ),
+                "last_model_output": normalized_metrics.get("last_model_output"),
+                **dict(metadata or {}),
+            },
+        )
+        updated = TaskArtifactManifest(
+            schema_version=manifest.schema_version,
+            phase=self.config.phase,
+            generated_at=iso_utc_now(),
+            run_config_digest=self._run_config_digest(),
+            code_sha=_runtime_metadata().get("mcode_git_sha"),
+            model_id=self.config.model_id,
+            backend_name=self.config.backend_name,
+            task=manifest.task,
+            candidates=tuple(
+                [replace(item, selected=False) for item in manifest.candidates] + [candidate]
+            ),
+            evaluations=manifest.evaluations,
+            metadata=dict(manifest.metadata),
+        )
+        manifest_path = store.write_manifest(updated)
+        self._save_task_artifact_manifest(run_id, updated, manifest_path=manifest_path)
+        return updated
 
     def _append_evaluation_manifest(
         self,
@@ -1241,12 +1317,83 @@ class BenchmarkRunner:
                         )
                         if self.config.phase == "generate":
                             return None
+                    candidate_index = 0
                     if patch.strip():
                         eval_detail = evaluate_patch(patch)
-                        if eval_detail.passed:
-                            scaffold_result["terminal_reason"] = "submitted"
-                        elif scaffold_result.get("verification_succeeded"):
-                            scaffold_result["terminal_reason"] = "wrong_patch_after_verification"
+                        scaffold_result = _update_terminal_reason_from_eval(
+                            scaffold_result,
+                            eval_detail,
+                        )
+                        if manifest is not None:
+                            store = self._task_artifact_store(
+                                benchmark=benchmark,
+                                task_id=task_id,
+                            )
+                            manifest = self._append_evaluation_manifest(
+                                run_id=run_id,
+                                store=store,
+                                manifest=manifest,
+                                candidate_index=candidate_index,
+                                evaluation=eval_detail,
+                            )
+                        repair_attempt = 0
+                        while _should_run_swebench_eval_repair(
+                            benchmark=benchmark,
+                            patch=patch,
+                            eval_detail=eval_detail,
+                            repair_attempt=repair_attempt,
+                            max_repair_attempts=self.config.swebench_eval_repair_attempts,
+                        ):
+                            repair_attempt += 1
+                            _apply_patch_to_repo(patch_context.repo_root, patch)
+                            repair_task = _task_with_eval_repair_feedback(
+                                generation_task,
+                                eval_detail=eval_detail,
+                                repair_attempt=repair_attempt,
+                            )
+                            patch, scaffold_metrics = self._generate_task_patch(
+                                repair_task,
+                                repo_root=patch_context.repo_root,
+                                command_fn=patch_context.command_fn,
+                                visible_repo_root=patch_context.visible_repo_root,
+                                test_cmds=patch_context.test_cmds,
+                            )
+                            candidate_index = repair_attempt
+                            elapsed_ms = int((time.time() - start) * 1000)
+                            scaffold_result = _scaffold_metrics(scaffold_metrics)
+                            if manifest is not None:
+                                store = self._task_artifact_store(
+                                    benchmark=benchmark,
+                                    task_id=task_id,
+                                )
+                                manifest = self._append_generation_candidate(
+                                    run_id=run_id,
+                                    store=store,
+                                    manifest=manifest,
+                                    candidate_index=candidate_index,
+                                    patch=patch,
+                                    metrics=scaffold_metrics,
+                                    metadata={"eval_repair_attempt": repair_attempt},
+                                )
+                            if not patch.strip():
+                                break
+                            eval_detail = evaluate_patch(patch)
+                            scaffold_result = _update_terminal_reason_from_eval(
+                                scaffold_result,
+                                eval_detail,
+                            )
+                            if manifest is not None:
+                                store = self._task_artifact_store(
+                                    benchmark=benchmark,
+                                    task_id=task_id,
+                                )
+                                manifest = self._append_evaluation_manifest(
+                                    run_id=run_id,
+                                    store=store,
+                                    manifest=manifest,
+                                    candidate_index=candidate_index,
+                                    evaluation=eval_detail,
+                                )
                 break
             except Exception as e:
                 if _is_retryable_infra_error(e) and attempts_used < 2:
@@ -1261,7 +1408,7 @@ class BenchmarkRunner:
 
         if scaffold_result is not None:
             _append_terminal_diagnostic(scaffold_result, eval_detail)
-        if manifest is not None and eval_detail is not None:
+        if manifest is not None and eval_detail is not None and not manifest.evaluations:
             store = self._task_artifact_store(benchmark=benchmark, task_id=task_id)
             self._append_evaluation_manifest(
                 run_id=run_id,
@@ -1304,6 +1451,100 @@ class _TaskEvaluation:
         }
 
 
+def _update_terminal_reason_from_eval(
+    scaffold_result: dict[str, object],
+    eval_detail: _TaskEvaluation,
+) -> dict[str, object]:
+    if eval_detail.passed:
+        scaffold_result["terminal_reason"] = "submitted"
+    elif scaffold_result.get("verification_succeeded"):
+        scaffold_result["terminal_reason"] = "wrong_patch_after_verification"
+    return scaffold_result
+
+
+def _should_run_swebench_eval_repair(
+    *,
+    benchmark: str,
+    patch: str,
+    eval_detail: _TaskEvaluation | None,
+    repair_attempt: int,
+    max_repair_attempts: int,
+) -> bool:
+    if benchmark not in {"swebench-lite", "swebench-live"}:
+        return False
+    if repair_attempt >= max_repair_attempts:
+        return False
+    if not patch.strip() or eval_detail is None or eval_detail.passed:
+        return False
+    if eval_detail.timed_out:
+        return False
+    return True
+
+
+def _task_with_eval_repair_feedback(
+    task: object,
+    *,
+    eval_detail: _TaskEvaluation,
+    repair_attempt: int,
+) -> object:
+    problem = str(getattr(task, "problem_statement", ""))
+    feedback = _format_eval_repair_feedback(eval_detail)
+    return SimpleNamespace(
+        repo=getattr(task, "repo", ""),
+        problem_statement=(
+            f"{problem}\n\n"
+            f"Previous official SWE-bench evaluation failed after repair attempt "
+            f"{repair_attempt - 1}. Continue from the current repository state and "
+            "repair only what is needed. Use the deterministic feedback below, then run "
+            "the available tests before submitting.\n\n"
+            f"{feedback}"
+        ),
+        hints_text=getattr(task, "hints_text", ""),
+        raw_instance=getattr(task, "raw_instance", None),
+        benchmark=getattr(task, "benchmark", ""),
+        instance_id=getattr(task, "instance_id", None),
+    )
+
+
+def _format_eval_repair_feedback(eval_detail: _TaskEvaluation) -> str:
+    sections: list[str] = ["Official evaluation feedback:"]
+    if eval_detail.error:
+        sections.append(f"Error: {eval_detail.error}")
+    if eval_detail.report:
+        sections.append(
+            "Report JSON:\n" + json.dumps(eval_detail.report, sort_keys=True, default=str)[:4000]
+        )
+    output = _clean_eval_output(eval_detail.stdout or "")
+    if output:
+        sections.append("Test output excerpt:\n" + _head_tail_excerpt(output, max_chars=9000))
+    return "\n\n".join(sections)
+
+
+def _apply_patch_to_repo(repo_root: Path | str, patch: str) -> bool:
+    if not patch.strip():
+        return True
+    root = Path(repo_root)
+    if not (root / ".git").exists():
+        return False
+    check = subprocess.run(
+        ["git", "apply", "--whitespace=nowarn", "--check", "-"],
+        cwd=root,
+        input=patch,
+        capture_output=True,
+        text=True,
+    )
+    if check.returncode != 0:
+        return False
+    result = subprocess.run(
+        ["git", "apply", "--whitespace=nowarn", "-"],
+        cwd=root,
+        input=patch,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
 def _evaluate_live_patch(
     *,
     live_sandbox,
@@ -1324,7 +1565,7 @@ def _evaluate_live_patch(
         timed_out=run.timed_out,
         stdout=_truncate(run.test_output),
         stderr=json.dumps(run.report, sort_keys=True),
-        error=None if run.resolved else "Not resolved",
+        error=None if run.resolved else _official_eval_error(run.test_output, run.report),
         report=run.report,
         runtime_ms=int(float(getattr(run, "runtime_s", 0.0) or 0.0) * 1000),
     )
@@ -1353,9 +1594,31 @@ def _evaluate_lite_patch(
         timed_out=run.timed_out,
         stdout=_truncate(run.test_output),
         stderr=json.dumps(inst_report, sort_keys=True),
-        error=None if run.resolved else "Not resolved",
+        error=None if run.resolved else _official_eval_error(run.test_output, inst_report),
         report=inst_report,
         runtime_ms=int(float(getattr(run, "runtime_s", 0.0) or 0.0) * 1000),
+    )
+
+
+def _official_eval_error(test_output: object, report: object) -> str:
+    text = _clean_eval_output(str(test_output or ""))
+    failed_lines = [line.strip() for line in text.splitlines() if _looks_like_failed_test(line)]
+    if failed_lines:
+        return "Not resolved: " + " | ".join(failed_lines[-3:])[:1200]
+    if isinstance(report, Mapping) and report.get("patch_successfully_applied") is False:
+        return "Patch did not apply"
+    return "Not resolved"
+
+
+def _looks_like_failed_test(line: str) -> bool:
+    lowered = line.lower()
+    if not line.strip():
+        return False
+    return (
+        line.lstrip().startswith(("FAILED ", "ERROR "))
+        or " failed" in lowered
+        or " error" in lowered
+        or lowered.startswith(("fail:", "error:"))
     )
 
 
@@ -1667,8 +1930,29 @@ def _allowed_polyglot_test_commands(prepared) -> set[str]:
     return allowed
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
 def _truncate(s: str, max_chars: int = 8000) -> str:
     return s if len(s) <= max_chars else s[-max_chars:]
+
+
+def _clean_eval_output(text: str) -> str:
+    return _ANSI_RE.sub("", text).strip()
+
+
+def _head_tail_excerpt(text: str, *, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    head_chars = max_chars // 2
+    tail_chars = max_chars - head_chars
+    return (
+        text[:head_chars].rstrip()
+        + "\n\n... omitted "
+        + str(len(text) - max_chars)
+        + " chars ...\n\n"
+        + text[-tail_chars:].lstrip()
+    )
 
 
 def _live_trace_enabled(config: BenchConfig) -> bool:

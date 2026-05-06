@@ -1,0 +1,48 @@
+{
+  "tasks": {
+    "matplotlib": [
+      "matplotlib__matplotlib-23299",
+      "matplotlib__matplotlib-24026",
+      "matplotlib__matplotlib-25332",
+      "matplotlib__matplotlib-25479"
+    ],
+    "pylint": [
+      "pylint-dev__pylint-4551",
+      "pylint-dev__pylint-4604",
+      "pylint-dev__pylint-4661",
+      "pylint-dev__pylint-4970"
+    ],
+    "pytest": [
+      "pytest-dev__pytest-10051",
+      "pytest-dev__pytest-10356",
+      "pytest-dev__pytest-5787",
+      "pytest-dev__pytest-5840"
+    ],
+    "scikit-learn": [
+      "scikit-learn__scikit-learn-10844",
+      "scikit-learn__scikit-learn-12973",
+      "scikit-learn__scikit-learn-25747",
+      "scikit-learn__scikit-learn-26194"
+    ],
+    "sphinx": [
+      "sphinx-doc__sphinx-10435",
+      "sphinx-doc__sphinx-10449",
+      "sphinx-doc__sphinx-10614",
+      "sphinx-doc__sphinx-11510",
+      "sphinx-doc__sphinx-7462",
+      "sphinx-doc__sphinx-7590",
+      "sphinx-doc__sphinx-7748",
+      "sphinx-doc__sphinx-7757"
+    ],
+    "sympy": [
+      "sympy__sympy-12489",
+      "sympy__sympy-13091",
+      "sympy__sympy-13615",
+      "sympy__sympy-13798",
+      "sympy__sympy-13852",
+      "sympy__sympy-13878",
+      "sympy__sympy-13974",
+      "sympy__sympy-14248"
+    ]
+  }
+}

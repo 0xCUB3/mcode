@@ -232,6 +232,7 @@ def _swebench_lite_cli_args(
     dataset: str,
     diagnostic_traces: bool,
     check_image_digests: bool,
+    eval_repair_attempts: int,
     phase: str,
     artifact_dir: Path,
 ) -> list[str]:
@@ -275,6 +276,8 @@ def _swebench_lite_cli_args(
         _append_option(argv, "--selection-attempts", selection_attempts)
     _append_option(argv, "--task-ids", task_ids)
     _append_option(argv, "--cpu-limit", cpu_limit)
+    if eval_repair_attempts:
+        _append_option(argv, "--eval-repair-attempts", eval_repair_attempts)
     if force_rebuild:
         argv.append("--force-rebuild")
     if not check_image_digests:
@@ -755,6 +758,14 @@ def bench_swebench_lite(
             help="Independent full-budget trajectories; select one before official evaluation",
         ),
     ] = 1,
+    eval_repair_attempts: Annotated[
+        int,
+        typer.Option(
+            "--eval-repair-attempts",
+            min=0,
+            help="Retry failed official SWE-bench evaluations with deterministic eval feedback",
+        ),
+    ] = 0,
     task_ids: Annotated[
         str | None,
         typer.Option(
@@ -825,6 +836,7 @@ def bench_swebench_lite(
             dataset=dataset,
             diagnostic_traces=diagnostic_traces,
             check_image_digests=check_image_digests,
+            eval_repair_attempts=eval_repair_attempts,
             phase=phase,
             artifact_dir=resolved_artifact_dir,
         )
@@ -871,6 +883,7 @@ def bench_swebench_lite(
                 dataset=dataset,
                 diagnostic_traces=diagnostic_traces,
                 check_image_digests=check_image_digests,
+                eval_repair_attempts=eval_repair_attempts,
                 phase=phase,
                 artifact_dir=resolved_artifact_dir,
             ),
@@ -916,6 +929,7 @@ def bench_swebench_lite(
         sampling_budget=sampling_budget,
         selection_attempts=selection_attempts,
         swebench_dataset=dataset,
+        swebench_eval_repair_attempts=eval_repair_attempts,
         diagnostic_traces=diagnostic_traces,
     )
     _run_single_benchmark(
