@@ -35,3 +35,9 @@ The repair loop has real signal. Four selected patches were only found after fee
 The main weakness is not selection. It is pre-submit issue reproduction. Many failures passed local verification but failed hidden issue tests, especially pytest, sphinx, sympy, and sklearn ranking/set-output tasks. The next iteration should make the agent derive a minimal reproducer from the issue text before finalizing, without using SWE-bench test patches or oracle data.
 
 Eval repair should remain opt-in for now. It improves this prior-failure slice, but it uses official-eval feedback and is better treated as a diagnostic or repair mode until a leaderboard-compatible reproducer path gets tested.
+
+## Follow-up iterations
+
+A direct prompt change asking the agent to derive a minimal issue reproducer before editing was rejected. An early slice probe showed tool-schema errors, a budget exhaustion, and 0/7 completed tasks passing before cancellation.
+
+Including full SWE-bench test status in official reports was also rejected. The full slice matched the 5/32 score but swapped one recovered pylint task, introduced one infrastructure/context failure, and did not produce a net gain.
