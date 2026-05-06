@@ -57,6 +57,7 @@ EXPECTED_OPTIONS: dict[tuple[str, ...], set[str]] = {
     ("bench", "smoke"): {
         "shards",
         "diagnostic_traces",
+        "eval_repair_attempts",
         "fetch_artifacts",
         "phase",
         "artifact_dir",

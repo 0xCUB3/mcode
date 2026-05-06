@@ -422,6 +422,14 @@ def bench_smoke(
             help="Persist compact benchmark diagnostic trace events",
         ),
     ] = False,
+    eval_repair_attempts: Annotated[
+        int,
+        typer.Option(
+            "--eval-repair-attempts",
+            min=0,
+            help="Retry failed official SWE-bench evaluations with deterministic eval feedback",
+        ),
+    ] = 0,
     cpu_limit: Annotated[
         float | None,
         typer.Option(
@@ -475,6 +483,8 @@ def bench_smoke(
             argv.append("--diagnostic-traces")
         if not check_image_digests:
             argv.append("--no-check-image-digests")
+        if eval_repair_attempts:
+            _append_option(argv, "--eval-repair-attempts", eval_repair_attempts)
         _append_option(argv, "--shards", shards)
         _append_option(argv, "--shard-count", shard_count)
         _append_option(argv, "--shard-index", shard_index)
@@ -523,6 +533,10 @@ def bench_smoke(
             artifact_dir=resolved_artifact_dir,
             limit=None,
             n_samples=1,
+            sampling="none",
+            sampling_budget=None,
+            selection_attempts=1,
+            eval_repair_attempts=eval_repair_attempts,
             task_ids=str(task_ids_file),
             dataset="princeton-nlp/SWE-bench_Verified",
             diagnostic_traces=diagnostic_traces,
