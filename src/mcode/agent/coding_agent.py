@@ -20,6 +20,8 @@ _BASE_SYSTEM_PROMPT = (
     "You MUST edit existing source files to fix the bug. Do NOT create new files. "
     "Do NOT write test scripts. Only modify the existing code that contains the bug.\n\n"
     "Use the structured code tools to search, read, edit, and verify. Start narrow. "
+    "Before editing, derive a minimal issue reproducer from the issue text using "
+    "existing commands or a one-shot shell/Python command, without creating files. "
     "Spend at most two search/read turns localizing the bug before your first edit; "
     "prefer a small plausible source edit over exhaustive browsing. Run `run_tests` "
     "before `final_answer`. When you call `final_answer`, keep the answer short."
