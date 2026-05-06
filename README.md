@@ -9,7 +9,7 @@ Best mCode results to date with Qwen3.6-35B-A3B served via vLLM:
 |Benchmark|Bare model|Base Mellea|mCode|
 |-|-|-|-|
 |SWE-bench Verified (500 tasks)|0.3%|37.4%|**63.8%** (319/500)|
-|Aider Polyglot (225 tasks)|16%|45.8% (103/225)|**84.4%** (190/225)|
+|Aider Polyglot (225 tasks)|16%|45.8% (103/225)|**92.0%** (207/225)|
 
 Bare model = LLM with no agentic harness. Base Mellea = upstream Mellea ReACT loop. mCode = full harness with selection, multiturn sampling, workspace-context discovery, generic control-loop nudges, and the verification policy. Per-benchmark data + run notes live under [`research/`](research/).
 
