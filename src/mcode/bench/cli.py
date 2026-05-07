@@ -457,8 +457,8 @@ def bench_swebench_live(
     ] = None,
     db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
     phase: Annotated[
-        Literal["run", "generate", "evaluate"],
-        typer.Option("--phase", help="Benchmark phase: run, generate, or evaluate"),
+        Literal["run", "generate", "evaluate", "prepare"],
+        typer.Option("--phase", help="Benchmark phase: run, generate, evaluate, or prepare"),
     ] = "run",
     artifact_dir: Annotated[
         Path | None,
@@ -730,8 +730,8 @@ def bench_swebench_lite(
     ] = None,
     db: Annotated[Path, typer.Option("--db", help="SQLite results DB path")] = DEFAULT_DB_PATH,
     phase: Annotated[
-        Literal["run", "generate", "evaluate"],
-        typer.Option("--phase", help="Benchmark phase: run, generate, or evaluate"),
+        Literal["run", "generate", "evaluate", "prepare"],
+        typer.Option("--phase", help="Benchmark phase: run, generate, evaluate, or prepare"),
     ] = "run",
     artifact_dir: Annotated[
         Path | None,
@@ -1026,8 +1026,8 @@ def bench_aider_polyglot(
         typer.Option("--db", help="SQLite results DB path"),
     ] = Path("experiments/results/aider-polyglot.db"),
     phase: Annotated[
-        Literal["run", "generate", "evaluate"],
-        typer.Option("--phase", help="Benchmark phase: run, generate, or evaluate"),
+        Literal["run", "generate", "evaluate", "prepare"],
+        typer.Option("--phase", help="Benchmark phase: run, generate, evaluate, or prepare"),
     ] = "run",
     artifact_dir: Annotated[
         Path | None,

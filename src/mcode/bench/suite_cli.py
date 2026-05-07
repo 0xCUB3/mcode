@@ -233,8 +233,8 @@ def bench_suite(
         "experiments/results/suite.db"
     ),
     phase: Annotated[
-        Literal["run", "generate", "evaluate"],
-        typer.Option("--phase", help="Benchmark phase: run, generate, or evaluate"),
+        Literal["run", "generate", "evaluate", "prepare"],
+        typer.Option("--phase", help="Benchmark phase: run, generate, evaluate, or prepare"),
     ] = "run",
     artifact_dir: Annotated[
         Path | None,
@@ -378,8 +378,8 @@ def bench_smoke(
         "experiments/results/smoke-16.db"
     ),
     phase: Annotated[
-        Literal["run", "generate", "evaluate"],
-        typer.Option("--phase", help="Benchmark phase: run, generate, or evaluate"),
+        Literal["run", "generate", "evaluate", "prepare"],
+        typer.Option("--phase", help="Benchmark phase: run, generate, evaluate, or prepare"),
     ] = "run",
     artifact_dir: Annotated[
         Path | None,
