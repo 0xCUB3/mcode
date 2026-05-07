@@ -52,6 +52,23 @@ def _print_run_summary(
     console.print(table)
 
 
+def _phase_argv(argv: list[str], phase: str) -> list[str]:
+    result: list[str] = []
+    skip_next = False
+    for arg in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--phase":
+            skip_next = True
+            continue
+        if arg.startswith("--phase="):
+            continue
+        result.append(arg)
+    result.extend(["--phase", phase])
+    return result
+
+
 def _latest_run_summary(db: Path) -> RunSummary:
     with ResultsDB(db) as rdb:
         row = rdb.conn.execute(
@@ -287,6 +304,34 @@ def _run_sharded_benchmark(
                     f"▶ sharded run command={command} shards={shards} out={db} artifacts={run_dir}"
                 ),
             )
+
+            if command in {"swebench-lite", "swebench-live"}:
+                prepare_db = run_dir / f"{db.stem}-prepare.db"
+                prepare_log = run_dir / f"{db.stem}-prepare.log"
+                prepare_argv = _phase_argv(base_argv, "prepare")
+                dashboard.post("info", text="▶ preparing SWE-bench images before shard launch")
+                with prepare_log.open("w", encoding="utf-8") as log_handle:
+                    proc = subprocess.run(
+                        [
+                            sys.executable,
+                            "-u",
+                            "-m",
+                            "mcode",
+                            "bench",
+                            command,
+                            *prepare_argv,
+                            "--db",
+                            str(prepare_db),
+                        ],
+                        cwd=str(Path.cwd()),
+                        env=env,
+                        stdout=log_handle,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                    )
+                if proc.returncode != 0:
+                    failed.append((-1, proc.returncode, prepare_log))
+                    raise typer.Exit(proc.returncode)
 
             def launch_shard(shard_index: int) -> None:
                 shard_db = run_dir / f"{db.stem}-shard-{shard_index}.db"

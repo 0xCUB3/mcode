@@ -792,6 +792,8 @@ class BenchmarkRunner:
                 base_sleep_s=0.1,
                 max_sleep_s=0.5,
             )
+            if self.config.phase == "prepare":
+                return self.results_db.run_summary(resume.run_id)
         except Exception as exc:
             if _is_polyglot_toolchain_error(exc):
                 raise
