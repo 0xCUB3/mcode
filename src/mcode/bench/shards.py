@@ -305,7 +305,7 @@ def _run_sharded_benchmark(
                 ),
             )
 
-            if command in {"swebench-lite", "swebench-live"}:
+            if command in {"swebench-lite", "swebench-live"} and "--dataset" in base_argv:
                 prepare_db = run_dir / f"{db.stem}-prepare.db"
                 prepare_log = run_dir / f"{db.stem}-prepare.log"
                 prepare_argv = _phase_argv(base_argv, "prepare")
