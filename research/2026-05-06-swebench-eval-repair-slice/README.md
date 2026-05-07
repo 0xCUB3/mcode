@@ -41,3 +41,5 @@ Eval repair should remain opt-in for now. It improves this prior-failure slice, 
 A direct prompt change asking the agent to derive a minimal issue reproducer before editing was rejected. An early slice probe showed tool-schema errors, a budget exhaustion, and 0/7 completed tasks passing before cancellation.
 
 Including full SWE-bench test status in official reports was also rejected. The full slice matched the 5/32 score but swapped one recovered pylint task, introduced one infrastructure/context failure, and did not produce a net gain.
+
+A second repair attempt was positive. Running the same 32-task slice with `--eval-repair-attempts 2` reached 7/32. New recoveries beyond the one-repair slice were `pytest-dev__pytest-5787`, `scikit-learn__scikit-learn-25747`, and `sympy__sympy-13974`; the run lost `pylint-dev__pylint-4661` and `sphinx-doc__sphinx-10449` relative to the first one-repair run. Tasks fixed on candidate 2 were `pylint-dev__pylint-4604` and `pytest-dev__pytest-5787`.
