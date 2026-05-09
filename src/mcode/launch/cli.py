@@ -64,11 +64,24 @@ def _run(block):
         raise typer.Exit(1) from e
 
 
-def _build_spec(target: Target, model: str) -> LaunchSpec:
+def _build_spec(
+    target: Target,
+    model: str,
+    *,
+    tensor_parallel: int | None = None,
+    max_model_len: int | None = None,
+) -> LaunchSpec:
+    profile = profiles.resolve(model)
+    if tensor_parallel is not None or max_model_len is not None:
+        profile = profiles.override(
+            profile,
+            tensor_parallel=tensor_parallel,
+            max_model_len=max_model_len,
+        )
     return LaunchSpec(
         target=target,
         model=model,
-        profile=profiles.resolve(model),
+        profile=profile,
     )
 
 
@@ -93,11 +106,28 @@ def _endpoint_stdout(server: ServerRecord, *, json_mode: bool) -> None:
 @app.command("bluevela")
 def cmd_bluevela(
     model: str = typer.Option(..., "--model", "-m", help="HF model id, e.g. Qwen/Qwen3.5-27B"),
+    tensor_parallel: int | None = typer.Option(
+        None,
+        "--tensor-parallel",
+        min=1,
+        help="Override the profile tensor parallel size, also controls requested GPUs",
+    ),
+    max_model_len: int | None = typer.Option(
+        None,
+        "--max-model-len",
+        min=1,
+        help="Override the profile vLLM max model length",
+    ),
     json_mode: bool = typer.Option(False, "--json", help="machine-readable output"),
 ) -> None:
     """Submit a vLLM server job to Blue Vela LSF."""
     cfg = config_mod.load()
-    spec = _build_spec(Target.BLUEVELA, model)
+    spec = _build_spec(
+        Target.BLUEVELA,
+        model,
+        tensor_parallel=tensor_parallel,
+        max_model_len=max_model_len,
+    )
     reporter = choose_reporter(bluevela.PHASES, json_mode=json_mode)
 
     def block() -> ServerRecord:

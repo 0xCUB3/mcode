@@ -167,6 +167,24 @@ _PROFILES: list[tuple[str, ServingProfile]] = [
 ]
 
 
+def override(
+    profile: ServingProfile,
+    *,
+    tensor_parallel: int | None = None,
+    max_model_len: int | None = None,
+) -> ServingProfile:
+    return ServingProfile(
+        name=profile.name,
+        flags=list(profile.flags),
+        tensor_parallel=tensor_parallel if tensor_parallel is not None else profile.tensor_parallel,
+        max_model_len=max_model_len if max_model_len is not None else profile.max_model_len,
+        extra_env=dict(profile.extra_env),
+        chat_template=profile.chat_template,
+        min_vllm=profile.min_vllm,
+        image=profile.image,
+    )
+
+
 def resolve(model: str) -> ServingProfile:
     """Return the ServingProfile for a model id, first-match-wins.
 

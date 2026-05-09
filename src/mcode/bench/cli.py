@@ -171,7 +171,13 @@ def _run_bluevela_benchmark_rc(
         return 1
 
 
-def _launch_bluevela_server(model: str, *, json_mode: bool) -> None:
+def _launch_bluevela_server(
+    model: str,
+    *,
+    tensor_parallel: int | None,
+    max_model_len: int | None,
+    json_mode: bool,
+) -> None:
     from mcode.launch import bluevela, profiles
     from mcode.launch import config as config_mod
     from mcode.launch.models import LaunchError, LaunchSpec, Target
@@ -179,7 +185,14 @@ def _launch_bluevela_server(model: str, *, json_mode: bool) -> None:
     from mcode.ui.errors import print_error as print_mcode_error
 
     cfg = config_mod.load()
-    spec = LaunchSpec(target=Target.BLUEVELA, model=model, profile=profiles.resolve(model))
+    profile = profiles.resolve(model)
+    if tensor_parallel is not None or max_model_len is not None:
+        profile = profiles.override(
+            profile,
+            tensor_parallel=tensor_parallel,
+            max_model_len=max_model_len,
+        )
+    spec = LaunchSpec(target=Target.BLUEVELA, model=model, profile=profile)
     reporter = choose_reporter(bluevela.PHASES, json_mode=json_mode)
     try:
         with reporter:
@@ -189,7 +202,13 @@ def _launch_bluevela_server(model: str, *, json_mode: bool) -> None:
         raise typer.Exit(1) from e
 
 
-def _ensure_bluevela_server(model: str, *, json_mode: bool) -> None:
+def _ensure_bluevela_server(
+    model: str,
+    *,
+    tensor_parallel: int | None,
+    max_model_len: int | None,
+    json_mode: bool,
+) -> None:
     from mcode.bench.remote import RemoteBenchError, _resolve_endpoint
     from mcode.launch import config as config_mod
 
@@ -198,7 +217,12 @@ def _ensure_bluevela_server(model: str, *, json_mode: bool) -> None:
         _resolve_endpoint(model, cfg=cfg)
         return
     except RemoteBenchError:
-        _launch_bluevela_server(model, json_mode=json_mode)
+        _launch_bluevela_server(
+            model,
+            tensor_parallel=tensor_parallel,
+            max_model_len=max_model_len,
+            json_mode=json_mode,
+        )
 
 
 def _db_task_count(db: Path) -> int:
@@ -269,6 +293,8 @@ def _run_bluevela_task_chunks(
     fetch_artifacts: bool,
     chunk_size: int,
     relaunch_vllm: bool,
+    vllm_tensor_parallel: int | None,
+    vllm_max_model_len: int | None,
     json_mode: bool,
 ) -> None:
     if phase != "run":
@@ -302,7 +328,12 @@ def _run_bluevela_task_chunks(
         if chunk_db.exists():
             chunk_db.unlink()
         if relaunch_vllm:
-            _ensure_bluevela_server(model, json_mode=json_mode)
+            _ensure_bluevela_server(
+                model,
+                tensor_parallel=vllm_tensor_parallel,
+                max_model_len=vllm_max_model_len,
+                json_mode=json_mode,
+            )
         chunk_artifact_dir = _resolve_artifact_dir(chunk_db, None)
         argv = _swebench_lite_cli_args(
             model=model,
@@ -1029,6 +1060,22 @@ def bench_swebench_lite(
             help="For --chunk-size, launch a fresh Blue Vela vLLM when no healthy server exists",
         ),
     ] = False,
+    vllm_tensor_parallel: Annotated[
+        int | None,
+        typer.Option(
+            "--vllm-tensor-parallel",
+            min=1,
+            help="For --relaunch-vllm, override Blue Vela vLLM tensor parallel size",
+        ),
+    ] = None,
+    vllm_max_model_len: Annotated[
+        int | None,
+        typer.Option(
+            "--vllm-max-model-len",
+            min=1,
+            help="For --relaunch-vllm, override Blue Vela vLLM max model length",
+        ),
+    ] = None,
     diagnostic_traces: Annotated[
         bool,
         typer.Option(
@@ -1086,6 +1133,8 @@ def bench_swebench_lite(
             fetch_artifacts=fetch_artifacts,
             chunk_size=chunk_size,
             relaunch_vllm=relaunch_vllm,
+            vllm_tensor_parallel=vllm_tensor_parallel,
+            vllm_max_model_len=vllm_max_model_len,
             json_mode=json_mode,
         )
     if on == "bluevela":

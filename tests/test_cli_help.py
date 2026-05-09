@@ -23,6 +23,8 @@ EXPECTED_OPTIONS: dict[tuple[str, ...], set[str]] = {
         "fetch_artifacts",
         "chunk_size",
         "relaunch_vllm",
+        "vllm_tensor_parallel",
+        "vllm_max_model_len",
         "diagnostic_traces",
         "phase",
         "artifact_dir",
