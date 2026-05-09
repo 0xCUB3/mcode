@@ -11,7 +11,9 @@ from mcode.bench.results import ResultsDB
 from mcode.bench.runner import BenchConfig, BenchmarkRunner
 from mcode.bench.shards import (
     SHARDED_INFRA_EXIT_CODE,
+    _full_db_summary,
     _is_retryable_infra_exception,
+    _merge_into_results_db,
     _print_run_summary,
     _run_sharded_benchmark,
 )
@@ -143,6 +145,226 @@ def _run_bluevela_benchmark(
         typer.echo(f"✗ {e}", err=True)
         raise typer.Exit(1) from e
     raise typer.Exit(rc)
+
+
+def _run_bluevela_benchmark_rc(
+    *,
+    command: str,
+    argv: list[str],
+    model: str,
+    db: Path,
+    fetch_db: bool,
+    fetch_artifacts: bool = False,
+) -> int:
+    from mcode.bench.remote import RemoteBenchError, run_bench_on_bluevela
+
+    try:
+        return run_bench_on_bluevela(
+            bench_argv=[command, *argv],
+            model=model,
+            local_db=db,
+            fetch_db=fetch_db,
+            fetch_artifacts=fetch_artifacts,
+        )
+    except RemoteBenchError as e:
+        typer.echo(f"✗ {e}", err=True)
+        return 1
+
+
+def _launch_bluevela_server(model: str, *, json_mode: bool) -> None:
+    from mcode.launch import bluevela, profiles
+    from mcode.launch import config as config_mod
+    from mcode.launch.models import LaunchError, LaunchSpec, Target
+    from mcode.launch.progress import choose as choose_reporter
+    from mcode.ui.errors import print_error as print_mcode_error
+
+    cfg = config_mod.load()
+    spec = LaunchSpec(target=Target.BLUEVELA, model=model, profile=profiles.resolve(model))
+    reporter = choose_reporter(bluevela.PHASES, json_mode=json_mode)
+    try:
+        with reporter:
+            bluevela.launch(spec, reporter, cfg=cfg)
+    except LaunchError as e:
+        print_mcode_error(e)
+        raise typer.Exit(1) from e
+
+
+def _ensure_bluevela_server(model: str, *, json_mode: bool) -> None:
+    from mcode.bench.remote import RemoteBenchError, _resolve_endpoint
+    from mcode.launch import config as config_mod
+
+    cfg = config_mod.load()
+    try:
+        _resolve_endpoint(model, cfg=cfg)
+        return
+    except RemoteBenchError:
+        _launch_bluevela_server(model, json_mode=json_mode)
+
+
+def _db_task_count(db: Path) -> int:
+    if not db.exists():
+        return 0
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=1)
+        try:
+            row = conn.execute("SELECT COUNT(*) FROM task_results").fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return 0
+    return int(row[0] if row else 0)
+
+
+def _load_swebench_task_ids(
+    *,
+    dataset: str,
+    split: str,
+    limit: int | None,
+    task_ids: str | None,
+) -> list[str]:
+    from mcode.bench.swebench_lite import load_swebench_lite
+
+    parsed_task_ids = _parse_task_ids(task_ids)
+    tasks = load_swebench_lite(
+        Path(".cache"),
+        split=split,
+        limit=limit,
+        instance_ids=parsed_task_ids,
+        dataset_name=dataset,
+    )
+    return [task.instance_id for task in tasks]
+
+
+def _run_bluevela_task_chunks(
+    *,
+    model: str,
+    backend: str,
+    loop_budget: int,
+    temperature: float | None,
+    seed: int | None,
+    timeout_s: int,
+    split: str,
+    arch: str,
+    namespace: str,
+    max_workers: int,
+    force_rebuild: bool,
+    mem_limit: str,
+    pids_limit: int,
+    cpu_limit: float | None,
+    limit: int | None,
+    n_samples: int,
+    sampling: str,
+    sampling_budget: int | None,
+    selection_attempts: int,
+    task_ids: str | None,
+    dataset: str,
+    diagnostic_traces: bool,
+    check_image_digests: bool,
+    eval_repair_attempts: int,
+    phase: str,
+    db: Path,
+    shards: int | None,
+    fetch_artifacts: bool,
+    chunk_size: int,
+    relaunch_vllm: bool,
+    json_mode: bool,
+) -> None:
+    if phase != "run":
+        typer.echo("✗ --chunk-size only supports --phase run", err=True)
+        raise typer.Exit(2)
+    if not shards or shards < 1:
+        typer.echo("✗ --chunk-size with --on bluevela requires --shards", err=True)
+        raise typer.Exit(2)
+
+    all_task_ids = _load_swebench_task_ids(
+        dataset=dataset,
+        split=split,
+        limit=limit,
+        task_ids=task_ids,
+    )
+    if not all_task_ids:
+        typer.echo("✗ no SWE-bench tasks selected", err=True)
+        raise typer.Exit(2)
+
+    chunk_root = db.parent / f"{db.stem}-chunks"
+    chunk_root.mkdir(parents=True, exist_ok=True)
+    chunk_dbs: list[Path] = []
+    chunks = [all_task_ids[i : i + chunk_size] for i in range(0, len(all_task_ids), chunk_size)]
+    for index, chunk in enumerate(chunks):
+        chunk_db = chunk_root / f"chunk-{index:03d}.db"
+        expected = len(chunk)
+        if _db_task_count(chunk_db) >= expected:
+            typer.echo(f"skip chunk {index + 1}/{len(chunks)} rows={expected} db={chunk_db}")
+            chunk_dbs.append(chunk_db)
+            continue
+        if chunk_db.exists():
+            chunk_db.unlink()
+        if relaunch_vllm:
+            _ensure_bluevela_server(model, json_mode=json_mode)
+        chunk_artifact_dir = _resolve_artifact_dir(chunk_db, None)
+        argv = _swebench_lite_cli_args(
+            model=model,
+            backend=backend,
+            loop_budget=loop_budget,
+            temperature=temperature,
+            seed=seed,
+            timeout_s=timeout_s,
+            split=split,
+            arch=arch,
+            namespace=namespace,
+            max_workers=max_workers,
+            force_rebuild=force_rebuild,
+            mem_limit=mem_limit,
+            pids_limit=pids_limit,
+            cpu_limit=cpu_limit,
+            limit=None,
+            n_samples=n_samples,
+            sampling=sampling,
+            sampling_budget=sampling_budget,
+            selection_attempts=selection_attempts,
+            task_ids=",".join(chunk),
+            dataset=dataset,
+            diagnostic_traces=diagnostic_traces,
+            check_image_digests=check_image_digests,
+            eval_repair_attempts=eval_repair_attempts,
+            phase=phase,
+            artifact_dir=chunk_artifact_dir,
+        )
+        _append_option(argv, "--shards", shards)
+        typer.echo(f"run chunk {index + 1}/{len(chunks)} tasks={expected} db={chunk_db}")
+        rc = _run_bluevela_benchmark_rc(
+            command="swebench-lite",
+            argv=argv,
+            model=model,
+            db=chunk_db,
+            fetch_db=True,
+            fetch_artifacts=fetch_artifacts,
+        )
+        rows = _db_task_count(chunk_db)
+        if rc != 0 or rows < expected:
+            typer.echo(
+                f"✗ chunk {index + 1}/{len(chunks)} failed rc={rc} "
+                f"rows={rows}/{expected} db={chunk_db}",
+                err=True,
+            )
+            raise typer.Exit(rc or 1)
+        chunk_dbs.append(chunk_db)
+
+    if db.exists():
+        db.unlink()
+    summary = _merge_into_results_db(db=db, shard_paths=chunk_dbs, merge_mode="full_db")
+    summary = _full_db_summary(db)
+    _print_run_summary(
+        summary=summary,
+        benchmark="swebench-lite",
+        backend=backend,
+        model=model,
+        loop_budget=loop_budget,
+        timeout_s=timeout_s,
+    )
+    raise typer.Exit(0)
 
 
 def _swebench_live_cli_args(
@@ -792,6 +1014,21 @@ def bench_swebench_lite(
             help="Rsync the artifact directory back when --on bluevela",
         ),
     ] = False,
+    chunk_size: Annotated[
+        int | None,
+        typer.Option(
+            "--chunk-size",
+            min=1,
+            help="Run Blue Vela in sequential task chunks, writing chunk DBs then merging them",
+        ),
+    ] = None,
+    relaunch_vllm: Annotated[
+        bool,
+        typer.Option(
+            "--relaunch-vllm/--no-relaunch-vllm",
+            help="For --chunk-size, launch a fresh Blue Vela vLLM when no healthy server exists",
+        ),
+    ] = False,
     diagnostic_traces: Annotated[
         bool,
         typer.Option(
@@ -811,6 +1048,46 @@ def bench_swebench_lite(
         sampling_budget=sampling_budget,
     )
     resolved_artifact_dir = _resolve_artifact_dir(db, artifact_dir)
+    if chunk_size is not None:
+        if on != "bluevela":
+            typer.echo("✗ --chunk-size currently requires --on bluevela", err=True)
+            raise typer.Exit(2)
+        if shard_count is not None or shard_index is not None:
+            typer.echo("✗ --chunk-size cannot be combined with manual shard mode", err=True)
+            raise typer.Exit(2)
+        _run_bluevela_task_chunks(
+            model=model,
+            backend=backend,
+            loop_budget=loop_budget,
+            temperature=temperature,
+            seed=seed,
+            timeout_s=timeout_s,
+            split=split,
+            arch=arch,
+            namespace=namespace,
+            max_workers=max_workers,
+            force_rebuild=force_rebuild,
+            mem_limit=mem_limit,
+            pids_limit=pids_limit,
+            cpu_limit=cpu_limit,
+            limit=limit,
+            n_samples=n_samples,
+            sampling=sampling,
+            sampling_budget=sampling_budget,
+            selection_attempts=selection_attempts,
+            task_ids=task_ids,
+            dataset=dataset,
+            diagnostic_traces=diagnostic_traces,
+            check_image_digests=check_image_digests,
+            eval_repair_attempts=eval_repair_attempts,
+            phase=phase,
+            db=db,
+            shards=shards,
+            fetch_artifacts=fetch_artifacts,
+            chunk_size=chunk_size,
+            relaunch_vllm=relaunch_vllm,
+            json_mode=json_mode,
+        )
     if on == "bluevela":
         argv = _swebench_lite_cli_args(
             model=model,

@@ -21,6 +21,8 @@ EXPECTED_OPTIONS: dict[tuple[str, ...], set[str]] = {
         "on",
         "fetch_db",
         "fetch_artifacts",
+        "chunk_size",
+        "relaunch_vllm",
         "diagnostic_traces",
         "phase",
         "artifact_dir",
