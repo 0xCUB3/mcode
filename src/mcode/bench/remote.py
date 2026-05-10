@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from mcode.bench.remote_script import build_lsf_submit_command, build_remote_bench_plan
+from mcode.bench.summary import safe_rerun_metadata
 from mcode.launch import config as launch_config
 from mcode.launch import state as launch_state
 from mcode.launch.models import Target
@@ -204,6 +205,7 @@ def run_bench_on_bluevela(
         },
         db_path=str(local_db),
         started_at=time.time(),
+        metadata=safe_rerun_metadata(),
     )
     final_status: launch_state.RunStatus = launch_state.RunStatus.FAILED
     cancel_reason: str | None = None

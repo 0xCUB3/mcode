@@ -11,6 +11,7 @@ from mcode.cli import app
 
 EXPECTED_OPTIONS: dict[tuple[str, ...], set[str]] = {
     ("bench", "list"): {"benchmark", "status", "artifacts_only", "limit", "json_mode"},
+    ("bench", "show"): {"json_mode"},
     ("bench", "swebench-lite"): {
         "shards",
         "n_samples",

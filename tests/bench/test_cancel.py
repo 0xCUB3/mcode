@@ -9,6 +9,9 @@ from pathlib import Path
 import pytest
 
 from mcode.bench import cancel as cancel_mod
+from mcode.bench import cli as bench_cli
+from mcode.bench.results import ResultsDB
+from mcode.bench.runner import BenchConfig
 from mcode.launch import state as launch_state
 from mcode.launch.models import RunRecord, RunStatus, Target
 from mcode.ui.errors import ExitCode, MCodeError
@@ -124,6 +127,101 @@ def test_list_runs_limit_returns_latest_first(isolated_state: Path, capsys) -> N
 def test_cancel_unknown_run_raises(isolated_state: Path) -> None:
     with pytest.raises(MCodeError, match="no run with id"):
         cancel_mod.cancel_run("nope")
+
+
+def test_show_run_includes_db_summary_and_commands(
+    isolated_state: Path, tmp_path: Path, capsys
+) -> None:
+    db_path = tmp_path / "results.db"
+    with ResultsDB(db_path) as rdb:
+        results_run_id = rdb.start_run(
+            "smoke",
+            {"model_id": "m", "backend_name": "openai", "loop_budget": 2, "timeout_s": 30},
+        )
+        rdb.save_task_result(
+            results_run_id,
+            {
+                "task_id": "task-1",
+                "passed": False,
+                "attempts_used": 1,
+                "time_ms": 10,
+                "exit_code": 1,
+                "timed_out": False,
+                "error": "Tests failed",
+                "terminal_reason": "budget_exhausted",
+            },
+        )
+    _put(
+        RunRecord(
+            id="r1",
+            target=Target.LOCAL_VLLM,
+            benchmark="smoke",
+            status=RunStatus.DONE,
+            db_path=str(db_path),
+            metadata={"results_run_id": results_run_id, "command": "mcode bench smoke"},
+        )
+    )
+
+    rc = cancel_mod.show_run("r1")
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "r1" in out
+    assert "0/1 passed" in out
+    assert "task-1" in out
+    assert "mcode export-csv" in out
+
+
+def test_show_run_does_not_guess_result_id(isolated_state: Path, tmp_path: Path, capsys) -> None:
+    db_path = tmp_path / "results.db"
+    with ResultsDB(db_path) as rdb:
+        rdb.start_run(
+            "smoke",
+            {"model_id": "m", "backend_name": "openai", "loop_budget": 2, "timeout_s": 30},
+        )
+    _put(
+        RunRecord(
+            id="r1",
+            target=Target.LOCAL_VLLM,
+            benchmark="smoke",
+            status=RunStatus.RUNNING,
+            db_path=str(db_path),
+        )
+    )
+
+    rc = cancel_mod.show_run("r1")
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "results=" not in out
+    assert "results_run_id" not in out
+
+
+def test_single_benchmark_closes_state_when_setup_fails(
+    isolated_state: Path, tmp_path: Path, monkeypatch
+) -> None:
+    class BrokenResultsDB:
+        def __init__(self, _path: Path) -> None:
+            raise OSError("db unavailable")
+
+    monkeypatch.setattr(bench_cli, "ResultsDB", BrokenResultsDB)
+
+    with pytest.raises(OSError, match="db unavailable"):
+        bench_cli._run_single_benchmark(
+            benchmark="smoke",
+            config=BenchConfig(model_id="m", backend_name="openai"),
+            db=tmp_path / "missing" / "results.db",
+            limit=None,
+            task_ids=None,
+            backend="openai",
+            model="m",
+            loop_budget=1,
+            timeout_s=30,
+        )
+
+    runs = launch_state.load().runs
+    assert len(runs) == 1
+    assert runs[0].status is RunStatus.FAILED
 
 
 def test_list_runs_table_marks_fetchable_artifacts(isolated_state: Path, capsys) -> None:

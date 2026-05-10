@@ -12,10 +12,17 @@ from pathlib import Path
 from typing import Literal
 
 import typer
-from rich.table import Table
 
 from mcode.bench.results import ResultsDB, RunSummary, merge_shard_dbs
-from mcode.ui.console import console
+from mcode.bench.summary import (
+    RunPlan,
+    print_failure_hints,
+    print_run_footer,
+    print_run_plan,
+    print_run_summary,
+    safe_rerun_metadata,
+    task_time_ms,
+)
 from mcode.util import temporary_directory
 
 
@@ -28,28 +35,14 @@ def _print_run_summary(
     loop_budget: int,
     timeout_s: int,
 ) -> None:
-    table = Table(title="Run summary")
-    table.add_column("run_id", justify="right")
-    table.add_column("benchmark")
-    table.add_column("backend")
-    table.add_column("model")
-    table.add_column("budget", justify="right")
-    table.add_column("timeout", justify="right")
-    table.add_column("total", justify="right")
-    table.add_column("passed", justify="right")
-    table.add_column("pass_rate", justify="right")
-    table.add_row(
-        str(summary.run_id),
-        benchmark,
-        backend,
-        model,
-        str(loop_budget),
-        str(timeout_s),
-        str(summary.total),
-        str(summary.passed),
-        f"{summary.pass_rate:.1%}",
+    print_run_summary(
+        summary=summary,
+        benchmark=benchmark,
+        backend=backend,
+        model=model,
+        loop_budget=loop_budget,
+        timeout_s=timeout_s,
     )
-    console.print(table)
 
 
 def _phase_argv(argv: list[str], phase: str) -> list[str]:
@@ -287,11 +280,30 @@ def _run_sharded_benchmark(
     run_id = runstate.make_run_id(benchmark)
     # Target is the closest fit, not literal: bench runs use a launch target
     # only as a "where am I executing" hint. Backend lives in metadata.
-    runstate.open_run(run_id=run_id, benchmark=benchmark, target=Target.LOCAL_VLLM, db_path=db)
+    runstate.open_run(
+        run_id=run_id,
+        benchmark=benchmark,
+        target=Target.LOCAL_VLLM,
+        db_path=db,
+        metadata=safe_rerun_metadata(),
+    )
     runstate.patch_run(run_id=run_id, progress={"current": 0, "total": 0})
     final_status: RunStatus = RunStatus.FAILED
     cancel_reason: str | None = None
     try:
+        if not json_mode:
+            print_run_plan(
+                RunPlan(
+                    benchmark=benchmark,
+                    backend=backend,
+                    model=model,
+                    db=db,
+                    loop_budget=loop_budget,
+                    timeout_s=timeout_s,
+                    location="local",
+                    shards=shards,
+                )
+            )
         with open_dashboard(
             json_mode=json_mode,
             total_shards=shards,
@@ -468,6 +480,7 @@ def _run_sharded_benchmark(
                 shard_paths=shard_paths,
                 merge_mode=merge_mode,
             )
+            runstate.patch_run(run_id=run_id, metadata={"results_run_id": summary.run_id})
             dashboard.post("merged", db=str(db))
             final_status = RunStatus.DONE
         # _print_run_summary lives outside the dashboard so its Rich Table
@@ -480,6 +493,8 @@ def _run_sharded_benchmark(
             loop_budget=loop_budget,
             timeout_s=timeout_s,
         )
+        print_run_footer(db=db, summary=summary, task_time_ms=task_time_ms(db, summary.run_id))
+        print_failure_hints(db=db, run_id=summary.run_id)
     finally:
         # Best-effort close so partial state doesn't permanently mark the run
         # RUNNING. Wrapped so a second Ctrl+C during teardown cannot prevent
