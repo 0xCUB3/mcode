@@ -445,6 +445,8 @@ async def run_react_loop(
                         "valid_call_count": len(valid_tool_calls),
                         "invalid_call_count": len(invalid_calls),
                         "blocked_finalizer_count": len(blocked_finalizers),
+                        "invalid_reasons": invalid_calls,
+                        "blocked_finalizer_reasons": blocked_finalizers,
                         "valid_tool_names": [
                             getattr(call, "name", str(key))
                             for key, call in valid_tool_calls.items()

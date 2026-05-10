@@ -757,6 +757,7 @@ def test_run_react_loop_blocks_final_answer_until_verification_succeeds(monkeypa
             return [SimpleNamespace(name="run_tests", content="$ pytest\nPASSED\nok")]
         return [SimpleNamespace(name="final_answer", content="done")]
 
+    collector = SolveTraceCollector(diagnostic_enabled=True)
     session = SimpleNamespace(ctx=ChatContext(), backend=object())
     monkeypatch.setattr("mellea.stdlib.functional.aact", fake_aact)
     monkeypatch.setattr("mcode.llm.react_driver.acall_tools_with_arg_compat", fake_acall_tools)
@@ -770,7 +771,7 @@ def test_run_react_loop_blocks_final_answer_until_verification_succeeds(monkeypa
             loop_budget=4,
             timeout_s=5,
             submission_format=None,
-            collector=SolveTraceCollector(),
+            collector=collector,
             turn_requirements=lambda turn, budget, state: [],
             submission_requirements=[],
             strategy_for_requirements=lambda requirements: None,
@@ -781,6 +782,15 @@ def test_run_react_loop_blocks_final_answer_until_verification_succeeds(monkeypa
     assert submission == "done"
     assert terminal_reason == "submitted"
     assert executed == ["edit", "run_tests", "final_answer"]
+    blocked_event = next(
+        event
+        for event in collector.diagnostic_events
+        if event["event_type"] == "tool_call_filter"
+        and event["payload"].get("blocked_finalizer_count") == 1
+    )
+    assert blocked_event["payload"]["blocked_finalizer_reasons"] == [
+        "final_answer requires successful verification first"
+    ]
 
 
 def test_run_react_loop_reminds_to_verify_after_edit(monkeypatch):
