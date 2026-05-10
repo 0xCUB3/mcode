@@ -10,10 +10,6 @@ This run used state-aware tool gating, a tighter coding tool surface, one main
 text-react solving path, and the cleaned-up Blue Vela HF/cache setup. The score
 was good enough to keep as the MiniMax baseline.
 
-HTML snapshot from the old report command:
-[`swebench-verified-report.html`](https://raw.githack.com/0xCUB3/mcode/main/research/2026-03-31-swebench-verified-minimax25-harness-redesign/swebench-verified-report.html)
-([source](swebench-verified-report.html))
-
 ## Setup
 
 The setup was simple once the harness and cluster plumbing stopped fighting us.
@@ -164,7 +160,6 @@ annoying infra tax.
 
 ## Files
 
-- `swebench-verified-report.html` - old interactive report snapshot ([view](https://raw.githack.com/0xCUB3/mcode/main/research/2026-03-31-swebench-verified-minimax25-harness-redesign/swebench-verified-report.html))
 - `results-summary.txt` - CLI summary snapshot
 - `final-summary.json` - exact totals used above
 - `run-bluevela-main-b15-final/` - final shard DBs for this run

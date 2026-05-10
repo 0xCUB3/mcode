@@ -113,7 +113,6 @@ Comparison with the previous best mcode full run:
 - Full-run chunk DBs and logs: `full-parallel-shards2-lock/*.db`, `full-parallel-shards2-lock/*.log`
 - Promotion DB: `promotion-73-recovered.db`
 - Initial slice DBs: `progress-slice-12.db`, `progress-slice-12-toolchain.db`
-- Old HTML report snapshot: `aider-polyglot-control-loop-report.html`
 
 ## Notes from the run
 
