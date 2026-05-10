@@ -26,7 +26,7 @@ def strip_ansi():
     return _strip
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def tmp_state_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     state_path = tmp_path / "launch-state.json"
     monkeypatch.setenv("MCODE_LAUNCH_STATE", str(state_path))

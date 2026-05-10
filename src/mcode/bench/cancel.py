@@ -132,29 +132,34 @@ def show_run(run_id: str, *, json_mode: bool = False) -> int:
         return 0
 
     console.print(f"[bold]{run.id}[/bold]")
-    console.print(
-        f"status={run.status.value} benchmark={run.benchmark} target={run.target.value} "
-        f"started={_format_ts(run.started_at)} ended={_format_ts(run.ended_at)}"
-    )
+    details = _details_table()
+    _add_detail(details, "status", run.status.value)
+    _add_detail(details, "benchmark", run.benchmark)
+    _add_detail(details, "target", run.target.value)
+    _add_detail(details, "started", _format_ts(run.started_at))
+    _add_detail(details, "ended", _format_ts(run.ended_at))
     if run.db_path:
-        console.print(f"db={run.db_path}")
+        _add_detail(details, "db", run.db_path)
     if run.progress:
-        console.print(f"progress={_format_progress(run.progress)}")
+        _add_detail(details, "progress", _format_progress(run.progress))
     command = (run.metadata or {}).get("command")
     if command:
-        console.print(f"rerun={command}")
+        _add_detail(details, "rerun", str(command))
     env = (run.metadata or {}).get("env")
     if isinstance(env, dict) and env:
         env_text = " ".join(f"{key}={shlex.quote(str(value))}" for key, value in env.items())
-        console.print(f"env={env_text}")
+        _add_detail(details, "env", env_text)
     if run.remote:
-        _print_remote_paths(run)
+        _add_remote_details(details, run)
     if result_info.get("summary"):
         summary = result_info["summary"]
-        console.print(
-            f"results={summary['passed']}/{summary['total']} passed "
-            f"({summary['pass_rate']:.1%}) results_run_id={summary['run_id']}"
+        _add_detail(
+            details,
+            "results",
+            f"{summary['passed']}/{summary['total']} passed "
+            f"({summary['pass_rate']:.1%}) results_run_id={summary['run_id']}",
         )
+    console.print(details)
     failures = result_info.get("failures") or []
     if failures:
         console.print("failed tasks:")
@@ -162,11 +167,11 @@ def show_run(run_id: str, *, json_mode: bool = False) -> int:
             reason = row.get("terminal_reason") or row.get("error") or "failed"
             console.print(f"  - {row['task_id']}: {reason}")
     console.print("commands:")
-    console.print(f"  mcode bench cancel {run.id}")
+    _print_command(f"mcode bench cancel {run.id}")
     if run.remote.get("remote_artifact_dir"):
-        console.print(f"  mcode bench artifacts-fetch {run.id}")
+        _print_command(f"mcode bench artifacts-fetch {run.id}")
     if run.db_path:
-        console.print(f"  mcode export-csv --db {shlex.quote(run.db_path)}")
+        _print_command(f"mcode export-csv --db {shlex.quote(run.db_path)}")
     return 0
 
 
@@ -416,6 +421,40 @@ def _format_progress(p: dict) -> str:
     return f"{head} {' · '.join(details)}" if details else head
 
 
+def _details_table():
+    from rich.table import Table
+
+    table = Table.grid(padding=(0, 1))
+    table.add_column(style="dim", no_wrap=True, justify="right")
+    table.add_column(ratio=1, overflow="fold")
+    return table
+
+
+def _add_detail(table, key: str, value: str) -> None:
+    from rich.text import Text
+
+    table.add_row(f"{key}:", Text(str(value), overflow="fold"))
+
+
+def _add_remote_details(table, run: RunRecord) -> None:
+    for key in (
+        "login",
+        "run_dir",
+        "remote_db",
+        "remote_log",
+        "remote_script",
+        "remote_artifact_dir",
+        "local_artifact_dir",
+    ):
+        value = run.remote.get(key)
+        if value:
+            _add_detail(table, key, str(value))
+
+
+def _print_command(command: str) -> None:
+    console.print(f"  {command}", overflow="fold")
+
+
 def _run_payload(run: RunRecord) -> dict:
     return {
         "id": run.id,
@@ -475,21 +514,6 @@ def _results_run_id(run: RunRecord, rdb: ResultsDB) -> int | None:
         except (TypeError, ValueError):
             pass
     return None
-
-
-def _print_remote_paths(run: RunRecord) -> None:
-    for key in (
-        "login",
-        "run_dir",
-        "remote_db",
-        "remote_log",
-        "remote_script",
-        "remote_artifact_dir",
-        "local_artifact_dir",
-    ):
-        value = run.remote.get(key)
-        if value:
-            console.print(f"{key}={value}")
 
 
 __all__ = ["cancel_run", "list_runs", "show_run"]
