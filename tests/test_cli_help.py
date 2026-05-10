@@ -10,8 +10,9 @@ from mcode.bench.toolchains import ToolchainCheck
 from mcode.cli import app
 
 EXPECTED_OPTIONS: dict[tuple[str, ...], set[str]] = {
-    ("bench", "list"): {"benchmark", "status", "artifacts_only", "limit", "json_mode"},
-    ("bench", "show"): {"json_mode"},
+    ("bench", "list"): {"benchmark", "status", "artifacts_only", "limit", "json_mode", "wide"},
+    ("bench", "show"): {"json_mode", "latest"},
+    ("bench", "prune"): {"json_mode", "status", "older_than", "missing_db", "yes"},
     ("bench", "swebench-lite"): {
         "shards",
         "n_samples",

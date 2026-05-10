@@ -21,6 +21,7 @@ import sqlite3
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from mcode.bench.results import ResultsDB
 from mcode.launch import state as launch_state
@@ -38,6 +39,7 @@ def list_runs(
     status: str | None = None,
     artifacts_only: bool = False,
     limit: int | None = None,
+    wide: bool = False,
 ) -> int:
     """Print known runs, optionally filtered."""
     s = launch_state.load()
@@ -82,49 +84,54 @@ def list_runs(
     from rich.table import Table
 
     table = Table(title=f"runs ({len(runs)})")
-    table.add_column("id")
-    table.add_column("benchmark")
-    table.add_column("target")
-    table.add_column("status")
-    table.add_column("shards", justify="right")
-    table.add_column("artifacts")
-    table.add_column("fetched")
-    table.add_column("started")
-    table.add_column("progress")
+    table.add_column("id", no_wrap=True)
+    table.add_column("bench", no_wrap=True)
+    if wide:
+        table.add_column("target", no_wrap=True)
+    table.add_column("status", no_wrap=True)
+    if wide:
+        table.add_column("shards", justify="right")
+        table.add_column("artifacts", no_wrap=True)
+        table.add_column("fetched", no_wrap=True)
+    table.add_column("started", no_wrap=True)
+    table.add_column("progress", no_wrap=True, overflow="ellipsis")
+    if wide:
+        table.add_column("db", overflow="fold")
     for r in runs:
         shards = len(r.shard_job_ids) or len(r.shard_pids)
-        started = _format_ts(r.started_at)
-        progress = _format_progress(r.progress)
+        started = _format_ts(r.started_at) if wide else _format_short_ts(r.started_at)
+        progress = _format_progress(r.progress, max_len=None if wide else 48)
         status_value = r.status.value
         if (r.metadata or {}).get("cancel_reason"):
             status_value = f"{status_value} ({r.metadata['cancel_reason']})"
         artifacts = "yes" if (r.remote or {}).get("remote_artifact_dir") else "-"
         fetched = "yes" if (r.remote or {}).get("artifacts_fetched_at") else "-"
-        table.add_row(
-            r.id,
-            r.benchmark,
-            r.target.value,
-            status_value,
-            str(shards),
-            artifacts,
-            fetched,
-            started,
-            progress,
-        )
+        row = [_display_run_id(r), _display_benchmark(r.benchmark)]
+        if wide:
+            row.append(r.target.value)
+        row.extend([status_value, started, progress])
+        if wide:
+            row = [
+                _display_run_id(r),
+                r.benchmark,
+                r.target.value,
+                status_value,
+                str(shards),
+                artifacts,
+                fetched,
+                started,
+                progress,
+                r.db_path or "-",
+            ]
+        table.add_row(*row)
     console.print(table)
     return 0
 
 
-def show_run(run_id: str, *, json_mode: bool = False) -> int:
+def show_run(run_id: str | None = None, *, latest: bool = False, json_mode: bool = False) -> int:
     """Print one run with state, result rows, and useful follow-up commands."""
     s = launch_state.load()
-    run = s.run(run_id)
-    if run is None:
-        raise MCodeError(
-            what=f"no run with id {run_id!r}",
-            why="",
-            next="`mcode bench list --limit 20` to see recent runs",
-        )
+    run = _resolve_run(s, run_id=run_id, latest=latest)
 
     result_info = _result_info(run)
     if json_mode:
@@ -172,6 +179,66 @@ def show_run(run_id: str, *, json_mode: bool = False) -> int:
         _print_command(f"mcode bench artifacts-fetch {run.id}")
     if run.db_path:
         _print_command(f"mcode export-csv --db {shlex.quote(run.db_path)}")
+    return 0
+
+
+def prune_runs(
+    *,
+    json_mode: bool = False,
+    status: str | None = None,
+    older_than: str | None = None,
+    missing_db: bool = True,
+    yes: bool = False,
+) -> int:
+    """Remove stale run records from the launch-state file."""
+    cutoff = _older_than_cutoff(older_than)
+    removed: list[RunRecord] = []
+
+    def _matches(run: RunRecord) -> bool:
+        if status and run.status.value != status:
+            return False
+        if cutoff is not None and float(run.started_at or 0.0) > cutoff:
+            return False
+        if missing_db and not _db_missing(run):
+            return False
+        if not status and run.status in (RunStatus.RUNNING, RunStatus.SUBMITTED):
+            return False
+        return True
+
+    snap = launch_state.load()
+    for run in snap.runs:
+        if _matches(run):
+            removed.append(run)
+
+    if yes and removed:
+
+        def _mut(s: launch_state.State) -> None:
+            ids = {run.id for run in removed}
+            s.runs = [run for run in s.runs if run.id not in ids]
+
+        launch_state.update(None, _mut)
+
+    if json_mode:
+        payload: dict[str, Any] = {
+            "dry_run": not yes,
+            "removed": len(removed),
+            "runs": [_run_payload(run) for run in removed],
+        }
+        print(json.dumps(payload, indent=2, default=str))
+        return 0
+
+    action = "removed" if yes else "would remove"
+    if not removed:
+        print("no matching runs")
+        return 0
+    print(f"{action} {len(removed)} run record(s)")
+    for run in sorted(removed, key=lambda r: float(r.started_at or 0.0), reverse=True)[:25]:
+        reason = _prune_reason(run, missing_db=missing_db, cutoff=cutoff)
+        print(f"  - {run.id} {run.benchmark} {run.status.value} {reason}")
+    if len(removed) > 25:
+        print(f"  … {len(removed) - 25} more")
+    if not yes:
+        print("dry run; add --yes to delete these records")
     return 0
 
 
@@ -400,6 +467,14 @@ def _pid_owned_by_run(pid: int, run: RunRecord) -> bool:
         return True
 
 
+def _display_benchmark(benchmark: str) -> str:
+    return {
+        "aider-polyglot": "polyglot",
+        "swebench-lite": "swe-lite",
+        "swebench-live": "swe-live",
+    }.get(benchmark, benchmark)
+
+
 def _format_ts(ts: float | None) -> str:
     if ts is None:
         return "—"
@@ -409,7 +484,105 @@ def _format_ts(ts: float | None) -> str:
         return str(ts)
 
 
-def _format_progress(p: dict) -> str:
+def _resolve_run(state: launch_state.State, *, run_id: str | None, latest: bool) -> RunRecord:
+    if latest:
+        if run_id:
+            raise MCodeError(
+                what="pass either a run id or --latest, not both",
+                why="",
+                next="use `mcode bench show --latest` or `mcode bench show <run-id>`",
+            )
+        if not state.runs:
+            raise MCodeError(
+                what="no runs recorded",
+                why="",
+                next="run a benchmark first",
+            )
+        return max(state.runs, key=lambda run: float(run.started_at or 0.0))
+    if not run_id:
+        raise MCodeError(
+            what="missing run id",
+            why="",
+            next="use `mcode bench show --latest` or pass a run id from `mcode bench list`",
+        )
+    run = state.run(run_id)
+    if run is not None:
+        return run
+    matches = [
+        run for run in state.runs if run.id.startswith(f"bench-{run_id}") or run_id in run.id
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise MCodeError(
+            what=f"run id {run_id!r} is ambiguous",
+            why=f"matched {len(matches)} runs",
+            next=(
+                "pass the full run id from `mcode bench show --latest` or `mcode bench list --json`"
+            ),
+        )
+    raise MCodeError(
+        what=f"no run with id {run_id!r}",
+        why="",
+        next="`mcode bench list --limit 20` to see recent runs",
+    )
+
+
+def _display_run_id(run: RunRecord) -> str:
+    parts = run.id.split("-")
+    if len(parts) >= 3 and parts[0] == "bench":
+        return f"{parts[1][-5:]}-{parts[2][:6]}"
+    return run.id
+
+
+def _db_missing(run: RunRecord) -> bool:
+    if not run.db_path:
+        return False
+    return not Path(run.db_path).exists()
+
+
+def _older_than_cutoff(value: str | None) -> float | None:
+    if not value:
+        return None
+    value = value.strip().lower()
+    units = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+    suffix = value[-1]
+    if suffix in units:
+        number = value[:-1]
+        multiplier = units[suffix]
+    else:
+        number = value
+        multiplier = 86400
+    try:
+        seconds = float(number) * multiplier
+    except ValueError as exc:
+        raise MCodeError(
+            what=f"invalid --older-than value {value!r}",
+            why="expected a number with optional suffix s, m, h, d, or w",
+            next="examples: --older-than 7d, --older-than 12h",
+        ) from exc
+    return time.time() - seconds
+
+
+def _prune_reason(run: RunRecord, *, missing_db: bool, cutoff: float | None) -> str:
+    reasons: list[str] = []
+    if missing_db and _db_missing(run):
+        reasons.append("missing db")
+    if cutoff is not None and float(run.started_at or 0.0) <= cutoff:
+        reasons.append("old")
+    return f"({', '.join(reasons)})" if reasons else ""
+
+
+def _format_short_ts(ts: float | None) -> str:
+    if ts is None:
+        return "—"
+    try:
+        return datetime.fromtimestamp(ts).strftime("%m-%d %H:%M")
+    except (OSError, ValueError):
+        return str(ts)
+
+
+def _format_progress(p: dict, *, max_len: int | None = None) -> str:
     if not p:
         return "—"
     cur = p.get("current", 0)
@@ -418,7 +591,10 @@ def _format_progress(p: dict) -> str:
     task_id = p.get("task_id")
     stage = p.get("stage")
     details = [str(value) for value in (task_id, stage) if value]
-    return f"{head} {' · '.join(details)}" if details else head
+    text = f"{head} {' · '.join(details)}" if details else head
+    if max_len is not None and len(text) > max_len:
+        return text[: max_len - 1].rstrip() + "…"
+    return text
 
 
 def _details_table():
@@ -516,4 +692,4 @@ def _results_run_id(run: RunRecord, rdb: ResultsDB) -> int | None:
     return None
 
 
-__all__ = ["cancel_run", "list_runs", "show_run"]
+__all__ = ["cancel_run", "list_runs", "prune_runs", "show_run"]

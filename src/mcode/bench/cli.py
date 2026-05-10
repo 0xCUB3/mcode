@@ -701,6 +701,9 @@ def bench_list(
         typer.Option("--artifacts", help="Only show runs with remote artifact metadata"),
     ] = False,
     limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
+    wide: Annotated[
+        bool, typer.Option("--wide", help="Show target, shard, artifact, and DB columns")
+    ] = False,
 ) -> None:
     """List historical bench runs from the launch state file."""
     from mcode.bench.cancel import list_runs
@@ -711,6 +714,7 @@ def bench_list(
         status=status,
         artifacts_only=artifacts_only,
         limit=limit,
+        wide=wide,
     )
     if rc != 0:
         raise typer.Exit(rc)
@@ -718,7 +722,8 @@ def bench_list(
 
 @bench_app.command("show")
 def bench_show(
-    run_id: str = typer.Argument(..., help="run id (from `mcode bench list`)"),
+    run_id: Annotated[str | None, typer.Argument(help="run id (from `mcode bench list`)")] = None,
+    latest: Annotated[bool, typer.Option("--latest", help="Show the most recent run")] = False,
     json_mode: JsonFlag = False,
 ) -> None:
     """Show one recorded bench run with result and artifact paths."""
@@ -727,7 +732,42 @@ def bench_show(
 
     @handle_errors
     def _do() -> None:
-        rc = show_run(run_id, json_mode=json_mode)
+        rc = show_run(run_id, latest=latest, json_mode=json_mode)
+        if rc != 0:
+            raise typer.Exit(rc)
+
+    _do()
+
+
+@bench_app.command("prune")
+def bench_prune(
+    json_mode: JsonFlag = False,
+    status: Annotated[
+        str | None, typer.Option("--status", help="Only prune this run status")
+    ] = None,
+    older_than: Annotated[
+        str | None,
+        typer.Option("--older-than", help="Only prune runs older than a duration like 7d or 12h"),
+    ] = None,
+    missing_db: Annotated[
+        bool,
+        typer.Option("--missing-db/--any-db", help="Only prune records whose DB path is missing"),
+    ] = True,
+    yes: Annotated[bool, typer.Option("--yes", help="Actually delete matching records")] = False,
+) -> None:
+    """Prune stale bench run records from the launch state file."""
+    from mcode.bench.cancel import prune_runs
+    from mcode.ui.errors import handle_errors
+
+    @handle_errors
+    def _do() -> None:
+        rc = prune_runs(
+            json_mode=json_mode,
+            status=status,
+            older_than=older_than,
+            missing_db=missing_db,
+            yes=yes,
+        )
         if rc != 0:
             raise typer.Exit(rc)
 

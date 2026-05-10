@@ -129,6 +129,52 @@ def test_cancel_unknown_run_raises(isolated_state: Path) -> None:
         cancel_mod.cancel_run("nope")
 
 
+def test_show_accepts_compact_list_id(isolated_state: Path, capsys) -> None:
+    _put(
+        RunRecord(
+            id="bench-1234567890-abcdef12-aider-polyglot",
+            target=Target.LOCAL_VLLM,
+            benchmark="aider-polyglot",
+            status=RunStatus.DONE,
+            started_at=1.0,
+        )
+    )
+
+    rc = cancel_mod.show_run("1234567890-abcdef12")
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "bench-1234567890-abcdef12-aider-polyglot" in out
+
+
+def test_show_latest_picks_newest_run(isolated_state: Path, capsys) -> None:
+    _put(
+        RunRecord(
+            id="older",
+            target=Target.LOCAL_VLLM,
+            benchmark="smoke",
+            status=RunStatus.DONE,
+            started_at=1.0,
+        )
+    )
+    _put(
+        RunRecord(
+            id="newer",
+            target=Target.LOCAL_VLLM,
+            benchmark="suite",
+            status=RunStatus.FAILED,
+            started_at=2.0,
+        )
+    )
+
+    rc = cancel_mod.show_run(latest=True)
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "newer" in out
+    assert "suite" in out
+
+
 def test_show_run_includes_db_summary_and_commands(
     isolated_state: Path, tmp_path: Path, capsys
 ) -> None:
@@ -237,10 +283,75 @@ def test_list_runs_table_marks_fetchable_artifacts(isolated_state: Path, capsys)
             },
         )
     )
-    rc = cancel_mod.list_runs()
+    rc = cancel_mod.list_runs(wide=True)
     assert rc == 0
     out = capsys.readouterr().out
     assert out.lower().count("yes") >= 2
+
+
+def test_prune_dry_run_does_not_delete(isolated_state: Path, tmp_path: Path, capsys) -> None:
+    missing_db = tmp_path / "missing.db"
+    existing_db = tmp_path / "existing.db"
+    existing_db.write_text("placeholder")
+    _put(
+        RunRecord(
+            id="stale",
+            target=Target.LOCAL_VLLM,
+            benchmark="smoke",
+            status=RunStatus.FAILED,
+            db_path=str(missing_db),
+            started_at=1.0,
+        )
+    )
+    _put(
+        RunRecord(
+            id="kept",
+            target=Target.LOCAL_VLLM,
+            benchmark="smoke",
+            status=RunStatus.FAILED,
+            db_path=str(existing_db),
+            started_at=1.0,
+        )
+    )
+
+    rc = cancel_mod.prune_runs(status="failed")
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "would remove 1" in out
+    assert "stale" in out
+    assert {run.id for run in launch_state.load().runs} == {"stale", "kept"}
+
+
+def test_prune_deletes_matching_old_missing_db_runs(
+    isolated_state: Path, tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(cancel_mod.time, "time", lambda: 10_000.0)
+    _put(
+        RunRecord(
+            id="old-missing",
+            target=Target.LOCAL_VLLM,
+            benchmark="smoke",
+            status=RunStatus.DONE,
+            db_path=str(tmp_path / "missing.db"),
+            started_at=1.0,
+        )
+    )
+    _put(
+        RunRecord(
+            id="new-missing",
+            target=Target.LOCAL_VLLM,
+            benchmark="smoke",
+            status=RunStatus.DONE,
+            db_path=str(tmp_path / "missing-new.db"),
+            started_at=9_999.0,
+        )
+    )
+
+    rc = cancel_mod.prune_runs(older_than="1h", yes=True)
+
+    assert rc == 0
+    assert [run.id for run in launch_state.load().runs] == ["new-missing"]
 
 
 def test_cancel_already_terminal_returns_ok(isolated_state: Path, capsys) -> None:

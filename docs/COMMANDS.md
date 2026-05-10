@@ -227,9 +227,11 @@ Every bench command supports `--json`. Events are line-delimited JSON with stric
 ```
 
 Kinds: `run_start`, `shard_start`, `shard_stdout`, `shard_done`, `shard_failed`, `shard_infra`, `infra_failure`, `merged`, `summary`, `remote_stdout`, `info`.
-`bench list` is sorted newest-first after filtering. Use `--limit N` when the state file is noisy and you only care about the most recent runs. When a remote artifact directory exists, `--artifacts` filters to those runs, and the table marks whether the artifacts were already fetched locally.
+`bench list` is sorted newest-first after filtering. Use `--limit N` when the state file is noisy and you only care about the most recent runs. Add `--wide` when you need target, shard, artifact, fetched, and DB columns. When a remote artifact directory exists, `--artifacts` filters to those runs.
 
-Use `mcode bench show <run-id>` to inspect one state record, DB summary, failed task rows, remote paths, and follow-up commands. For active local runs, `bench list` and `bench show` include the current task, stage, turn, and last tool when available.
+Use `mcode bench show <run-id>` or `mcode bench show --latest` to inspect one state record, DB summary, failed task rows, remote paths, and follow-up commands. The default table shows compact ids, and `bench show` accepts those ids as long as they match one run. For active local runs, `bench list` and `bench show` include the current task and stage when available.
+
+Use `mcode bench prune` to dry-run cleanup of stale state records whose DB path no longer exists. Add filters like `--status failed` or `--older-than 7d`, and add `--yes` to actually delete the matching records. Use `--any-db` only when you deliberately want the prune to ignore DB existence.
 
 ### Cancel semantics
 
