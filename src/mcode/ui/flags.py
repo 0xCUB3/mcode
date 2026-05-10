@@ -1,6 +1,6 @@
 """Shared Typer Option helpers for cross-command flags.
 
-Codex review note: Typer/Click root callback flags do NOT auto-propagate to
+Typer/Click note: Typer/Click root callback flags do NOT auto-propagate to
 subcommands. Each subcommand opts in by adding the relevant Annotated alias
 to its signature. There is no magic inheritance — the helpers below only
 exist so the help text / option name / default stays consistent everywhere

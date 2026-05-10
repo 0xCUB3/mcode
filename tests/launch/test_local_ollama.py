@@ -97,7 +97,7 @@ def test_launch_pulls_model_when_missing(mock_open, tmp_path: Path) -> None:
         if url.endswith("/api/tags"):
             return _url_response(body=json.dumps(next(tags_sequence)))
         if url.endswith("/v1/models"):
-            # Codex fix: readiness checks /v1/models, not /api/tags
+            # Regression: readiness checks /v1/models, not /api/tags
             return _url_response(body=json.dumps({"data": [{"id": "qwen2.5:0.5b"}]}))
         if url.endswith("/api/pull"):
             # Return a stream of 3 ndjson events.
@@ -211,7 +211,7 @@ def test_refresh_flips_to_stopped_when_model_missing() -> None:
 
 
 def test_model_tag_normalization() -> None:
-    """Codex fix: `foo` must match `foo:latest` and vice versa."""
+    """Regression: `foo` must match `foo:latest` and vice versa."""
     assert local_ollama._model_in_tags("granite4", ["granite4:latest"])
     assert local_ollama._model_in_tags("granite4:latest", ["granite4"])
     assert local_ollama._model_in_tags("granite4:3b", ["granite4:3b"])
@@ -251,7 +251,7 @@ def test_launch_uses_latest_alias_in_cache_check(mock_open, tmp_path: Path) -> N
 
 @patch("mcode.launch.local_ollama.urllib.request.urlopen")
 def test_malformed_pull_frame_raises_launch_error(mock_open) -> None:
-    """Codex fix: malformed NDJSON frames must produce actionable LaunchError,
+    """Regression: malformed NDJSON frames must produce actionable LaunchError,
     not silently swallowed or raw ValueError."""
 
     def responder(req, timeout=3.0):
@@ -277,7 +277,7 @@ def test_malformed_pull_frame_raises_launch_error(mock_open) -> None:
 
 @patch("mcode.launch.local_ollama.urllib.request.urlopen")
 def test_ready_phase_fails_when_v1_models_lacks_model(mock_open) -> None:
-    """Codex fix: even if /api/tags lists the model, ready-phase must hit
+    """Regression: even if /api/tags lists the model, ready-phase must hit
     /v1/models to prove the advertised endpoint actually serves it."""
 
     def responder(req, timeout=3.0):

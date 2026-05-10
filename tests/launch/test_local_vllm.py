@@ -92,7 +92,7 @@ def test_launch_happy_path_writes_server_record(
     assert server.target == Target.LOCAL_VLLM
     assert server.endpoint == f"http://127.0.0.1:{cfg.local_vllm.port}/v1"
     assert server.job_id == "12345"
-    # Codex fix: proc_identity is captured at launch for PID-reuse safety.
+    # Regression: proc_identity is captured at launch for PID-reuse safety.
     assert server.metadata.get("proc_identity") == "fake-identity"
 
     # Persisted
@@ -221,7 +221,7 @@ def test_refresh_marks_stopped_when_pid_gone() -> None:
 
 
 def test_process_identity_is_stable_over_time() -> None:
-    """Codex final-review fix: `_process_identity` must NOT include elapsed
+    """Safety note: `_process_identity` must NOT include elapsed
     time (etime). If it did, the same healthy process would report a
     different identity on every call, and refresh() would flip it to stopped.
     """
@@ -276,7 +276,7 @@ def test_refresh_keeps_healthy_status_on_long_lived_pid() -> None:
 
 
 def test_refresh_detects_pid_reuse() -> None:
-    """Codex fix: a recorded proc_identity that doesn't match the live pid's
+    """Regression: a recorded proc_identity that doesn't match the live pid's
     identity means the pid was reused. Must flip to stopped and NOT interfere
     with the unrelated process."""
     from mcode.launch.models import ServerRecord
@@ -297,7 +297,7 @@ def test_refresh_detects_pid_reuse() -> None:
 
 
 def test_chat_template_missing_hard_fails() -> None:
-    """Codex fix: if profile requires a chat_template but it's not found,
+    """Regression: if profile requires a chat_template but it's not found,
     launch must fail closed, not silently drop the flag."""
     resources = Path(local_vllm.__file__).parent / "resources"
     tmpl = resources / "tool_chat_template_gemma4.jinja"
@@ -317,7 +317,7 @@ def test_chat_template_missing_hard_fails() -> None:
 
 
 def test_launch_tears_down_child_on_persistence_failure(tmp_path: Path) -> None:
-    """Codex fix: if state.update() fails after the server is healthy, the
+    """Regression: if state.update() fails after the server is healthy, the
     detached child must be killed — otherwise we orphan a live vLLM process."""
     killed: list[int] = []
 

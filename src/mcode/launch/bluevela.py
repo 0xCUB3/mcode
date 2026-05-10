@@ -207,8 +207,7 @@ def build_env_json(spec: LaunchSpec, cfg: BluevelaConfig, *, run_dir: str) -> di
         # them to {shared_root}/templates/ on first use. The env carries the
         # *remote* path.
         chat_template_path = f"{cfg.shared_root}/templates/{p.chat_template}"
-        # Codex fix B2 for progress.py had a parallel: the Python builder MUST
-        # inject the flag; shell never guesses.
+        # The Python builder must inject the flag; shell never guesses.
         vllm_flags += ["--chat-template", "/chat-template.jinja"]
     env: dict = {
         "MODEL": spec.model,
@@ -241,7 +240,7 @@ def _shared_path(cfg: BluevelaConfig, *parts: str) -> str:
 # ---------------------------------------------------------------------------
 _JOB_ID_RE = re.compile(r"Job\s*<(\d+)>")
 
-# Codex fix: tight allowlists on anything we're about to interpolate into a
+# Regression: tight allowlists on anything we're about to interpolate into a
 # remote shell command. Values that don't match are rejected up-front, so we
 # never pass injection-prone characters to `bsub`/`bjobs`/`bkill`.
 _SAFE_IDENT_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,63}$")  # queue, group, job name
@@ -716,7 +715,7 @@ def stop(
     state_path: Path | None = None,
     ssh_client: SshClient | None = None,
 ) -> bool:
-    """Codex final-review fix: route through the login the record was created
+    """Safety note: route through the login the record was created
     with (not the current config), and do NOT drop the state record if the
     bkill couldn't confirm — that would strand the live job on the cluster
     with no local handle to stop it.
@@ -743,7 +742,7 @@ def stop(
         state.update(state_path, lambda s: _drop_server(s, server_id))
         return True
 
-    # Codex pre-merge-review fix: don't `|| true` the bkill — inspect it.
+    # Safety note: don't `|| true` the bkill — inspect it.
     # If bkill succeeded OR the job is already absent from LSF, drop the
     # record. If bkill failed for any other reason (permission denied,
     # transient LSF hiccup), preserve the record as stop-pending so the
@@ -789,13 +788,13 @@ def refresh(
     cfg: LaunchConfig | None = None,
     ssh_client: SshClient | None = None,
 ) -> ServerRecord | RunRecord:
-    """Codex fix: LSF `RUN` does NOT imply readiness. Only mark healthy when
+    """Regression: LSF `RUN` does NOT imply readiness. Only mark healthy when
     both LSF says RUN *and* the HTTP endpoint responds 200 (same contract as
     launch()'s ready phase). Anything in between stays `pending`.
 
-    Final-review fix: use the login captured on the record, not the mutable
-    current config. A user whose current config points at a different host
-    still gets correct per-record refresh.
+    Use the login captured on the record, not the mutable current config.
+    A user whose current config points at a different host still gets correct
+    per-record refresh.
     """
     login = None
     if isinstance(record, ServerRecord):
@@ -1051,7 +1050,7 @@ def doctor_init(
 
     # Wrap any post-preflight TransportError in LaunchError so the CLI
     # renders the formatted ✗/why/next layout instead of a traceback
-    # (Codex final-verify-pass hardening).
+    # (final verification hardening).
     def _probe(cmd: str, *, timeout: float = 15.0):
         try:
             return ssh.run(cmd, timeout=timeout)
@@ -1080,7 +1079,7 @@ def doctor_init(
     # each candidate with `bqueues -l <q>` so an interactive-only queue
     # doesn't land in queue_order and fail every batch launch.
     #
-    # Codex final-review fix: tri-state result. True = confirmed batch-OK,
+    # Safety note: tri-state result. True = confirmed batch-OK,
     # False = confirmed interactive-only, None = probe failed (transport,
     # timeout, unknown status). Fail closed if ALL probes are None —
     # silently writing queue_order=["normal"] under those conditions risks
@@ -1093,7 +1092,7 @@ def doctor_init(
         except TransportError:
             # Transport dropping mid-init must NOT raise out of doctor_init;
             # let the fail-closed aggregation path raise a formatted
-            # LaunchError instead (Codex pre-merge verification fix).
+            # LaunchError instead.
             return None
         if not probe.ok or not probe.stdout:
             return None
@@ -1111,7 +1110,7 @@ def doctor_init(
         # False -> interactive, drop silently
     queue_order = confirmed_batch[:3]
     if not queue_order:
-        # Codex pre-merge-review fix: fail closed unless at least one queue
+        # Safety note: fail closed unless at least one queue
         # was positively confirmed batch-capable. This covers three cases:
         # (a) all probes errored → transient issue, retry
         # (b) all open queues are interactive-only → user needs a group /

@@ -101,7 +101,7 @@ def _health_check(port: int, *, timeout_s: float = 2.0) -> tuple[bool, int]:
 def _resolve_chat_template(spec: LaunchSpec) -> Path | None:
     """Locate a chat-template file for the profile, or raise LaunchError if
     the profile requires one but it's missing. Silent-drop is not acceptable
-    (Codex review fix) — Gemma4 etc. produces a server that looks healthy
+    (regression) — Gemma4 etc. produces a server that looks healthy
     but silently breaks tool calls without the template.
 
     Lookup order: absolute path as given, then bundled launch/resources/<name>.
@@ -157,8 +157,7 @@ def _process_identity(pid: int) -> str | None:
     which doesn't change while the process lives. An earlier version also
     included `etime` (elapsed time), but that ticks every second, so two
     successive identity probes on the same healthy process never compared
-    equal. Result: refresh flipped healthy servers to stopped (Codex final
-    review finding).
+    equal. Result: refresh flipped healthy servers to stopped.
     """
     try:
         r = subprocess.run(
@@ -452,7 +451,7 @@ def doctor(cfg: LaunchConfig | None = None) -> list[Check]:
 def stop(server_id: str, *, state_path: Path | None = None, grace_s: float = 5.0) -> bool:
     """SIGTERM the server's pid, wait, SIGKILL if needed, clear state.
 
-    PID reuse safe (Codex review fix): the recorded proc_identity from launch
+    PID reuse safe (regression): the recorded proc_identity from launch
     is compared against the live pid's identity before any signal is sent. If
     they don't match, the pid has been reused — we DO NOT touch the unrelated
     process, but we do clean up the stale state record.

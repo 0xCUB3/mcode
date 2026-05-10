@@ -1,6 +1,6 @@
 """Entrypoint-level test: `mcode launch ...` (via mcode.cli:app) actually
-reaches the launcher Typer app. Regression guard for the pre-merge finding
-that `app.add_typer(launch_app, name='launch')` is wired in `mcode.cli`."""
+reaches the launcher Typer app. Guards the top-level CLI wiring for
+`app.add_typer(launch_app, name='launch')`."""
 
 from __future__ import annotations
 

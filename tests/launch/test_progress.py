@@ -144,7 +144,7 @@ def test_close_without_finish_marks_active_failed() -> None:
 
 
 def test_steady_feed_does_not_trigger_stall_warning() -> None:
-    """Codex fix: a feed that returns the same value every tick is HEALTHY
+    """Regression: a feed that returns the same value every tick is HEALTHY
     (remote is fine, status just didn't change). Stall anchors on last
     successful poll, not last detail-change."""
     r = progress.NullReporter.create(PHASES)
@@ -162,7 +162,7 @@ def test_steady_feed_does_not_trigger_stall_warning() -> None:
 
 
 def test_close_emits_failure_transition_to_plain_reporter() -> None:
-    """Codex fix: close() with an active phase must emit a terminal failure
+    """Regression: close() with an active phase must emit a terminal failure
     event to Plain/Json reporters, not just mutate internal state."""
     buf = io.StringIO()
     r = progress.PlainReporter.create(PHASES, stream=buf)
@@ -186,7 +186,7 @@ def test_close_emits_failure_transition_to_json_reporter() -> None:
 
 
 def test_closed_reporter_ignores_late_feed_mutations() -> None:
-    """Codex fix: a heartbeat thread blocked on a slow feed must not mutate
+    """Regression: a heartbeat thread blocked on a slow feed must not mutate
     state or emit output after close() returns."""
     buf = io.StringIO()
     r = progress.JsonReporter.create(PHASES, stream=buf)

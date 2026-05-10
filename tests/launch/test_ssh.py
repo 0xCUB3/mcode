@@ -33,7 +33,7 @@ def test_transport_classifier_exit_255_known_marker() -> None:
 
 def test_transport_classifier_exit_255_unknown_marker_is_remote_failure() -> None:
     # A remote command can legitimately exit 255 with no SSH-client marker.
-    # Classifier must NOT treat this as transport (Codex review fix).
+    # Classifier must NOT treat this as transport (regression).
     r = _completed(returncode=255, stderr="remote: something weird")
     assert _is_transport_failure(r) is False
 
@@ -45,7 +45,7 @@ def test_transport_classifier_remote_nonzero_is_not_transport() -> None:
 
 
 def test_remote_exit_255_returns_failed_result_not_transport_error() -> None:
-    """End-to-end check for the Codex fix: remote exit 255 without an SSH
+    """End-to-end regression: remote exit 255 without an SSH
     transport marker must surface as SshResult(ok=False), not TransportError."""
     from unittest.mock import patch
 

@@ -1,7 +1,6 @@
 """Phase-list progress UI with heartbeat.
 
-Design invariants (see plan "Phase-based progress UI with heartbeat" and Codex
-revisions B6, M1, M2, m2):
+Design invariants for the phase-based progress UI with heartbeat:
 
 - Each target declares a list[Phase]. Exactly one phase is active at a time.
 - The active phase has a background heartbeat thread that refreshes its detail
@@ -191,7 +190,7 @@ class _ReporterBase:
             if self._active is not None:
                 # Caller forgot to finish(); mark failed for safety so the
                 # output doesn't lie. Capture before clearing so we can emit
-                # the terminal transition below (Codex review fix).
+                # the terminal transition below (regression).
                 self._active.status = PhaseStatus.FAILED
                 self._active.finished_at = _now()
                 orphan = self._active

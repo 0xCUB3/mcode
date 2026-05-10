@@ -327,7 +327,7 @@ def cmd_stop(
     """Stop one server by id, or --all to stop every server. Never uses
     `bkill 0` or `-u` — only the caller's recorded jobs.
 
-    Codex verification-pass fixes:
+    Stop-path safety checks:
     - Config is loaded lazily, only for Blue Vela targets, so a broken
       [bluevela] TOML never prevents stopping a local server.
     - Honour the return value from bluevela.stop(): False means SSH was
@@ -404,7 +404,7 @@ def cmd_doctor(
     ),
 ) -> None:
     """Health check for a target. With --init, probe and write launch.toml."""
-    # Codex verification-pass fix: don't load existing config for --init. The
+    # Regression: don't load existing config for --init. The
     # whole point of --init is to recover a missing/broken launch.toml; eager
     # loading defeats that.
     if init:
@@ -467,7 +467,7 @@ def cmd_doctor(
 def cmd_refresh() -> None:
     """Re-query each server/run against its target and persist updated status.
 
-    Codex final-review fix: config is loaded lazily and only if we have a
+    Safety note: config is loaded lazily and only if we have a
     Blue Vela server to refresh. Local records refresh without touching the
     TOML at all.
     """
@@ -488,7 +488,7 @@ def cmd_refresh() -> None:
                 elif srv.target == Target.LOCAL_VLLM:
                     updated = local_vllm.refresh(srv)
                 elif srv.target == Target.LOCAL_OLLAMA:
-                    # Codex verification-pass fix: pass cfg so custom Ollama
+                    # Regression: pass cfg so custom Ollama
                     # host/port settings are honoured during refresh. Without
                     # this, non-default daemons get refreshed against
                     # 127.0.0.1:11434 and healthy records flip to stopped.

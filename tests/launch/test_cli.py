@@ -235,7 +235,7 @@ def test_logs_for_bluevela_prints_ssh_hint(runner: CliRunner, isolated_state: Pa
 def test_stop_bluevela_transport_failure_exits_nonzero(
     runner: CliRunner, isolated_state: Path, monkeypatch
 ) -> None:
-    """Codex verification-pass fix: when bluevela.stop() returns False
+    """Regression: when bluevela.stop() returns False
     (transport failure, record kept as stop-pending), the CLI must surface
     that as a failure — not print 'stopped: ...' and exit 0."""
     monkeypatch.setattr("mcode.launch.cli.bluevela.stop", lambda sid, **_kw: False)
@@ -270,7 +270,7 @@ def test_stop_bluevela_transport_failure_exits_nonzero(
 def test_stop_local_target_works_even_when_bluevela_config_broken(
     runner: CliRunner, isolated_state: Path, tmp_path: Path, monkeypatch
 ) -> None:
-    """Codex verification-pass fix: a malformed [bluevela] TOML must NOT
+    """Regression: a malformed [bluevela] TOML must NOT
     block stopping a local-vllm server."""
     bad_cfg = tmp_path / "launch.toml"
     bad_cfg.write_text("not = = toml\n")  # malformed

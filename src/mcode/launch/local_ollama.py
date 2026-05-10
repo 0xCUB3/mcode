@@ -83,7 +83,7 @@ def _tags(cfg: LaunchConfig) -> list[str]:
 
 def _normalize_ollama_name(name: str) -> str:
     """Ollama treats `foo` as shorthand for `foo:latest`. Normalize so that
-    membership checks against /api/tags don't falsely fail (Codex fix)."""
+    membership checks against /api/tags don't falsely fail (regression)."""
     return name if ":" in name else f"{name}:latest"
 
 
@@ -99,7 +99,7 @@ def _daemon_ok(cfg: LaunchConfig) -> bool:
 def _v1_models(cfg: LaunchConfig) -> list[str]:
     """GET /v1/models — the actual endpoint the launcher advertises. Used
     in the ready phase so we prove the model is served there, not just that
-    `/api/tags` lists it (Codex fix: readiness must match the advertised URL)."""
+    `/api/tags` lists it (Regression: readiness must match the advertised URL)."""
     data = _get_json(f"{_base_url(cfg)}/v1/models")
     if not data:
         return []
@@ -151,7 +151,7 @@ def _pull_stream(cfg: LaunchConfig, model: str, deadline: float):
             try:
                 evt = json.loads(line)
             except json.JSONDecodeError as e:
-                # Codex fix: don't silently swallow malformed frames — the
+                # Regression: don't silently swallow malformed frames — the
                 # heartbeat gets stuck on stale progress and the real pull
                 # failure is obscured. Surface as LaunchError with context.
                 raise LaunchError(
@@ -210,7 +210,7 @@ def launch(
     # --- pull phase --------------------------------------------------------
     # If the model is already present, skip the pull entirely and just show a
     # one-line detail that it was cached. Normalize name to handle `foo` vs
-    # `foo:latest` (Codex fix).
+    # `foo:latest` (regression).
     already = _model_in_tags(spec.model, _tags(cfg))
     pull_progress: dict[str, tuple[int, int, str]] = {"last": (0, 0, "queued")}
 
@@ -241,7 +241,7 @@ def launch(
         reporter.finish(PhaseStatus.DONE)
 
     # --- ready phase -------------------------------------------------------
-    # Codex fix: prove the model is served at /v1/models (the advertised
+    # Regression: prove the model is served at /v1/models (the advertised
     # endpoint), not just that /api/tags lists it. Tags and /v1 can disagree
     # during daemon restarts or manifest shuffles.
     reporter.start("ready")

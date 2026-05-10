@@ -17,7 +17,7 @@ def _ok(stdout: str = "", stderr: str = "") -> SshResult:
 
 
 def test_parse_bugroup_filters_by_user() -> None:
-    """Codex/live-probe fix: bugroup (no args) lists ALL groups. Must filter
+    """Live-probe regression: bugroup (no args) lists ALL groups. Must filter
     to rows that actually contain the user, otherwise the first row wins
     regardless of membership (e.g. 'lsfadmins' swept in incorrectly)."""
     raw = (
@@ -99,7 +99,7 @@ def test_doctor_init_writes_config_with_probed_values(tmp_path: Path) -> None:
 
 
 def test_doctor_init_raises_when_no_parseable_queues(tmp_path: Path) -> None:
-    """Codex pre-merge-review fix: if bqueues returns nothing parseable, we
+    """Safety note: if bqueues returns nothing parseable, we
     must NOT silently write queue_order=['normal']. That ships a config that
     fails at submit time."""
     ssh = MagicMock()
@@ -127,7 +127,7 @@ def test_doctor_init_raises_when_no_parseable_queues(tmp_path: Path) -> None:
 def test_doctor_init_converts_transport_error_to_launch_error(
     failing_cmd: str, tmp_path: Path
 ) -> None:
-    """Codex final-verify-pass fix: every post-preflight ssh.run in doctor_init
+    """Final verification hardening: every post-preflight ssh.run in doctor_init
     must convert TransportError into a formatted LaunchError. Without this,
     a mid-init SSH drop surfaces as a raw Python traceback instead of the
     CLI's ✗/why/next layout."""
@@ -156,7 +156,7 @@ def test_doctor_init_converts_transport_error_to_launch_error(
 
 
 def test_doctor_init_handles_transport_error_in_queue_probe(tmp_path: Path) -> None:
-    """Codex pre-merge verification fix: a TransportError raised by the
+    """Transport hardening: a TransportError raised by the
     `bqueues -l` probe must NOT escape doctor_init. It must be caught and
     contribute to the fail-closed 'could not confirm any batch-capable
     queue' LaunchError path so the CLI renders a formatted error, not a

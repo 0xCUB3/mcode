@@ -7,10 +7,10 @@ Run mCode against a model on your own machine — either Ollama or a local vLLM 
 ```bash
 uv sync --extra dev
 uv run mcode --version
-uv run mcode doctor
+uv run mcode doctor local-ollama
 ```
 
-`mcode doctor` (no target) checks the four things you need: results dir writable, container runtime (podman or docker) on PATH, Mellea importable, ruff present. Red `✗` means follow the `next:` line.
+For a local-only Ollama handoff, `mcode doctor local-ollama` is the most useful check. The targetless `mcode doctor` also probes Blue Vela and local vLLM, so it may fail on machines that are intentionally Ollama-only. Red `✗` means follow the `next:` line.
 
 For the full bench dependency set:
 
@@ -32,6 +32,14 @@ uv run mcode launch local-ollama --model granite4
 uv run mcode launch wait <id printed above> --timeout 120
 ```
 
+Use the exact name shown by `ollama list`. For example, a local Qwen3.6 pull named
+`qwen3.6:35b-a3b` should be launched and benchmarked with that same string:
+
+```bash
+uv run mcode launch local-ollama --model qwen3.6:35b-a3b
+uv run mcode launch wait <id printed above> --timeout 120
+```
+
 ### Option B: local vLLM
 
 ```bash
@@ -48,6 +56,10 @@ The bench will auto-resolve `--backend openai` to the healthy server matching `-
 ```bash
 # 16-task smoke slice (good first run)
 uv run mcode bench smoke --backend openai --model granite4 --shards 4
+
+# Same smoke slice against a locally pulled Qwen3.6 Ollama model
+MCODE_CONTEXT_WINDOW=32768 MCODE_MAX_NEW_TOKENS=4096 MCODE_REACT_TIMEOUT=420 \
+uv run mcode bench smoke --backend openai --model qwen3.6:35b-a3b --shards 1
 
 # SWE-bench Lite, first 16 tasks
 uv run mcode bench swebench-lite --backend openai --model granite4 --limit 16 --shards 4

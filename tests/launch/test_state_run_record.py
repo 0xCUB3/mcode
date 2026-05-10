@@ -69,7 +69,7 @@ def test_stopped_with_cancel_reason_round_trip(tmp_path: Path, monkeypatch):
 
 
 def test_no_new_run_status_values_introduced():
-    """Codex review hard requirement: cancellation must reuse STOPPED, not a
+    """Cancellation invariant: cancellation must reuse STOPPED, not a
     new enum value, so older mcode binaries don't drop records on load."""
     values = {v.value for v in RunStatus}
     assert values == {"submitted", "running", "done", "failed", "stopped"}

@@ -1,6 +1,6 @@
 [project]
 name = "mcode"
-version = "0.0.1"
+version = "0.1.0"
 description = "Small local model agentic coding benchmark harness"
 readme = "README.md"
 requires-python = ">=3.11"

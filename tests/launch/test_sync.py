@@ -112,7 +112,7 @@ def test_sync_invokes_rsync_to_correct_destination(
     assert any(a.startswith("--exclude=podman-tmp/") for a in argv)
     assert f"{str(src)}/" in argv
     assert "alice@host:/u/alice/mcode/" in argv
-    # Codex review fix: rsync must use SSH with safety options (BatchMode etc).
+    # Regression: rsync must use SSH with safety options (BatchMode etc).
     assert "-e" in argv
     ssh_cmd = argv[argv.index("-e") + 1]
     assert "BatchMode=yes" in ssh_cmd
@@ -127,7 +127,7 @@ def test_sync_invokes_rsync_to_correct_destination(
 def test_sync_fails_closed_when_not_in_git_repo(
     runner: CliRunner, cfg_path: Path, tmp_path: Path, monkeypatch
 ) -> None:
-    """Codex review fix: refuse to sync when git rev-parse fails — the old
+    """Regression: refuse to sync when git rev-parse fails — the old
     cwd fallback combined with --delete could wipe an unrelated remote dir."""
     # Make git rev-parse fail; also don't pass --src.
     fake, _ = _fake_subprocess()
@@ -161,7 +161,7 @@ def test_sync_creates_marker_on_empty_remote(
 def test_sync_refuses_populated_unmarked_remote(
     runner: CliRunner, cfg_path: Path, tmp_path: Path
 ) -> None:
-    """Codex verify-pass fix: `rsync --delete` into a non-empty remote dir
+    """Regression: `rsync --delete` into a non-empty remote dir
     without our marker could wipe unrelated data. Must refuse unless
     --bootstrap is passed."""
     src = tmp_path / "repo"
