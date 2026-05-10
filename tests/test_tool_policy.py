@@ -1,4 +1,10 @@
-from mcode.agent.tool_policy import ToolPolicyState, check_tool_call
+from mcode.agent.tool_policy import (
+    ToolPolicyState,
+    blocked_shell_command_reason,
+    blocked_verification_command_reason,
+    check_edit_path,
+    check_tool_call,
+)
 
 
 def test_policy_requires_tests_after_edit() -> None:
@@ -45,3 +51,28 @@ def test_policy_allows_final_answer_after_verification() -> None:
     decision = check_tool_call("final_answer", state)
 
     assert decision.allowed
+
+
+def test_policy_rejects_edits_outside_allowed_paths() -> None:
+    decision = check_edit_path("build.gradle", allowed_edit_paths={"src/main.py"})
+
+    assert not decision.allowed
+    assert "src/main.py" in decision.reason
+
+
+def test_policy_allows_edit_when_no_path_allowlist() -> None:
+    decision = check_edit_path("build.gradle", allowed_edit_paths=None)
+
+    assert decision.allowed
+
+
+def test_policy_blocks_dangerous_shell_prefixes() -> None:
+    assert blocked_shell_command_reason("sudo rm harmless")
+    assert blocked_shell_command_reason("rm -rf /")
+    assert blocked_shell_command_reason("pytest -q") is None
+
+
+def test_policy_blocks_evasive_verification_commands() -> None:
+    assert blocked_verification_command_reason("pytest -q || true")
+    assert blocked_verification_command_reason("pytest -q --ignore tests/test_bug.py")
+    assert blocked_verification_command_reason("pytest tests/test_bug.py") is None

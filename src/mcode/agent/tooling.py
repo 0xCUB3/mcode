@@ -7,21 +7,10 @@ import subprocess
 from pathlib import Path
 from typing import Any, cast
 
+from mcode.agent.tool_policy import blocked_shell_command_reason
+
 _MAX_OUTPUT = 10_000
 _DEFAULT_TIMEOUT = 30
-_BLOCKED_PREFIXES = (
-    "rm -rf /",
-    "rm -rf /*",
-    "mkfs",
-    "dd if=",
-    ":(){",
-    "chmod -R 777 /",
-    "sudo",
-    "reboot",
-    "shutdown",
-    "kill -9 -1",
-    "pkill",
-)
 _SKIP_DIRS = {
     ".git",
     "node_modules",
@@ -132,10 +121,8 @@ def _run_shell_command(
 ) -> tuple[str, str]:
     timeout = timeout or int(os.environ.get("MCODE_BASH_TIMEOUT", str(_DEFAULT_TIMEOUT)))
 
-    cmd_lower = command.strip().lower()
-    for blocked in _BLOCKED_PREFIXES:
-        if cmd_lower.startswith(blocked):
-            return "BLOCKED", f"Error: command blocked for safety: {command[:80]}"
+    if block_reason := blocked_shell_command_reason(command):
+        return "BLOCKED", block_reason
 
     if allowed_dirs is not None:
         import shlex

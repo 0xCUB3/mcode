@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from mellea.backends.tools import MelleaTool
 
 from mcode.agent.repo_customization import load_repo_customization
+from mcode.agent.tool_policy import check_edit_path
 from mcode.agent.tooling import find_file, list_dir, read_file, search_code, str_replace_edit
 from mcode.agent.verification import (
     VerificationPolicy,
@@ -166,9 +167,9 @@ def make_agent_tools(
             repo_root=repo_root,
         )
         normalized_edit_path = _repo_relative_path(repo_root, normalized_path)
-        if allowed_edits is not None and normalized_edit_path not in allowed_edits:
-            allowed = ", ".join(sorted(allowed_edits))
-            return f"REJECTED: edit only the benchmark implementation file(s): {allowed}"
+        edit_decision = check_edit_path(normalized_edit_path, allowed_edit_paths=allowed_edits)
+        if not edit_decision.allowed:
+            return f"REJECTED: {edit_decision.reason}"
         result = str_replace_edit(
             normalized_path,
             old_str,

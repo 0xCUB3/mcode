@@ -16,6 +16,7 @@ from mellea.stdlib.requirements import (
     uses_tool,
 )
 
+from mcode.agent.tool_policy import blocked_verification_command_reason
 from mcode.agent.tooling import execute_command, format_tool_result, is_tool_result
 
 
@@ -240,7 +241,7 @@ def build_run_tests_tool(
         for command in commands:
             if not command.strip():
                 continue
-            if block_reason := _blocked_verification_command_reason(command):
+            if block_reason := blocked_verification_command_reason(command):
                 outputs.append(format_tool_result(command, "BLOCKED", block_reason))
                 continue
             if command_fn is not None:
@@ -296,28 +297,6 @@ def _patch_run_tests_schema(schema: object) -> object:
             properties["max_output_chars"]["type"] = "integer"
     parameters["required"] = ["test_cmd"]
     return patched
-
-
-def _blocked_verification_command_reason(command: str) -> str | None:
-    normalized = f" {command.lower()} "
-    evasive_markers = (
-        " -k not ",
-        " -k 'not ",
-        ' -k "not ',
-        " --ignore=",
-        " --ignore ",
-        " || true",
-        " | head",
-        " | tail",
-        " | grep",
-    )
-    if any(marker in normalized for marker in evasive_markers):
-        return (
-            "Verification commands must run the relevant failing tests without skipping, "
-            "excluding, or masking their exit status. Run the direct failing test command "
-            "instead."
-        )
-    return None
 
 
 def _append_failure_artifacts(
