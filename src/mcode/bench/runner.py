@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from types import SimpleNamespace
 
+from mcode.bench.adapters import BenchmarkAdapter, adapter_for
 from mcode.bench.artifacts import (
     TaskArtifactManifest,
     TaskArtifactStore,
@@ -104,21 +105,6 @@ def _coerce_patch_repo_context(repo_context: object) -> PatchRepoContext:
         visible_repo_root=visible_repo_root,
         test_cmds=test_cmds,
     )
-
-
-@dataclass(frozen=True)
-class _BenchmarkAdapter:
-    benchmark: str
-    load_tasks: Callable[[int | None, list[str] | None], list[object]]
-    task_id: Callable[[object], str]
-    dataset_metadata: Callable[[], dict[str, object]]
-    prepare_environment: Callable[[list[object]], object | None]
-    run_task: Callable[[object, object | None, int], dict[str, object] | None]
-    cleanup_task: Callable[[object, object | None], None]
-
-
-def _noop_cleanup(_task: object, _environment: object | None) -> None:
-    return None
 
 
 class BenchmarkRunner:
@@ -628,142 +614,31 @@ class BenchmarkRunner:
             self.llm.check_available()
         return self._run_adapter(adapter, limit=limit, task_ids=task_ids)
 
-    def _adapter_for(self, benchmark: str) -> _BenchmarkAdapter:
-        name = benchmark.lower().strip()
-        if name in {"swebench-lite", "swebench_lite"}:
-            from mcode.bench.swebench_lite import load_swebench_lite
-            from mcode.execution.swebench import SWEbenchSandbox
-
-            def load_tasks(limit: int | None, task_ids: list[str] | None) -> list[object]:
-                return load_swebench_lite(
-                    self.config.cache_dir,
-                    split=self.config.swebench_split,
-                    limit=limit,
-                    instance_ids=task_ids,
-                    dataset_name=self.config.swebench_dataset,
-                )
-
-            def dataset_metadata() -> dict[str, object]:
-                return {
-                    "name": self.config.swebench_dataset.split("/")[-1],
-                    "hf_dataset": self.config.swebench_dataset,
-                    "split": self.config.swebench_split,
-                }
-
-            def prepare_environment(tasks: list[object]) -> SWEbenchSandbox:
-                sandbox = SWEbenchSandbox(
-                    namespace=self.config.swebench_namespace,
-                    arch=self.config.swebench_arch,
-                    max_workers=self.config.swebench_max_workers,
-                    mem_limit=self.config.swebench_mem_limit,
-                    pids_limit=self.config.swebench_pids_limit,
-                    cpu_limit=self.config.swebench_cpu_limit,
-                    force_rebuild=self.config.swebench_force_rebuild,
-                    check_image_digests=self.config.swebench_check_image_digests,
-                )
-                sandbox.prepare_images([task.raw_instance for task in tasks])
-                return sandbox
-
-            return _BenchmarkAdapter(
-                benchmark="swebench-lite",
-                load_tasks=load_tasks,
-                task_id=lambda task: str(getattr(task, "instance_id")),
-                dataset_metadata=dataset_metadata,
-                prepare_environment=prepare_environment,
-                run_task=lambda task, sandbox, run_id: self._run_swebench_task(
-                    task,
-                    swe_sandbox=sandbox,
-                    run_id=run_id,
-                ),
-                cleanup_task=_noop_cleanup,
-            )
-
-        if name in {"swebench-live", "swebench_live"}:
-            from mcode.bench.swebench_live import load_swebench_live
-            from mcode.execution.swebench_live import SWEbenchLiveSandbox
-
-            def load_tasks(limit: int | None, task_ids: list[str] | None) -> list[object]:
-                return load_swebench_live(
-                    self.config.cache_dir,
-                    split=self.config.swebench_split,
-                    limit=limit,
-                    instance_ids=task_ids,
-                )
-
-            def prepare_environment(tasks: list[object]) -> SWEbenchLiveSandbox:
-                sandbox = SWEbenchLiveSandbox(
-                    mem_limit=self.config.swebench_mem_limit,
-                    pids_limit=self.config.swebench_pids_limit,
-                    cpu_limit=self.config.swebench_cpu_limit,
-                    check_image_digests=self.config.swebench_check_image_digests,
-                )
-                sandbox.prepare_images(tasks)
-                return sandbox
-
-            def cleanup_task(task: object, environment: object | None) -> None:
-                if os.environ.get("MCODE_KEEP_IMAGES") or environment is None:
-                    return
-                environment.remove_image(task)
-
-            return _BenchmarkAdapter(
-                benchmark="swebench-live",
-                load_tasks=load_tasks,
-                task_id=lambda task: str(getattr(task, "instance_id")),
-                dataset_metadata=lambda: {
-                    "name": "SWE-bench-Live",
-                    "hf_dataset": "SWE-bench-Live/SWE-bench-Live",
-                    "split": self.config.swebench_split,
-                },
-                prepare_environment=prepare_environment,
-                run_task=lambda task, sandbox, run_id: self._run_swebench_live_task(
-                    task,
-                    live_sandbox=sandbox,
-                    run_id=run_id,
-                ),
-                cleanup_task=cleanup_task,
-            )
-
-        if name in {"aider-polyglot", "aider_polyglot"}:
-            from mcode.bench.aider_polyglot import load_aider_polyglot
-            from mcode.bench.toolchains import ensure_polyglot_toolchains
-
-            def prepare_polyglot_environment(tasks: list[object]) -> None:
-                languages = sorted({str(getattr(task, "language")) for task in tasks})
-                ensure_polyglot_toolchains(languages)
-
-            return _BenchmarkAdapter(
-                benchmark="aider-polyglot",
-                load_tasks=lambda limit, task_ids: load_aider_polyglot(
-                    self.config.aider_polyglot_root,
-                    language=self.config.aider_polyglot_language,
-                    limit=limit,
-                    task_ids=task_ids,
-                ),
-                task_id=lambda task: str(getattr(task, "task_id")),
-                dataset_metadata=lambda: {
-                    "name": "Aider Polyglot",
-                    "root": (
-                        str(self.config.aider_polyglot_root)
-                        if self.config.aider_polyglot_root
-                        else None
-                    ),
-                    "language": self.config.aider_polyglot_language,
-                    "retry": self.config.aider_polyglot_retry,
-                    "retry_loop_budget": self.config.aider_polyglot_retry_loop_budget,
-                },
-                prepare_environment=prepare_polyglot_environment,
-                run_task=lambda task, _environment, run_id: self._run_aider_polyglot_task(
+    def _adapter_for(self, benchmark: str) -> BenchmarkAdapter:
+        return adapter_for(
+            benchmark,
+            config=self.config,
+            run_swebench_task=lambda task, sandbox, run_id: self._run_swebench_task(
+                task,
+                swe_sandbox=sandbox,
+                run_id=run_id,
+            ),
+            run_swebench_live_task=lambda task, sandbox, run_id: self._run_swebench_live_task(
+                task,
+                live_sandbox=sandbox,
+                run_id=run_id,
+            ),
+            run_aider_polyglot_task=(
+                lambda task, _environment, run_id: self._run_aider_polyglot_task(
                     task,
                     run_id=run_id,
-                ),
-                cleanup_task=_noop_cleanup,
-            )
-
-        raise ValueError(f"Unknown benchmark: {benchmark}")
+                )
+            ),
+        )
 
     def _run_adapter(
         self,
-        adapter: _BenchmarkAdapter,
+        adapter: BenchmarkAdapter,
         *,
         limit: int | None,
         task_ids: list[str] | None,

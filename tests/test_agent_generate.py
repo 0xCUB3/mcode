@@ -601,7 +601,7 @@ def test_polyglot_toolchain_preflight_raises_without_task_rows(tmp_path) -> None
             "or run: mcode deps toolchains --benchmark aider-polyglot --install"
         )
 
-    adapter = runner_module._BenchmarkAdapter(
+    adapter = runner_module.BenchmarkAdapter(
         benchmark="aider-polyglot",
         load_tasks=lambda _limit, _task_ids: [task],
         task_id=lambda item: item.task_id,
