@@ -413,32 +413,21 @@ async def run_react_loop(
                 None,
             )
             if finalizer_response is not None:
-                if submission_format is None:
-                    submission = str(finalizer_response.content)
-                else:
-                    submission, next_context = await mfuncs.aact(
-                        ReactThought(),
-                        context=context,
-                        backend=session.backend,
-                        requirements=submission_requirements or None,
-                        strategy=strategy_for_requirements(submission_requirements),
-                        format=submission_format,
-                        model_options=model_options,
-                        silence_context_type_warning=True,
-                        await_result=True,
-                    )
-                    assert isinstance(next_context, ChatContext)
-                    context = next_context
-                    if not hooks_enabled:
-                        collector.note_generation(
-                            prompt=_last_prompt(session),
-                            usage=getattr(submission, "usage", None),
-                            provider=getattr(submission, "provider", None),
-                            response_model=getattr(submission, "model", None),
-                            latency_ms=0,
-                            tool_calls=getattr(submission, "tool_calls", None),
-                            model_output=submission,
-                        )
+                submission, context = await _resolve_finalizer_submission(
+                    finalizer_response=finalizer_response,
+                    context=context,
+                    context_cls=ChatContext,
+                    mfuncs=mfuncs,
+                    thought_cls=ReactThought,
+                    backend=session.backend,
+                    submission_format=submission_format,
+                    submission_requirements=submission_requirements,
+                    strategy_for_requirements=strategy_for_requirements,
+                    model_options=model_options,
+                    collector=collector,
+                    hooks_enabled=hooks_enabled,
+                    prompt=lambda: _last_prompt(session),
+                )
                 collector.note_event("final_answer", {"action": "accepted"})
                 session.ctx = context
                 if submission_format is None:
@@ -452,6 +441,50 @@ async def run_react_loop(
         return await asyncio.wait_for(_run(), timeout=timeout_s)
     except TimeoutError:
         return None, "budget_exhausted"
+
+
+async def _resolve_finalizer_submission(
+    *,
+    finalizer_response: object,
+    context: object,
+    context_cls: type,
+    mfuncs: object,
+    thought_cls: type,
+    backend: object,
+    submission_format: type | None,
+    submission_requirements: list[object],
+    strategy_for_requirements: Callable[[list[object]], object | None],
+    model_options: dict,
+    collector: SolveTraceCollector,
+    hooks_enabled: bool,
+    prompt: Callable[[], object],
+) -> tuple[object, object]:
+    if submission_format is None:
+        return str(finalizer_response.content), context
+
+    submission, next_context = await mfuncs.aact(
+        thought_cls(),
+        context=context,
+        backend=backend,
+        requirements=submission_requirements or None,
+        strategy=strategy_for_requirements(submission_requirements),
+        format=submission_format,
+        model_options=model_options,
+        silence_context_type_warning=True,
+        await_result=True,
+    )
+    assert isinstance(next_context, context_cls)
+    if not hooks_enabled:
+        collector.note_generation(
+            prompt=prompt(),
+            usage=getattr(submission, "usage", None),
+            provider=getattr(submission, "provider", None),
+            response_model=getattr(submission, "model", None),
+            latency_ms=0,
+            tool_calls=getattr(submission, "tool_calls", None),
+            model_output=submission,
+        )
+    return submission, next_context
 
 
 async def _dispatch_valid_tool_calls(
