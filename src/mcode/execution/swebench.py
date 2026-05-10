@@ -141,6 +141,20 @@ def _thread_limit_env(cpu_limit: float | None) -> dict[str, str]:
     }
 
 
+def _copy_testbed_from_container(container: object, dest: Path) -> Path:
+    import io
+    import tarfile
+
+    bits, _ = container.get_archive("/testbed")
+    buf = io.BytesIO()
+    for chunk in bits:
+        buf.write(chunk)
+    buf.seek(0)
+    with tarfile.open(fileobj=buf) as tar:
+        tar.extractall(dest)
+    return dest / "testbed"
+
+
 def _get_local_image(client: object, name: str, fq: str, docker_module: object) -> object | None:
     for candidate in (name, fq):
         try:
@@ -529,9 +543,7 @@ class SWEbenchSandbox:
 
     def repo_context(self, instance: dict):
         """Context manager yielding a temp dir with the repo from the task's Docker image."""
-        import io
         import shutil
-        import tarfile
         from contextlib import contextmanager
         from types import SimpleNamespace
 
@@ -564,14 +576,7 @@ class SWEbenchSandbox:
             )
             exec_container = None
             try:
-                bits, _ = source_container.get_archive("/testbed")
-                buf = io.BytesIO()
-                for chunk in bits:
-                    buf.write(chunk)
-                buf.seek(0)
-                with tarfile.open(fileobj=buf) as tar:
-                    tar.extractall(dest)
-                testbed = Path(dest) / "testbed"
+                testbed = _copy_testbed_from_container(source_container, Path(dest))
 
                 exec_container = client.containers.create(
                     image=_fq_image(test_spec.instance_image_key),

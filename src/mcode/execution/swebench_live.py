@@ -8,7 +8,12 @@ import time
 from dataclasses import dataclass
 
 from mcode.execution.sandbox import ensure_docker_client, reraise_docker_unavailable
-from mcode.execution.swebench import _container_cpu_kwargs, _ensure_image, _thread_limit_env
+from mcode.execution.swebench import (
+    _container_cpu_kwargs,
+    _copy_testbed_from_container,
+    _ensure_image,
+    _thread_limit_env,
+)
 from mcode.util import make_temp_dir
 
 
@@ -177,14 +182,7 @@ class SWEbenchLiveSandbox:
             source_container = client.containers.create(image=image_name, command="true")
             exec_container = None
             try:
-                bits, _ = source_container.get_archive("/testbed")
-                buf = io.BytesIO()
-                for chunk in bits:
-                    buf.write(chunk)
-                buf.seek(0)
-                with tarfile.open(fileobj=buf) as tar:
-                    tar.extractall(dest)
-                testbed = Path(dest) / "testbed"
+                testbed = _copy_testbed_from_container(source_container, Path(dest))
                 # Normalize permissions: Docker images may have root-only files.
                 import stat
 
