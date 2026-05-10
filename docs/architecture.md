@@ -1,8 +1,8 @@
 # Architecture
 
-This doc is for the next person who has to change the harness and wants a map before opening ten files. It is not a full design history. It is the current shape of the code and the few invariants I try not to break.
+The reason I wrote this doc is to share the current basic structure of the code and the few invariants I try not to break.
 
-The short version: the CLI builds a `BenchConfig`, the runner asks a benchmark adapter for tasks, the agent generates a patch with a small tool set, the adapter verifies it, and `ResultsDB` records what happened. Around that path are launch state, shard management, artifact storage, and Blue Vela remote execution.
+TL;DR: the CLI builds a `BenchConfig`, the runner asks a benchmark adapter for tasks, the agent generates a patch with a small tool set, the adapter verifies it, and `ResultsDB` records what happened. Around that path are launch state, shard management, artifact storage, and Blue Vela remote execution.
 
 ## Main code paths
 
