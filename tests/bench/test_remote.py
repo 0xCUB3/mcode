@@ -91,6 +91,7 @@ def test_remote_json_helpers(capsys) -> None:
 
 def test_run_bench_on_bluevela_submits_and_uploads_script(tmp_path: Path, monkeypatch) -> None:
     _patch_remote(monkeypatch, tmp_path)
+    monkeypatch.setenv("MCODE_CONTEXT_WINDOW", "32768")
     local_db = tmp_path / "results.db"
 
     assert (
@@ -113,6 +114,11 @@ def test_run_bench_on_bluevela_submits_and_uploads_script(tmp_path: Path, monkey
     assert "export OPENAI_BASE_URL=http://host:8321/v1" in script
     assert str(tmp_path / "remote-workspace") in script
     assert str(tmp_path / "remote-shared") in script
+    runs = launch_state.load().runs
+    assert len(runs) == 1
+    assert runs[0].remote["job_id"] == "4242"
+    assert "pytest" in runs[0].metadata["command"]
+    assert runs[0].metadata["env"] == {"MCODE_CONTEXT_WINDOW": "32768"}
 
 
 def test_suite_remote_prepares_polyglot_toolchains(tmp_path: Path, monkeypatch) -> None:

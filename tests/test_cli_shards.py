@@ -155,6 +155,10 @@ def test_smoke_bluevela_forwards_minimal_remote_args(monkeypatch, tmp_path: Path
     assert captured["model"] == "test-model"
     assert captured["local_db"] == tmp_path / "smoke.db"
     assert captured["fetch_artifacts"] is False
+    output = _strip_ansi(res.output)
+    assert "smoke on bluevela" in output
+    assert "db=" in output
+    assert "smoke.db" in output
     argv = captured["bench_argv"]
     assert argv[:3] == ["smoke", "--model", "test-model"]
     assert argv[argv.index("--shards") + 1] == "4"

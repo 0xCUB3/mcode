@@ -17,6 +17,7 @@ from mcode.bench import runner_artifacts
 from mcode.bench.adapters import BenchmarkAdapter, adapter_for
 from mcode.bench.artifacts import TaskArtifactManifest
 from mcode.bench.results import ResultsDB, RunSummary
+from mcode.bench.runner_state import RunStateUpdater
 from mcode.execution.sandbox import DockerUnavailableError
 from mcode.llm.session import LLMSession
 from mcode.ui.task_reporter import choose as choose_task_reporter
@@ -121,6 +122,7 @@ class BenchmarkRunner:
         self.results_db = results_db
         self.json_mode = json_mode
         self.state_run_id = state_run_id
+        self.run_state = RunStateUpdater(state_run_id)
         self._active_reporter = None
         self._live_trace_attempt_label: str | None = None
         self.llm = self._build_llm(loop_budget=config.loop_budget)
@@ -151,24 +153,10 @@ class BenchmarkRunner:
         )
 
     def _patch_state_progress(self, **progress: object) -> None:
-        if not self.state_run_id:
-            return
-        try:
-            from mcode.bench import runstate
-
-            runstate.patch_run(run_id=self.state_run_id, progress=progress)
-        except Exception:
-            pass
+        self.run_state.patch_progress(**progress)
 
     def _patch_state_metadata(self, **metadata: object) -> None:
-        if not self.state_run_id:
-            return
-        try:
-            from mcode.bench import runstate
-
-            runstate.patch_run(run_id=self.state_run_id, metadata=metadata)
-        except Exception:
-            pass
+        self.run_state.patch_metadata(**metadata)
 
     def _report_task_progress(self, text: str) -> None:
         if self._active_reporter is not None:
