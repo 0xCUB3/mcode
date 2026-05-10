@@ -140,6 +140,21 @@ def test_cli_help() -> None:
         _invoke_help(*args)
 
 
+def test_root_help_describes_core_command_groups() -> None:
+    output = _strip_ansi(_invoke_help("--help"))
+    assert "compare      Compare baseline and candidate result DBs" in output
+    assert "bench        Run benchmarks and manage bench run records." in output
+    assert "deps         Sync dependencies and benchmark toolchains." in output
+
+
+def test_bench_help_describes_benchmark_commands() -> None:
+    output = _strip_ansi(_invoke_help("bench", "--help"))
+    assert "swebench-lite" in output
+    assert "Run SWE-bench Lite or Verified tasks" in output
+    assert "aider-polyglot" in output
+    assert "Run Aider Polyglot coding exercises" in output
+
+
 def test_bench_help_shows_grouped_artifacts_and_hides_legacy_names() -> None:
     output = _strip_ansi(_invoke_help("bench", "--help"))
     assert "artifacts" in output

@@ -38,7 +38,11 @@ from mcode.cli_shared import (
 from mcode.ui.console import console
 from mcode.ui.flags import JsonFlag
 
-bench_app = typer.Typer(add_completion=False, no_args_is_help=True)
+bench_app = typer.Typer(
+    add_completion=False,
+    no_args_is_help=True,
+    help="Run benchmarks, inspect saved runs, and manage artifacts.",
+)
 
 
 def _run_single_benchmark(
@@ -706,7 +710,7 @@ def bench_list(
         bool, typer.Option("--wide", help="Show target, shard, artifact, and DB columns")
     ] = False,
 ) -> None:
-    """List historical bench runs from the launch state file."""
+    """List saved bench runs from the launch state file."""
     from mcode.bench.cancel import list_runs
 
     rc = list_runs(
@@ -727,7 +731,7 @@ def bench_show(
     latest: Annotated[bool, typer.Option("--latest", help="Show the most recent run")] = False,
     json_mode: JsonFlag = False,
 ) -> None:
-    """Show one recorded bench run with result and artifact paths."""
+    """Show run details, DB summary, and artifact paths."""
     from mcode.bench.cancel import show_run
     from mcode.ui.errors import handle_errors
 
@@ -756,7 +760,7 @@ def bench_prune(
     ] = True,
     yes: Annotated[bool, typer.Option("--yes", help="Actually delete matching records")] = False,
 ) -> None:
-    """Prune stale bench run records from the launch state file."""
+    """Remove stale bench run records from the launch state file."""
     from mcode.bench.cancel import prune_runs
     from mcode.ui.errors import handle_errors
 
@@ -779,9 +783,7 @@ def bench_prune(
 def bench_cancel(
     run_id: str = typer.Argument(..., help="run id (from `mcode bench list`)"),
 ) -> None:
-    """Cancel a running bench. Terminates shard pids (local) or SSH-kills the
-    remote process group (Blue Vela). In-process single runs are not
-    cancellable from another shell, use Ctrl+C in the running terminal."""
+    """Cancel a running sharded or Blue Vela bench run."""
     from mcode.bench.cancel import cancel_run
     from mcode.ui.errors import handle_errors
 
@@ -941,7 +943,7 @@ def bench_swebench_live(
     ] = False,
     json_mode: JsonFlag = False,
 ) -> None:
-    """Run Microsoft SWE-bench-Live benchmark."""
+    """Run SWE-bench Live tasks with container-based evaluation."""
 
     shards, shard_count, shard_index = _validate_shard_options(
         shards=shards,
@@ -1257,6 +1259,7 @@ def bench_swebench_lite(
     ] = False,
     json_mode: JsonFlag = False,
 ) -> None:
+    """Run SWE-bench Lite or Verified tasks with container-based evaluation."""
     shards, shard_count, shard_index = _validate_shard_options(
         shards=shards,
         shard_count=shard_count,
@@ -1555,7 +1558,7 @@ def bench_aider_polyglot(
     ] = False,
     json_mode: JsonFlag = False,
 ) -> None:
-    """Run the Aider Polyglot benchmark through mcode's harness."""
+    """Run Aider Polyglot coding exercises through the benchmark harness."""
 
     from mcode.bench.aider_polyglot import default_benchmark_root, supported_languages
 

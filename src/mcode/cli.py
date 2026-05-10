@@ -14,8 +14,16 @@ from mcode.ui.console import configure_logging as _configure_logging
 from mcode.ui.console import console
 from mcode.ui.flags import JsonFlag
 
-app = typer.Typer(add_completion=False, no_args_is_help=True)
-deps_app = typer.Typer(add_completion=False, no_args_is_help=True)
+app = typer.Typer(
+    add_completion=False,
+    no_args_is_help=True,
+    help="Run mCode benchmarks, launch model servers, and inspect results.",
+)
+deps_app = typer.Typer(
+    add_completion=False,
+    no_args_is_help=True,
+    help="Install project dependencies and benchmark toolchains.",
+)
 
 
 def _version_callback(value: bool) -> None:
@@ -58,7 +66,7 @@ def deps_sync(
         typer.Option("--no-dev", help="Do not install the default dev extra."),
     ] = False,
 ) -> None:
-    """Sync uv dependencies, using MCODE_MELLEA_PATH when you want a local mellea checkout."""
+    """Sync the uv environment for local development or benchmark runs."""
     from mcode.uv_setup import sync_uv_environment
 
     extras = list(extra or [])
@@ -94,7 +102,7 @@ def deps_toolchains(
     ] = False,
     json_mode: JsonFlag = False,
 ) -> None:
-    """Check or install benchmark language runtimes."""
+    """Check or install the language runtimes used by Aider Polyglot."""
     if benchmark not in {"aider-polyglot", "polyglot"}:
         raise typer.BadParameter("only --benchmark aider-polyglot is supported")
 
@@ -541,6 +549,7 @@ def compare(
     ] = None,
     json_mode: JsonFlag = False,
 ) -> None:
+    """Compare baseline and candidate result DBs, with optional gate checks."""
     from mcode.bench.compare import compare_gate_failures, compare_runs, format_comparison
 
     report = compare_runs(
@@ -638,8 +647,8 @@ def export_csv(
     console.print(message)
 
 
-app.add_typer(bench_app, name="bench")
-app.add_typer(deps_app, name="deps")
+app.add_typer(bench_app, name="bench", help="Run benchmarks and manage bench run records.")
+app.add_typer(deps_app, name="deps", help="Sync dependencies and benchmark toolchains.")
 
 from mcode.launch.cli import app as launch_app  # noqa: E402
 
