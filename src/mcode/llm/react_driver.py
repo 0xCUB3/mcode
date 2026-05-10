@@ -294,42 +294,17 @@ async def run_react_loop(
             collector.note_turn(turn)
             FancyLogger.get_logger().info(f"## ReACT TURN NUMBER {turn}")
 
-            if (
-                has_run_tests_tool
-                and edit_since_verification
-                and not reminded_after_edit
-                and not collector.verification_succeeded
-            ):
-                context = context.add(
-                    Message(
-                        role="user",
-                        content=(
-                            "You changed files but have not verified the patch. "
-                            'Call run_tests with test_cmd="default" now, then fix failures '
-                            "before final_answer."
-                        ),
-                    )
-                )
-                reminded_after_edit = True
-
-            if (
-                has_run_tests_tool
-                and collector.turns_to_first_edit is None
-                and not reminded_without_edit
-                and turn >= max(2, loop_budget // 3)
-            ):
-                context = context.add(
-                    Message(
-                        role="user",
-                        content=(
-                            "You have not edited yet. Stop browsing and call edit on "
-                            "the best candidate source file with the smallest plausible fix now. "
-                            "Do not call final_answer or another search/read before an edit "
-                            "unless the last read failed."
-                        ),
-                    )
-                )
-                reminded_without_edit = True
+            context, reminded_after_edit, reminded_without_edit = _add_turn_feedback(
+                context=context,
+                message_cls=Message,
+                turn=turn,
+                loop_budget=loop_budget,
+                collector=collector,
+                has_run_tests_tool=has_run_tests_tool,
+                edit_since_verification=edit_since_verification,
+                reminded_after_edit=reminded_after_edit,
+                reminded_without_edit=reminded_without_edit,
+            )
             must_edit_now = any(
                 getattr(tool, "name", "") == "edit" for tool in tools
             ) and _should_enforce_first_edit(
@@ -374,24 +349,12 @@ async def run_react_loop(
                     result.tool_calls = recovered_calls
 
             if not result.tool_calls:
-                tool_names = _tool_names_for_feedback(tools)
-                collector.note_event(
-                    "no_tool_call",
-                    {"available_tools": tool_names},
+                context = _add_no_tool_call_feedback(
+                    context=context,
+                    message_cls=Message,
+                    tools=tools,
+                    collector=collector,
                 )
-                if tool_names:
-                    context = context.add(
-                        Message(
-                            role="user",
-                            content=(
-                                "Your last response did not call a tool, so no repository "
-                                "action happened. On the next turn, respond with exactly one "
-                                "tool call from: "
-                                f"{', '.join(tool_names)}. "
-                                "If you know the fix, call edit now. Do not explain in prose."
-                            ),
-                        )
-                    )
 
             tool_responses = []
             if result.tool_calls:
@@ -562,6 +525,82 @@ async def run_react_loop(
         return await asyncio.wait_for(_run(), timeout=timeout_s)
     except TimeoutError:
         return None, "budget_exhausted"
+
+
+def _add_turn_feedback(
+    *,
+    context: object,
+    message_cls: type,
+    turn: int,
+    loop_budget: int,
+    collector: SolveTraceCollector,
+    has_run_tests_tool: bool,
+    edit_since_verification: bool,
+    reminded_after_edit: bool,
+    reminded_without_edit: bool,
+) -> tuple[object, bool, bool]:
+    if (
+        has_run_tests_tool
+        and edit_since_verification
+        and not reminded_after_edit
+        and not collector.verification_succeeded
+    ):
+        context = context.add(
+            message_cls(
+                role="user",
+                content=(
+                    "You changed files but have not verified the patch. "
+                    'Call run_tests with test_cmd="default" now, then fix failures '
+                    "before final_answer."
+                ),
+            )
+        )
+        reminded_after_edit = True
+
+    if (
+        has_run_tests_tool
+        and collector.turns_to_first_edit is None
+        and not reminded_without_edit
+        and turn >= max(2, loop_budget // 3)
+    ):
+        context = context.add(
+            message_cls(
+                role="user",
+                content=(
+                    "You have not edited yet. Stop browsing and call edit on "
+                    "the best candidate source file with the smallest plausible fix now. "
+                    "Do not call final_answer or another search/read before an edit "
+                    "unless the last read failed."
+                ),
+            )
+        )
+        reminded_without_edit = True
+
+    return context, reminded_after_edit, reminded_without_edit
+
+
+def _add_no_tool_call_feedback(
+    *,
+    context: object,
+    message_cls: type,
+    tools: list,
+    collector: SolveTraceCollector,
+) -> object:
+    tool_names = _tool_names_for_feedback(tools)
+    collector.note_event("no_tool_call", {"available_tools": tool_names})
+    if tool_names:
+        context = context.add(
+            message_cls(
+                role="user",
+                content=(
+                    "Your last response did not call a tool, so no repository action happened. "
+                    "On the next turn, respond with exactly one tool call from: "
+                    f"{', '.join(tool_names)}. "
+                    "If you know the fix, call edit now. Do not explain in prose."
+                ),
+            )
+        )
+    return context
 
 
 def _tool_names_for_feedback(tools: list) -> list[str]:
