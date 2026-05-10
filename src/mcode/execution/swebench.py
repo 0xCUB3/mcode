@@ -114,6 +114,33 @@ def _parse_env_bool(name: str, *, default: bool) -> bool:
     raise ValueError(f"{name} must be one of 0/1/true/false/yes/no/on/off (got {raw!r})")
 
 
+def _container_cpu_kwargs(cpu_limit: float | None) -> dict[str, int]:
+    if cpu_limit is None:
+        return {}
+    # Floor tiny positive limits to a valid quota. int(0.0001 * 100_000) == 0,
+    # and docker-py drops the zero quota while keeping cpu_period, leaving a
+    # corrupted container config. Require at least a 1 ms slice (1% of one core).
+    quota = int(cpu_limit * 100_000)
+    if quota < 1_000:
+        return {}
+    return {"cpu_period": 100_000, "cpu_quota": quota}
+
+
+def _thread_limit_env(cpu_limit: float | None) -> dict[str, str]:
+    if cpu_limit is None:
+        return {}
+    n = max(1, int(cpu_limit))
+    s = str(n)
+    return {
+        "OMP_NUM_THREADS": s,
+        "OPENBLAS_NUM_THREADS": s,
+        "MKL_NUM_THREADS": s,
+        "NUMEXPR_NUM_THREADS": s,
+        "VECLIB_MAXIMUM_THREADS": s,
+        "BLIS_NUM_THREADS": s,
+    }
+
+
 def _get_local_image(client: object, name: str, fq: str, docker_module: object) -> object | None:
     for candidate in (name, fq):
         try:
@@ -397,34 +424,10 @@ class SWEbenchSandbox:
         self._client = None
 
     def _cpu_kwargs(self) -> dict[str, int]:
-        if self.cpu_limit is None:
-            return {}
-        # Floor a tiny positive cpu_limit to a valid quota. int(0.0001 * 100_000)
-        # == 0, and docker-py drops the zero quota while keeping cpu_period →
-        # corrupted state. Require ≥1 ms slice (1% of one core).
-        quota = int(self.cpu_limit * 100_000)
-        if quota < 1_000:
-            return {}
-        return {"cpu_period": 100_000, "cpu_quota": quota}
+        return _container_cpu_kwargs(self.cpu_limit)
 
     def _thread_env(self) -> dict[str, str]:
-        """OpenMP/BLAS thread caps for the eval container. cpu_quota at the
-        cgroup level is silently no-op'd by rootless podman on cgroup-v1
-        clusters; setting these env vars constrains numpy / scipy / sklearn
-        / OpenMP at the LIBRARY level so a single pytest can no longer fork
-        110 threads and trip login-node admin auto-killers."""
-        if self.cpu_limit is None:
-            return {}
-        n = max(1, int(self.cpu_limit))
-        s = str(n)
-        return {
-            "OMP_NUM_THREADS": s,
-            "OPENBLAS_NUM_THREADS": s,
-            "MKL_NUM_THREADS": s,
-            "NUMEXPR_NUM_THREADS": s,
-            "VECLIB_MAXIMUM_THREADS": s,
-            "BLIS_NUM_THREADS": s,
-        }
+        return _thread_limit_env(self.cpu_limit)
 
     def _get_client(self):
         self._client = ensure_docker_client(self._client, scope="SWE-bench Lite evaluation")

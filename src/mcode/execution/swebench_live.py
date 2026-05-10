@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 
 from mcode.execution.sandbox import ensure_docker_client, reraise_docker_unavailable
-from mcode.execution.swebench import _ensure_image
+from mcode.execution.swebench import _container_cpu_kwargs, _ensure_image, _thread_limit_env
 from mcode.util import make_temp_dir
 
 
@@ -88,31 +88,10 @@ class SWEbenchLiveSandbox:
         self._client = None
 
     def _cpu_kwargs(self) -> dict[str, int]:
-        if self.cpu_limit is None:
-            return {}
-        # Same floor as SWEbenchSandbox: a near-zero cpu_limit would yield
-        # quota=0 (dropped by docker-py) with cpu_period still set, which is
-        # corrupted state. Require ≥1 ms slice (1% of one core).
-        quota = int(self.cpu_limit * 100_000)
-        if quota < 1_000:
-            return {}
-        return {"cpu_period": 100_000, "cpu_quota": quota}
+        return _container_cpu_kwargs(self.cpu_limit)
 
     def _thread_env(self) -> dict[str, str]:
-        """OpenMP/BLAS thread caps. Rootless podman silently no-ops cpu_quota
-        on cgroup-v1 clusters, so we constrain at the library level too."""
-        if self.cpu_limit is None:
-            return {}
-        n = max(1, int(self.cpu_limit))
-        s = str(n)
-        return {
-            "OMP_NUM_THREADS": s,
-            "OPENBLAS_NUM_THREADS": s,
-            "MKL_NUM_THREADS": s,
-            "NUMEXPR_NUM_THREADS": s,
-            "VECLIB_MAXIMUM_THREADS": s,
-            "BLIS_NUM_THREADS": s,
-        }
+        return _thread_limit_env(self.cpu_limit)
 
     def _get_client(self):
         self._client = ensure_docker_client(
