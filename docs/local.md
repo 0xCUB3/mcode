@@ -35,6 +35,26 @@ For Aider Polyglot, check the language runtimes before you launch a long job. Th
 uv run mcode deps toolchains --benchmark aider-polyglot
 ```
 
+
+## Default paths
+
+A normal local run touches a few places. The result DB defaults to `experiments/results/results.db`, although I recommend passing `--db` for anything you may compare later. If you do not pass `--artifact-dir`, artifacts go next to the DB as `<db-stem>-artifacts`. Shard workers write into `<db-stem>-shards/` and the parent command merges them back into the DB you asked for.
+
+The cache directory is `MCODE_CACHE_DIR` when set. Otherwise it follows the XDG cache location, with `/tmp/mcode-cache` as the fallback. Launch and bench state live in `~/.config/mcode/launch-state.json`, or in `MCODE_LAUNCH_STATE` if you want an isolated state file for a test. Launch config lives in `~/.config/mcode/launch.toml`, or in `MCODE_LAUNCH_CONFIG`.
+
+Here is the local part of the config file when you need to change ports:
+
+```toml
+[local_vllm]
+port = 8000
+
+[local_ollama]
+host = "127.0.0.1"
+port = 11434
+```
+
+Ollama's OpenAI-compatible endpoint is usually `http://127.0.0.1:11434/v1`. Local vLLM defaults to port 8000 unless you change the config.
+
 ## Model server setup
 
 ### Ollama
@@ -72,6 +92,21 @@ uv run mcode launch wait <server-id> --timeout 600
 
 Use this when you want vLLM behavior locally, or when you are debugging a model profile before trying the same model on Blue Vela.
 
+
+## Choosing a backend
+
+Use `--backend openai` when you want mCode to talk to an OpenAI-compatible server. That is the path used by Ollama's `/v1` endpoint, local vLLM, Blue Vela vLLM, and external servers. When a server was launched through `mcode launch`, endpoint discovery can find it from launch state as long as the `--model` string matches.
+
+Use `--backend ollama` only when you want Mellea's direct Ollama backend. It is useful for quick local experiments, but it does not use the launch-state endpoint resolver. Most examples in these docs use `--backend openai` because it keeps local Ollama, local vLLM, Blue Vela, and external endpoints on the same code path.
+
+If you are using an endpoint that mCode did not launch, set these explicitly:
+
+```bash
+OPENAI_BASE_URL=http://127.0.0.1:8000/v1 \
+OPENAI_API_KEY=dummy \
+uv run mcode bench smoke --backend openai --model <model>
+```
+
 ## Smoke test
 
 Run the smoke slice first. It is a small SWE-bench Verified slice that exercises the agent loop, patch handling, container evaluation, result DB writes, sharding, and run state.
@@ -101,6 +136,30 @@ uv run mcode bench smoke --backend openai --model granite4 --shards 4 --json | j
 ```
 
 The JSON stream stays compact by default. If you want live model/tool trace events in JSON too, set `MCODE_LIVE_TRACE=1`. If the human trace is too noisy, set `MCODE_LIVE_TRACE=0`.
+
+
+## Local SWE-bench requirements
+
+SWE-bench evaluation needs a working Docker or Podman daemon. On macOS, start Docker Desktop before running `bench smoke` or `bench swebench-lite`. mCode honors `DOCKER_HOST`, so a nonstandard Docker socket is fine as long as the Docker Python client can reach it.
+
+Two retry knobs are available when Docker is slow to come up:
+
+```bash
+MCODE_DOCKER_CONNECT_RETRIES=5 \
+MCODE_DOCKER_RETRY_DELAY=2 \
+uv run mcode bench smoke --backend openai --model granite4
+```
+
+The default SWE-bench path uses prebuilt images from the `swebench` namespace. If you want to build images locally, pass an empty namespace:
+
+```bash
+uv run mcode bench swebench-lite \
+  --backend openai --model granite4 \
+  --namespace "" \
+  --limit 4
+```
+
+On Apple Silicon, `--arch auto` prefers prebuilt x86_64 images when they are available. Local arm64 image builds can hit old conda or package mirrors on some tasks, so I only force arm64 when I am debugging that path.
 
 ## Benchmark examples
 
@@ -140,6 +199,44 @@ uv run mcode bench suite \
   --db experiments/results/mixed-suite.db
 ```
 
+
+## Task selection
+
+`--limit` is good for quick slices, but `--task-ids` is better when you are chasing one failure. It accepts a single id, a comma-separated list, a text file with one id per line, or a JSON file.
+
+```bash
+uv run mcode bench swebench-lite \
+  --backend openai --model granite4 \
+  --task-ids astropy__astropy-12907
+
+uv run mcode bench aider-polyglot \
+  --backend openai --model granite4 \
+  --task-ids python/proverb,go/hello-world
+
+uv run mcode bench swebench-lite \
+  --backend openai --model granite4 \
+  --task-ids tasks.txt
+```
+
+If the filter matches no tasks, mCode stops before starting the benchmark and prints the unmatched ids. That usually means the id belongs to a different benchmark or the upstream benchmark changed.
+
+## Aider Polyglot benchmark root
+
+mCode can use a checkout you already have, or it can use the default location chosen by the adapter. Set `MCODE_AIDER_POLYGLOT_ROOT` when you always want the same checkout, and use `--benchmark-root` when one command should override it.
+
+```bash
+MCODE_AIDER_POLYGLOT_ROOT=/tmp/mcode-polyglot-benchmark \
+uv run mcode bench aider-polyglot --backend openai --model granite4
+
+uv run mcode bench aider-polyglot \
+  --backend openai --model granite4 \
+  --benchmark-root /tmp/mcode-polyglot-benchmark \
+  --language python \
+  --exercise proverb
+```
+
+The common language names are `python`, `go`, `rust`, `javascript`, `cpp`, and `java`. Some older notes use `js`; prefer `javascript` in new commands unless you have checked the current benchmark task ids.
+
 ## Resume and sharding behavior
 
 A benchmark resumes when you rerun the same command against the same DB. Finished task rows are skipped, retryable infrastructure failures are retried, and sharded runs reuse their shard DBs under `<db-stem>-shards/` before merging completed rows back into the main DB.
@@ -169,6 +266,19 @@ uv run mcode bench swebench-lite \
 ```
 
 The default `--phase run` does both steps in one command and still writes artifacts as it goes.
+
+
+## Prepare phase and interrupted runs
+
+`--phase prepare` is accepted by the shared runner for workflows that need benchmark setup without a normal solve pass. Most users should use `run`, `generate`, or `evaluate`; prepare is mainly there for operational and adapter work.
+
+If you hit Ctrl+C during a local run, inspect the latest record before deleting anything:
+
+```bash
+uv run mcode bench show --latest
+```
+
+Then rerun the same benchmark with the same `--db`. Completed task rows are skipped, and a sharded run will reuse the existing shard DBs where it can. Only prune the state record once you are sure the DB and artifacts are no longer useful.
 
 ## Run inspection
 
@@ -220,6 +330,17 @@ uv run mcode launch stop --all
 ```
 
 `stop --all` only acts on recorded servers. It does not run a blanket kill command against the machine.
+
+
+## Logs and live status
+
+`mcode launch status` shows the recorded local servers and recent bench runs. `mcode launch logs <id>` prints the log path for a server and can tail local logs when the launcher owns the process. `mcode watch` combines server and bench state into one refreshable dashboard, which is useful when shards are still running in another terminal.
+
+```bash
+uv run mcode launch status
+uv run mcode launch logs <server-id>
+uv run mcode watch
+```
 
 ## Results and comparisons
 

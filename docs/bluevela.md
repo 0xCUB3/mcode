@@ -43,6 +43,46 @@ Host login3.bluevela.rmf.ibm.com
   IdentityFile ~/.ssh/id_ed25519
 ```
 
+
+## Launch config schema
+
+`doctor bluevela --init` writes the config for you, but it helps to know what the file means. The default path is `~/.config/mcode/launch.toml`.
+
+```toml
+[bluevela]
+login = "<user>@login3.bluevela.rmf.ibm.com"
+workspace_root = "$HOME/mcode-launch"
+shared_root = "$HOME/mcode-shared"
+queue_order = ["normal"]
+group = "grp_runtime"
+gpu_mode = "exclusive_process"
+hf_env = "$HOME/.config/mcode/hf-env.sh"
+
+[bluevela.podman]
+# graphroot_base = "$HOME/.local/share/mcode-podman-graphroot"
+# runroot_base = "$HOME/.local/share/mcode-podman-runroot"
+
+[local_vllm]
+port = 8000
+
+[local_ollama]
+host = "127.0.0.1"
+port = 11434
+```
+
+`workspace_root` is the synced checkout. `shared_root` is runtime storage for launcher-owned files, including server run directories, bench run directories, logs, and fetched metadata. Do not put hand-maintained files inside launcher-owned run directories.
+
+`queue_order` is tried in order. `doctor bluevela --init` fills it from the queues visible to your account, and rerunning init can refresh it when the cluster changes. `group` becomes the `bsub -G` value. `gpu_mode` is usually `exclusive_process` unless the cluster policy says otherwise.
+
+`hf_env` points to a shell file sourced by the remote launch script. Put Hugging Face exports there for gated models:
+
+```bash
+export HF_TOKEN=...
+export HUGGING_FACE_HUB_TOKEN=...
+```
+
+Keep that file on the cluster and protect it like any other token file.
+
 ## Repository sync
 
 mCode runs from a checkout on the cluster shared filesystem. Push your local checkout with:
@@ -87,6 +127,31 @@ uv run mcode launch bluevela \
   --tensor-parallel 4 \
   --max-model-len 262144
 ```
+
+
+## Logs and launch status
+
+`launch status` is the fastest way to find a server id, endpoint, job id, status, and log path:
+
+```bash
+uv run mcode launch status
+uv run mcode launch status --json --raw | jq '.'
+```
+
+`--raw` includes raw LSF state in JSON. When a launch is stuck or a health check times out, use the id from status with `launch logs`:
+
+```bash
+uv run mcode launch logs <server-id>
+```
+
+For cluster-side checks, the normal LSF tools are still useful:
+
+```bash
+ssh <user>@login3.bluevela.rmf.ibm.com 'bjobs -u $USER'
+ssh <user>@login3.bluevela.rmf.ibm.com 'bqueues'
+```
+
+If mCode says your group or queue is invalid, fix `launch.toml` or rerun `doctor bluevela --init` so it can probe the current cluster view.
 
 ## Smoke benchmark
 
@@ -176,6 +241,27 @@ uv run mcode bench artifacts fetch <run-id> --dest research/mixed-suite/artifact
 uv run mcode bench artifacts fetch --db research/mixed-suite/generate.db
 ```
 
+
+## Chunked long runs
+
+For runs that may outlive one vLLM server allocation, use chunks. Each chunk runs a slice, writes a chunk DB, and merges into the requested DB. With `--relaunch-vllm`, mCode can start a fresh server when no healthy matching server exists between chunks.
+
+```bash
+MCODE_CONTEXT_WINDOW=262144 \
+uv run mcode bench swebench-lite \
+  --backend openai \
+  --model Qwen/Qwen3.6-35B-A3B \
+  --dataset princeton-nlp/SWE-bench_Verified \
+  --on bluevela \
+  --chunk-size 25 \
+  --relaunch-vllm \
+  --vllm-tensor-parallel 4 \
+  --vllm-max-model-len 262144 \
+  --db research/verified-chunked/results.db
+```
+
+Chunking is not needed for short smoke runs. It is an operational tool for full sweeps on a busy cluster.
+
 ## Remote resume and fetch behavior
 
 Remote bench directories are stable for the same model, local DB path, bench arguments, and forwarded `MCODE_*` context variables. If the SSH stream dies after the remote process finished, rerun the same command. mCode should find the existing remote run metadata and fetch the DB instead of starting over.
@@ -183,6 +269,15 @@ Remote bench directories are stable for the same model, local DB path, bench arg
 The default is `--fetch-db`, which rsyncs the SQLite DB back when the run ends. Use `--no-fetch-db` only if you have a reason to leave the DB on the cluster. Artifact fetch is off by default because artifacts can be much larger. Pass `--fetch-artifacts` when you know you want local replay.
 
 For very long SWE-bench jobs, `--chunk-size N` runs remote chunks sequentially, writes chunk DBs, and merges them. If you also pass `--relaunch-vllm`, mCode can launch a fresh vLLM server between chunks when no healthy server exists. That path is meant for long cluster runs where model servers may time out before the full bench is finished.
+
+
+## Remote runtime details
+
+The remote bench command runs in the synced workspace but writes runtime files under the configured shared root. The plan records the remote DB path, artifact path, log path, process id, and fetch destinations in launch state. `bench show <run-id>` is the easiest way to see those paths after the fact.
+
+For SWE-bench evaluation on Blue Vela, the remote script points `DOCKER_HOST` at a per-run Podman socket. It also sets `MCODE_PODMAN_LOCK_DIR` so image operations can coordinate without trampling one another. If your account needs custom Podman storage, set `[bluevela.podman].graphroot_base` or `runroot_base` in `launch.toml` instead of editing the generated remote scripts.
+
+A stable remote bench directory is derived from the model, local DB path, bench arguments, and forwarded context env. That is why rerunning the same command can fetch an already-finished DB instead of starting new work. Changing the DB path or important arguments means you are asking for a different remote run.
 
 ## Run monitoring
 
@@ -223,6 +318,25 @@ If you suspect a leaked process, check manually:
 ```bash
 ssh <user>@login3.bluevela.rmf.ibm.com 'pgrep -af "mcode|podman|vllm"'
 ```
+
+
+## Artifact fetch failures
+
+Artifact fetch can fail even when the benchmark succeeded. The usual causes are a dropped SSH session, a missing remote artifact directory, a full local disk, or a destination path you cannot write. Start with `bench show <run-id>` and check the remote artifact path it prints.
+
+Then fetch explicitly:
+
+```bash
+uv run mcode bench artifacts fetch <run-id> --dest research/<run>/artifacts
+```
+
+If you do not want to look up the run id, resolve from the DB:
+
+```bash
+uv run mcode bench artifacts fetch --db research/<run>/results.db
+```
+
+Use `--json` when a script needs the exact source and destination paths.
 
 ## Server shutdown and state refresh
 
@@ -282,6 +396,20 @@ uv run mcode export-csv \
 |`OPENAI_BASE_URL`|Bypass launch-state endpoint discovery|
 |`OPENAI_API_KEY`|Set an API token for an external OpenAI-compatible server|
 |`MCODE_DEBUG`|Show raw tracebacks instead of the formatted error page|
+
+
+## Safe cleanup
+
+Use the mCode commands first. `bench cancel` is for a running benchmark. `launch stop` is for the vLLM server. `launch refresh` asks LSF for current status and rewrites local state. Manual SSH checks are for suspected leaks, not the normal path.
+
+```bash
+uv run mcode bench cancel <run-id>
+uv run mcode launch stop <server-id>
+uv run mcode launch refresh
+ssh <user>@login3.bluevela.rmf.ibm.com 'pgrep -af "mcode|podman|vllm"'
+```
+
+Avoid deleting the synced workspace or shared run directories while a run is still recorded as running. If you clean remote files by hand, expect `bench show`, artifact fetch, and resume to lose information.
 
 ## Troubleshooting
 

@@ -77,6 +77,25 @@ uv run mcode launch sync bluevela
 
 `launch sync bluevela` rsyncs the local repo to the configured Blue Vela workspace. Useful flags are `--dry-run`, `--src DIR`, and `--bootstrap`. The bootstrap flag claims a populated remote directory and should be used deliberately.
 
+
+## Watch and operational status
+
+`watch` is a read-only dashboard. It combines server records from `launch status` and run records from `bench list`, then refreshes every two seconds until Ctrl+C.
+
+```bash
+uv run mcode watch
+```
+
+For scripts, prefer the JSON forms of the underlying commands:
+
+```bash
+uv run mcode launch status --json
+uv run mcode launch status --json --raw
+uv run mcode bench list --json
+```
+
+`launch logs <id>` prints the log path for a recorded server or run. For local launcher-owned logs it can tail the file. On Blue Vela, the path points at the remote log recorded for that server or bench run.
+
 ## Benchmark commands
 
 The bench command tree now has two kinds of commands: commands that run benchmarks and commands that manage run records.
@@ -285,6 +304,28 @@ uv run mcode bench artifacts fetch --db research/run/results.db --json
 
 The old dashed commands, such as `mcode bench artifacts-list`, still work as hidden aliases for old scripts. New docs and new scripts should use the grouped form.
 
+
+## JSON benchmark events
+
+Every benchmark accepts `--json`. The stream is one JSON object per line with a monotonic `seq` field, which makes it safe to pipe through `jq` or append to a log file.
+
+```bash
+uv run mcode bench smoke --backend openai --model granite4 --shards 4 --json | jq -c '.'
+```
+
+A typical sharded run emits events like these:
+
+```jsonl
+{"seq": 1, "kind": "run_start", "data": {"benchmark": "smoke", "model": "granite4", "shards": 4}}
+{"seq": 2, "kind": "shard_start", "shard": 0, "data": {"db": "...", "log": "..."}}
+{"seq": 3, "kind": "shard_stdout", "shard": 0, "data": {"line": "..."}}
+{"seq": 4, "kind": "shard_done", "shard": 0, "data": {"exit_code": 0}}
+{"seq": 5, "kind": "merged", "data": {"db": "experiments/results/results.db"}}
+{"seq": 6, "kind": "summary", "data": {"passed": 12, "total": 16}}
+```
+
+The event names used today include `run_start`, `shard_start`, `shard_stdout`, `shard_done`, `shard_failed`, `shard_infra`, `infra_failure`, `merged`, `summary`, `remote_stdout`, and `info`. Human output includes live task trace by default. JSON stays compact unless `MCODE_LIVE_TRACE=1` is set.
+
 ## Bench run records
 
 The launch state file records bench runs so you can find, show, cancel, and prune them without opening JSON by hand.
@@ -320,6 +361,15 @@ uv run mcode bench prune --json
 ```
 
 Without `--yes`, prune only prints what it would remove. Without `--any-db`, it only targets records whose DB path is missing.
+
+
+## Run record details
+
+Run ids are long enough to be unique, but the default table shows compact ids to keep the output readable. `bench show` accepts a compact id if it matches exactly one run. If it is ambiguous, use the full id from `bench list --wide` or `bench list --json`.
+
+`bench show --latest` means the newest run after loading state. It is intentionally a read command; it does not guess a run id from the results DB. The detailed view shows progress for active local runs, DB summaries for fetched DBs, failed task rows, rerun metadata, and artifact fetch commands when they apply.
+
+`bench prune` accepts durations such as `7d`, `12h`, and `30m` for `--older-than`. It is a dry run unless `--yes` is present. By default it only prunes records whose DB path is missing, which keeps real result records from disappearing just because the state file is noisy.
 
 ## Benchmark cancellation
 
@@ -396,6 +446,11 @@ uv run mcode export-csv \
 
 Add `--include-logs` only when you really want stdout, stderr, and error text in the CSV. Those columns can get large.
 
+
+`export-csv -i` accepts both files and directories. A directory input exports top-level `*.db` files in that directory and skips shard DBs, so a normal results directory does not double-count `results.db-shards/`. Repeat `-i` when you want to combine several explicit DBs or directories in one export.
+
+Compatibility note: older scripts can still call `mcode bench artifacts-list` and the other dashed artifact commands. They are hidden from help. The top-level `mcode merge-shards` alias also still works but is hidden; use `mcode bench merge-shards` in new commands.
+
 ## Dependency management
 
 `deps sync` wraps the repo's `uv` setup. With no flags it installs the default dev extra.
@@ -446,6 +501,23 @@ The env vars below are the ones that change behavior often enough to document.
 |`OPENAI_API_KEY`|API token for an OpenAI-compatible endpoint. Defaults to `dummy` for local servers|
 |`MELLEA_METRICS_ENABLED` / `MELLEA_METRICS_CONSOLE`|Mellea metrics when the observability extra is installed|
 |`MELLEA_TRACE_APPLICATION` / `MELLEA_TRACE_BACKEND` / `MELLEA_LOGS_OTLP`|Mellea tracing settings|
+
+
+Additional environment variables used by lower-level paths:
+
+|Variable|Use|
+|-|-|
+|`MCODE_TMPDIR`|Base temporary directory for mCode temp work|
+|`MCODE_BASH_TIMEOUT`|Default timeout for shell tool execution inside the agent|
+|`MCODE_FUZZY_EDIT`|Set to `0` to disable fuzzy fallback for edit matching|
+|`MCODE_DOCKER_CONNECT_RETRIES`|Docker client connection retry count|
+|`MCODE_DOCKER_RETRY_DELAY`|Delay between Docker connection retries|
+|`MCODE_PODMAN_LOCK_DIR`|Lock directory for Podman image operations|
+|`MCODE_SWEBENCH_CPU_LIMIT`|Env equivalent of SWE-bench `--cpu-limit`|
+|`MCODE_SWEBENCH_CHECK_IMAGE_DIGESTS`|Env equivalent of `--check-image-digests`|
+|`MCODE_GIT_SHA` / `GITHUB_SHA`|Code revision stamped into artifact metadata|
+
+Most users only need the shorter table above. These are here so cluster scripts and CI jobs do not have to learn them from source.
 
 ## Local workflow example
 
