@@ -137,8 +137,16 @@ class BenchmarkRunner:
             sampling_budget=self.config.sampling_budget,
             selection_attempts=self.config.selection_attempts,
             diagnostic_traces=self.config.diagnostic_traces,
-            live_event_sink=self._live_trace_event if _live_trace_enabled(self.config) else None,
+            live_event_sink=(
+                self._live_trace_event
+                if _live_trace_enabled(self.config, json_mode=self.json_mode)
+                else None
+            ),
         )
+
+    def _report_task_progress(self, text: str) -> None:
+        if self._active_reporter is not None:
+            self._active_reporter.event("info", text)
 
     def _live_trace_event(self, event_type: str, event: object) -> None:
         if self._active_reporter is None:
@@ -753,7 +761,13 @@ class BenchmarkRunner:
                 scaffold_result = self.artifacts.candidate_metrics_from_manifest(manifest)
                 candidate_index, patch = self.artifacts.selected_candidate_patch(manifest, store)
                 if patch.strip():
+                    self._report_task_progress("evaluating selected patch")
                     eval_detail = evaluate_patch(patch)
+                    self._report_task_progress(
+                        "official evaluation ok"
+                        if eval_detail.passed
+                        else "official evaluation fail"
+                    )
                 else:
                     eval_detail = _TaskEvaluation(
                         evaluator_name=benchmark or "artifact-eval",
@@ -805,9 +819,11 @@ class BenchmarkRunner:
         manifest: TaskArtifactManifest | None = None
         for attempts_used in range(1, 3):
             try:
+                self._report_task_progress("preparing repo")
                 with repo_context_factory() as repo_context:
                     patch_context = _coerce_patch_repo_context(repo_context)
                     if scaffold_result is None:
+                        self._report_task_progress("generating patch")
                         patch, scaffold_metrics = self._generate_task_patch(
                             generation_task,
                             repo_root=patch_context.repo_root,
@@ -829,7 +845,13 @@ class BenchmarkRunner:
                             return None
                     candidate_index = 0
                     if patch.strip():
+                        self._report_task_progress("running official evaluation")
                         eval_detail = evaluate_patch(patch)
+                        self._report_task_progress(
+                            "official evaluation ok"
+                            if eval_detail.passed
+                            else "official evaluation fail"
+                        )
                         scaffold_result = _update_terminal_reason_from_eval(
                             scaffold_result,
                             eval_detail,
@@ -861,6 +883,7 @@ class BenchmarkRunner:
                                 eval_detail=eval_detail,
                                 repair_attempt=repair_attempt,
                             )
+                            self._report_task_progress(f"repair attempt {repair_attempt}")
                             patch, scaffold_metrics = self._generate_task_patch(
                                 repair_task,
                                 repo_root=patch_context.repo_root,
@@ -887,7 +910,15 @@ class BenchmarkRunner:
                                 )
                             if not patch.strip():
                                 break
+                            self._report_task_progress(
+                                f"running official evaluation for repair {repair_attempt}"
+                            )
                             eval_detail = evaluate_patch(patch)
+                            self._report_task_progress(
+                                "official evaluation ok"
+                                if eval_detail.passed
+                                else "official evaluation fail"
+                            )
                             scaffold_result = _update_terminal_reason_from_eval(
                                 scaffold_result,
                                 eval_detail,
@@ -1424,11 +1455,13 @@ def _head_tail_excerpt(text: str, *, max_chars: int) -> str:
     )
 
 
-def _live_trace_enabled(config: BenchConfig) -> bool:
+def _live_trace_enabled(config: BenchConfig, *, json_mode: bool) -> bool:
+    raw = os.environ.get("MCODE_LIVE_TRACE", "").strip().lower()
+    if raw:
+        return raw in {"1", "true", "yes", "on"}
     if config.live_trace:
         return True
-    raw = os.environ.get("MCODE_LIVE_TRACE", "")
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return not json_mode
 
 
 def _format_live_trace_event(event_type: str, event: object) -> str | None:
@@ -1464,10 +1497,21 @@ def _format_live_trace_event(event_type: str, event: object) -> str | None:
         command = payload.get("expanded_command") or payload.get("test_cmd") or "default"
         return f"{prefix}tests {payload.get('status') or 'DONE'}: {command}"
     if event_type == "tool_result":
-        status = payload.get("status") or ("ok" if payload.get("success") else "failed")
+        if payload.get("success"):
+            return None
+        status = payload.get("status") or "failed"
         return f"{prefix}tool {payload.get('tool_name')} {status}"
-    if event_type in {"final_answer", "no_tool_call", "tool_call_filter"}:
-        return f"{prefix}{event_type} {dict(payload)}"
+    if event_type == "tool_call_filter":
+        invalid = int(payload.get("invalid_call_count") or 0)
+        blocked = int(payload.get("blocked_finalizer_count") or 0)
+        if invalid or blocked:
+            return f"{prefix}skipped tool calls invalid={invalid} blocked_finalizer={blocked}"
+        return None
+    if event_type == "final_answer":
+        action = payload.get("action") or "seen"
+        return f"{prefix}final_answer {action}"
+    if event_type == "no_tool_call":
+        return f"{prefix}no tool call"
     return None
 
 

@@ -216,7 +216,7 @@ A 16-task SWE-bench Verified diagnostic slice (astropy + 6 projects). It runs `s
 
 ### JSON event stream
 
-Every bench command supports `--json`. Events are line-delimited JSON with strictly monotonic `seq`. Set `MCODE_LIVE_TRACE=1` to include compact per-turn model/tool events while each task is running:
+Every bench command supports `--json`. Events are line-delimited JSON with strictly monotonic `seq`. Human output includes compact per-turn model/tool progress while each task is running; set `MCODE_LIVE_TRACE=0` to mute it. JSON output stays compact unless you set `MCODE_LIVE_TRACE=1`:
 
 ```jsonl
 {"seq": 1, "ts": 1719445200.123, "kind": "run_start", "data": {"benchmark": "smoke", "model": "...", "shards": 4}}
