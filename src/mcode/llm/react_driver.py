@@ -387,36 +387,22 @@ async def run_react_loop(
 
                 if len(filtered_calls.valid) != len(result.tool_calls):
                     result.tool_calls = filtered_calls.valid
-                compat_stats = inspect_tool_call_arg_compat(result.tool_calls)
-                if compat_stats["raw_arg_call_count"]:
-                    collector.note_event("tool_arg_compat", compat_stats)
-                tool_responses = await acall_tools_with_arg_compat(result, backend=session.backend)
-                for tool_result in tool_responses:
-                    if strict_tool_ordering:
-                        context = context.add(Message(role="assistant", content=""))
-                    context = context.add(tool_result)
-                    tool_output = getattr(
-                        tool_result,
-                        "tool_output",
-                        getattr(tool_result, "content", None),
-                    )
-                    if not hooks_enabled:
-                        collector.note_tool(
-                            tool_name=tool_result.name,
-                            output=tool_output,
-                            success=not isinstance(tool_output, Exception),
-                            tool_args=getattr(
-                                tool_result,
-                                "args",
-                                getattr(tool_result, "arguments", None),
-                            ),
-                        )
-                    if tool_result.name == "edit" and _edit_was_applied(tool_output):
-                        edit_since_verification = True
-                        reminded_after_edit = False
-                    elif tool_result.name == "run_tests":
-                        edit_since_verification = False
-                        reminded_after_edit = False
+                (
+                    context,
+                    tool_responses,
+                    edit_since_verification,
+                    reminded_after_edit,
+                ) = await _dispatch_valid_tool_calls(
+                    result,
+                    context=context,
+                    message_cls=Message,
+                    backend=session.backend,
+                    strict_tool_ordering=strict_tool_ordering,
+                    collector=collector,
+                    hooks_enabled=hooks_enabled,
+                    edit_since_verification=edit_since_verification,
+                    reminded_after_edit=reminded_after_edit,
+                )
 
             finalizer_response = next(
                 (
@@ -466,6 +452,49 @@ async def run_react_loop(
         return await asyncio.wait_for(_run(), timeout=timeout_s)
     except TimeoutError:
         return None, "budget_exhausted"
+
+
+async def _dispatch_valid_tool_calls(
+    result: object,
+    *,
+    context: object,
+    message_cls: type,
+    backend: object,
+    strict_tool_ordering: bool,
+    collector: SolveTraceCollector,
+    hooks_enabled: bool,
+    edit_since_verification: bool,
+    reminded_after_edit: bool,
+) -> tuple[object, list, bool, bool]:
+    compat_stats = inspect_tool_call_arg_compat(result.tool_calls)
+    if compat_stats["raw_arg_call_count"]:
+        collector.note_event("tool_arg_compat", compat_stats)
+
+    tool_responses = await acall_tools_with_arg_compat(result, backend=backend)
+    for tool_result in tool_responses:
+        if strict_tool_ordering:
+            context = context.add(message_cls(role="assistant", content=""))
+        context = context.add(tool_result)
+        tool_output = getattr(
+            tool_result,
+            "tool_output",
+            getattr(tool_result, "content", None),
+        )
+        if not hooks_enabled:
+            collector.note_tool(
+                tool_name=tool_result.name,
+                output=tool_output,
+                success=not isinstance(tool_output, Exception),
+                tool_args=getattr(tool_result, "args", getattr(tool_result, "arguments", None)),
+            )
+        if tool_result.name == "edit" and _edit_was_applied(tool_output):
+            edit_since_verification = True
+            reminded_after_edit = False
+        elif tool_result.name == "run_tests":
+            edit_since_verification = False
+            reminded_after_edit = False
+
+    return context, tool_responses, edit_since_verification, reminded_after_edit
 
 
 def _filter_tool_calls(
