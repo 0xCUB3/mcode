@@ -207,7 +207,6 @@ def merge_shard_dbs(
     }
 
 
-
 def _diagnostic_events_for_task(
     conn: sqlite3.Connection,
     run_id: int,

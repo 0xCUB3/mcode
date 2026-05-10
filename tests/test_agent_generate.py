@@ -972,9 +972,11 @@ def test_run_task_generate_then_evaluate_uses_artifacts(tmp_path):
         config=BenchConfig(model_id="test-model", backend_name="ollama", phase="evaluate"),
         results_db=results_db,
     )
-    evaluate_runner._generate_task_patch = lambda *args, **kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
-        AssertionError("solver should not run in evaluate phase")
-    )
+
+    def fail_generate(*args, **kwargs):
+        raise AssertionError("solver should not run in evaluate phase")
+
+    evaluate_runner._generate_task_patch = fail_generate  # type: ignore[method-assign]
     evaluate_run_id = results_db.start_run(
         "swebench-lite",
         {

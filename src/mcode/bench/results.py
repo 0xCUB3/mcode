@@ -583,7 +583,6 @@ def _sqlite_table_exists(conn: sqlite3.Connection, table: str) -> bool:
     return row is not None
 
 
-
 def _enrich_result_with_diagnostic_metrics(result: dict) -> dict:
     enriched = dict(result)
     events = enriched.get("diagnostic_events")
@@ -686,6 +685,7 @@ def merge_shard_dbs(*, out_path: Path, shard_paths: list[Path], force: bool = Fa
         force=force,
         results_db_factory=ResultsDB,
     )
+
 
 def export_csv(
     *,

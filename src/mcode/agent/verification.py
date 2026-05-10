@@ -494,10 +494,11 @@ def _failure_source_snippets_from_test_locations(repo_root: Path, output: str) -
 def _failed_test_locations_from_output(output: str) -> list[tuple[str, int]]:
     locations: list[tuple[str, int]] = []
     for line in output.splitlines():
-        match = re.search(
-            r"(?P<path>(?:[\w./\\-]*(?:test|spec)[\w./\\-]*?|tests/[\w./\\-]+?)\.[A-Za-z0-9_]+):(?P<line>\d+)(?::\d+)?:",
-            line,
+        location_pattern = (
+            r"(?P<path>(?:[\w./\\-]*(?:test|spec)[\w./\\-]*?|tests/[\w./\\-]+?)"
+            r"\.[A-Za-z0-9_]+):(?P<line>\d+)(?::\d+)?:"
         )
+        match = re.search(location_pattern, line)
         if not match:
             continue
         path = match.group("path").replace("\\", "/")

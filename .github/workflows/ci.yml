@@ -15,5 +15,6 @@ jobs:
       - uses: astral-sh/setup-uv@v8.1.0
       - run: uv venv
       - run: uv pip install -e '.[dev]'
+      - run: uv run -q ruff format --check src tests
       - run: uv run -q ruff check src tests
       - run: uv run -q pytest

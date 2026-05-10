@@ -38,9 +38,7 @@ class ArtifactRecorder:
             task_id=task_id,
         )
 
-    def candidate_metrics_from_manifest(
-        self, manifest: TaskArtifactManifest
-    ) -> dict[str, object]:
+    def candidate_metrics_from_manifest(self, manifest: TaskArtifactManifest) -> dict[str, object]:
         if not manifest.candidates:
             return scaffold_metrics(None)
         candidate = next(
@@ -99,9 +97,7 @@ class ArtifactRecorder:
             terminal_reason=coerce_optional_str(normalized_metrics.get("terminal_reason")),
             selected=True,
             submission_json=coerce_optional_str(normalized_metrics.get("submission_json")),
-            generation_time_ms=coerce_optional_int(
-                normalized_metrics.get("generation_latency_ms")
-            ),
+            generation_time_ms=coerce_optional_int(normalized_metrics.get("generation_latency_ms")),
             prompt_tokens=coerce_optional_int(normalized_metrics.get("prompt_tokens")),
             completion_tokens=coerce_optional_int(normalized_metrics.get("completion_tokens")),
             total_tokens=coerce_optional_int(normalized_metrics.get("total_tokens")),
@@ -210,9 +206,7 @@ class ArtifactRecorder:
             terminal_reason=coerce_optional_str(normalized_metrics.get("terminal_reason")),
             selected=True,
             submission_json=coerce_optional_str(normalized_metrics.get("submission_json")),
-            generation_time_ms=coerce_optional_int(
-                normalized_metrics.get("generation_latency_ms")
-            ),
+            generation_time_ms=coerce_optional_int(normalized_metrics.get("generation_latency_ms")),
             prompt_tokens=coerce_optional_int(normalized_metrics.get("prompt_tokens")),
             completion_tokens=coerce_optional_int(normalized_metrics.get("completion_tokens")),
             total_tokens=coerce_optional_int(normalized_metrics.get("total_tokens")),

@@ -203,6 +203,7 @@ def pass_rates_grouped(
         )
     return out
 
+
 def run_metrics_grouped(
     conn: sqlite3.Connection,
     *,
@@ -294,9 +295,7 @@ def run_metrics_grouped(
             "artifact_generated_tasks": int(row["artifact_generated_tasks"] or 0),
             "artifact_evaluated_tasks": int(row["artifact_evaluated_tasks"] or 0),
             "artifact_candidate_count": int(row["artifact_candidate_count"] or 0),
-            "artifact_selected_candidate_count": int(
-                row["artifact_selected_candidate_count"] or 0
-            ),
+            "artifact_selected_candidate_count": int(row["artifact_selected_candidate_count"] or 0),
             "artifact_selected_patch_byte_count_total": int(
                 row["artifact_selected_patch_byte_count_total"] or 0
             ),

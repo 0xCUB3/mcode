@@ -1,12 +1,11 @@
-"""bench list + bench cancel implementations.
+"""bench list and bench cancel implementations.
 
-Cancel design (per Wave 4 of the plan): three-way dispatch on the RunRecord
-shape.
+Cancellation dispatches from the stored RunRecord shape:
 
-  if shard_pids   → local sharded run; SIGTERM/SIGKILL each pid
+  if shard_pids      → local sharded run; SIGTERM/SIGKILL each pid
   elif remote.job_id → Blue Vela run; bkill the LSF job
-  elif remote.pid → legacy Blue Vela run; ssh kill -TERM/-KILL the captured pid
-  else            → in-process single run; not cancellable from another shell
+  elif remote.pid    → older Blue Vela run; ssh kill -TERM/-KILL the captured pid
+  else               → in-process single run; not cancellable from another shell
 
 State transitions to RunStatus.STOPPED with metadata.cancel_reason="user" so
 `bench list` can distinguish user cancellation from server stop.

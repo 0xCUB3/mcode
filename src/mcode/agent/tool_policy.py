@@ -63,8 +63,7 @@ def check_tool_call(tool_name: str, state: ToolPolicyState) -> ToolPolicyDecisio
             allowed=False,
             kind="invalid",
             reason=(
-                "run_tests is required now because source files changed "
-                "since the last verification"
+                "run_tests is required now because source files changed since the last verification"
             ),
         )
     if state.must_edit_now and tool_name != "edit":

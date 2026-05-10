@@ -44,5 +44,10 @@ norecursedirs = ["benchmarks"]
 line-length = 100
 target-version = "py311"
 
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]

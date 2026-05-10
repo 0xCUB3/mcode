@@ -570,7 +570,6 @@ def compare(
         raise typer.Exit(1)
 
 
-
 @app.command("merge-shards")
 def merge_shards(
     out: Annotated[Path, typer.Option("--out", help="Output SQLite DB path")],
