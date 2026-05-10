@@ -1,8 +1,12 @@
 # Aider Polyglot Qwen3.6 selection run
 
-This run tested the current Aider Polyglot harness with Qwen3.6-35B-A3B after adding deterministic failure feedback and reactive-stream retry guidance. The headline result is `207/225 = 92.0%` on the full benchmark.
+This run tested the Aider Polyglot harness with Qwen3.6-35B-A3B after adding
+deterministic failure feedback and reactive-stream retry guidance. The headline
+number is `207/225 = 92.0%` on the full benchmark.
 
-This is not directly comparable to the earlier `190/225` single-selection run. It used higher turn budgets and `--selection-attempts 3`, so it should be reported as a selected-trajectory result, not as the default single-pass score.
+This should not be compared directly to the earlier `190/225` single-selection
+run. This run used higher turn budgets and `--selection-attempts 3`, so the
+honest label is selected-trajectory result, not default single-pass score.
 
 ## Setup
 
@@ -95,34 +99,44 @@ Comparison:
 
 | Task | Terminal reason | Notes |
 |-|-|-|
-| `cpp/gigasecond` | `budget_exhausted` | Edited and verified, but ran out of control-loop turns before producing a verified final patch. |
+| `cpp/gigasecond` | `budget_exhausted` | Edited and verified, but ran out of turns before producing a verified final patch. |
 | `cpp/sublist` | `budget_exhausted` | Edited late and never reached verification in the selected candidate. |
 | `go/pov` | `unverified_diff_discarded` | Candidate edited and ran tests, but no verified patch survived. |
 | `go/robot-simulator` | `unverified_diff_discarded` | Candidate edited and ran tests, but no verified patch survived. |
 | `java/bowling` | `unverified_diff_discarded` | Candidate edited and ran tests, but no verified patch survived. |
-| `java/connect` | `unverified_diff_discarded` | Known near-miss class from the regression smoke, typically one Hex path/edge case remains. |
+| `java/connect` | `unverified_diff_discarded` | Known near-miss from the smoke run; usually one Hex path or edge case remains. |
 | `java/forth` | `unverified_diff_discarded` | Candidate edited and ran tests, but no verified patch survived. |
-| `java/hangman` | `unverified_diff_discarded` | Still nondeterministic. It can pass in a single-task probe, but the full run still produced an unverified reactive-state implementation. |
+| `java/hangman` | `unverified_diff_discarded` | Nondeterministic. It can pass in a single-task probe, but this full run still produced an unverified reactive-state implementation. |
 | `java/pov` | `unverified_diff_discarded` | Candidate edited and ran tests, but no verified patch survived. |
 | `java/rational-numbers` | `unverified_diff_discarded` | Candidate edited and ran tests, but no verified patch survived. |
 | `javascript/bowling` | `unverified_diff_discarded` | Candidate edited and ran tests across three attempts, but no verified patch survived. |
 | `javascript/complex-numbers` | `unverified_diff_discarded` | Candidate edited and ran tests across three attempts, but no verified patch survived. |
 | `python/bowling` | `unverified_diff_discarded` | Candidate edited and ran tests, but no verified patch survived. |
-| `python/connect` | `unverified_diff_discarded` | Known nondeterministic task, passed in targeted probes but failed in this full selected run. |
+| `python/connect` | `unverified_diff_discarded` | Nondeterministic. Passed in targeted probes, failed here. |
 | `rust/fizzy` | `budget_exhausted` | Edited and verified late, then ran out of turns. |
-| `rust/forth` | `unverified_diff_discarded` | Known nondeterministic task, passed in targeted probes but failed in this full selected run. |
+| `rust/forth` | `unverified_diff_discarded` | Nondeterministic. Passed in targeted probes, failed here. |
 | `rust/react` | `unverified_diff_discarded` | Candidate edited and ran tests across three attempts, but no verified patch survived. |
-| `rust/xorcism` | `unverified_diff_discarded` | High-token failure, edited and ran tests across three attempts but did not converge. |
+| `rust/xorcism` | `unverified_diff_discarded` | High-token failure. Edited and ran tests across three attempts but did not converge. |
 
-The full run did not fetch artifacts, so the table above uses DB terminal metrics plus the live run log. The failure list is exported in `failures.csv`.
+The full run did not fetch artifacts, so the table above comes from DB terminal
+metrics plus the live run log. The failure list is exported in `failures.csv`.
 
-## Overfit assessment
+## Overfit check
 
-There is no canned exercise solution in this result. The code changes were harness-level and deterministic-feedback oriented: source snippets for failed tests, richer JUnit details, stale timeout-report suppression, syntax/delimiter guards, final close-failure repair attempts, and generic reactive-stream guidance when a repository imports Observable APIs.
+There is no canned exercise solution in this result. The code changes were at
+the harness level: source snippets for failed tests, richer JUnit details, stale
+timeout-report suppression, syntax and delimiter guards, final close-failure
+repair attempts, and generic reactive-stream guidance when a repository imports
+Observable APIs.
 
-The main caveat is evaluation setting, not task leakage. `--selection-attempts 3` is a real compute multiplier and makes the number a selected-trajectory result. The reactive-stream note was motivated by `java/hangman`; it is technology-specific rather than exercise-specific, but it should still be called out as a narrow harness prior.
+The caveat is the evaluation setting. `--selection-attempts 3` is a real compute
+multiplier. The reactive-stream note was motivated by `java/hangman`; it is
+technology-specific rather than exercise-specific, but it is still a narrow
+harness prior and should be reported that way.
 
-The 225-task run is useful evidence that the changes did not only memorize the 27-task smoke set. Still, this should be reported as: Qwen3.6-35B-A3B on Aider Polyglot, Blue Vela harness, 20+12 turn budgets, 3 selected attempts, 207/225.
+The 225-task run is useful evidence that the changes did not just memorize the
+27-task smoke set. The right citation is: Qwen3.6-35B-A3B on Aider Polyglot,
+Blue Vela harness, 20+12 turn budgets, 3 selected attempts, 207/225.
 
 ## Files
 

@@ -1,6 +1,12 @@
 # Aider Polyglot upstream control-loop run
 
-This run tested the upstream Mellea cutover plus generic control-loop changes on Aider Polyglot with Qwen3.6-35B-A3B. The kept changes are not Polyglot prompt patches. They make remote Blue Vela Aider runs first-class, keep the benchmark toolchain on Blue Vela, execute valid tool calls from mixed valid and malformed batches, require verification before `final_answer`, remind the agent to verify after edits, and suppress repeated identical failed `run_tests` calls until the code changes.
+This run tested the upstream Mellea cutover and the generic control-loop changes
+on Aider Polyglot with Qwen3.6-35B-A3B. The changes kept here are harness
+changes, not Polyglot prompt patches: remote Blue Vela Aider runs, the Polyglot
+toolchain on Blue Vela, mixed valid/malformed tool-call handling, mandatory
+verification before `final_answer`, reminders to verify after edits, and
+suppression of repeated identical failed `run_tests` calls until the code
+changes.
 
 ## Setup
 
@@ -13,7 +19,8 @@ This run tested the upstream Mellea cutover plus generic control-loop changes on
 
 ## Commands
 
-The first 12-task Blue Vela slice used the representative failure set from the previous full run:
+The first 12-task Blue Vela slice used the representative failure set from the
+previous full run:
 
 ```bash
 MCODE_CONTEXT_WINDOW=32768 MCODE_MAX_NEW_TOKENS=4096 MCODE_REACT_TIMEOUT=2400 \
@@ -28,7 +35,10 @@ uv run mcode bench aider-polyglot \
   --db research/2026-04-25-aider-polyglot-control-loop/progress-slice-12-toolchain.db
 ```
 
-The promotion set combined the 55 previous `unverified_diff_discarded` or `budget_exhausted` failures with 18 sentinel tasks that had passed before. The first 73-task run used `--shards 4`, one shard was killed after partial progress, and the missing 13 tasks were rerun with `--shards 4`. The recovered DB was built with:
+The promotion set combined 55 previous `unverified_diff_discarded` or
+`budget_exhausted` failures with 18 sentinel tasks that had passed before. The
+first 73-task run used `--shards 4`; one shard was killed after partial progress,
+and the missing 13 tasks were rerun with `--shards 4`. I rebuilt the DB with:
 
 ```bash
 uv run mcode merge-shards --force \
@@ -40,15 +50,12 @@ uv run mcode merge-shards --force \
   research/2026-04-25-aider-polyglot-control-loop/promotion-missing-13.db
 ```
 
-For the full run I tried to maximize safe parallelism without raising `n_samples`. A monolithic 8-shard promotion run failed, and a monolithic 4-shard promotion run lost one shard. The full run therefore used seven language chunks concurrently, with `--shards 2` inside each chunk. That gave up to 14 active Aider workers while keeping each remote job recoverable. The exact chunk commands and the Rust recovery commands are in `full-parallel-shards2-lock/commands.sh`.
-
-The report was generated from a report directory that contains only the final merged DB:
-
-```bash
-uv run mcode report \
-  --db-dir research/2026-04-25-aider-polyglot-control-loop/report-db \
-  --out research/2026-04-25-aider-polyglot-control-loop/aider-polyglot-control-loop-report.html
-```
+For the full run, I tried to push parallelism without raising `n_samples`. A
+single 8-shard promotion run failed, and a single 4-shard promotion run lost one
+shard. The full run therefore used seven language chunks at the same time, with
+`--shards 2` inside each chunk. That gave up to 14 active Aider workers while
+keeping each remote job small enough to recover. The exact chunk commands and
+the Rust recovery commands are in `full-parallel-shards2-lock/commands.sh`.
 
 ## Results
 
@@ -106,12 +113,22 @@ Comparison with the previous best mcode full run:
 - Full-run chunk DBs and logs: `full-parallel-shards2-lock/*.db`, `full-parallel-shards2-lock/*.log`
 - Promotion DB: `promotion-73-recovered.db`
 - Initial slice DBs: `progress-slice-12.db`, `progress-slice-12-toolchain.db`
-- HTML report: `aider-polyglot-control-loop-report.html`
+- Old HTML report snapshot: `aider-polyglot-control-loop-report.html`
 
-## Findings
+## Notes from the run
 
-The Blue Vela path mattered. The first slice looked like a model failure until the logs showed missing language toolchains. After wiring the Polyglot toolchain into remote Aider runs, the same slice moved from 0/12 to 2/12, which matched the promotion signal.
+The Blue Vela path mattered. The first slice looked like a model failure until
+the logs showed missing language toolchains. After wiring the Polyglot toolchain
+into remote Aider runs, the same slice moved from 0/12 to 2/12, which matched
+the later promotion signal.
 
-The control-loop changes are the main result. The promotion slice solved 26 of the previous unverified or budget failures, then the full run landed at 190/225. That is 13 tasks above the little-coder reference score and 20 tasks above the previous best mcode run.
+The control-loop changes were the main result. The promotion slice solved 26 of
+the previous unverified or budget failures, then the full run landed at
+190/225. That is 13 tasks above the little-coder reference score and 20 tasks
+above the previous best mcode run.
 
-Parallelism had real boundaries. Eight shards failed, and the 73-task four-shard promotion run lost a shard with exit `-7`. Running seven language chunks concurrently with two internal shards each was the highest useful setting I observed. The shared benchmark checkout also needed a lock, otherwise concurrent remote jobs fought over `.git/shallow.lock` before any benchmark work started.
+Parallelism had a real ceiling. Eight shards failed, and the 73-task four-shard
+promotion run lost a shard with exit `-7`. Running seven language chunks with
+two internal shards each was the highest useful setting I saw. The shared
+benchmark checkout also needed a lock; without it, concurrent remote jobs fought
+over `.git/shallow.lock` before any benchmark work started.
