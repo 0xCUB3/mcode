@@ -1,19 +1,4 @@
-"""mcode launcher: submit vLLM + benchmark jobs to Blue Vela LSF or run locally.
-
-Public surface (imported by mcode.cli):
-
-    launch_bluevela(spec, reporter) -> RunRecord
-    launch_local_vllm(spec, reporter) -> RunRecord
-    launch_local_ollama(spec, reporter) -> RunRecord
-
-    doctor(target) -> list[Check]
-    stop(record_id) -> bool
-    fetch(record_id, dest) -> Path
-    refresh(record) -> RunRecord   # re-query LSF/process and update state in place
-
-Each target module is self-contained. There is no unified router — cli.py
-dispatches per target.
-"""
+"""Shared types for mcode launcher modules."""
 
 from __future__ import annotations
 
