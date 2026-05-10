@@ -13,8 +13,8 @@ def test_launch_subcommand_reachable_from_mcode_cli() -> None:
     runner = CliRunner()
     result = runner.invoke(app, ["launch", "--help"])
     assert result.exit_code == 0, result.output
-    # Each of our target subcommands should be discoverable via the help tree.
-    for sub in ("bluevela", "local-vllm", "local-ollama", "status", "doctor"):
+    # Each launcher subcommand should be discoverable via the help tree.
+    for sub in ("bluevela", "local-vllm", "local-ollama", "status", "refresh"):
         assert sub in result.output
 
 

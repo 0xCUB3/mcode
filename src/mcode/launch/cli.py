@@ -11,7 +11,6 @@ Commands:
     mcode launch status        [--json]
     mcode launch logs   <id>
     mcode launch stop   <id> | --all
-    mcode launch doctor <target> [--deep]
     mcode launch refresh       (walk state and re-check via target modules)
     mcode launch sync bluevela [--dry-run] [--src DIR]
                                (rsync local repo to remote workspace_root)
@@ -385,75 +384,6 @@ def cmd_stop(
         except LaunchError as e:
             any_failed = True
             _print_error(e)
-    if any_failed:
-        raise typer.Exit(1)
-
-
-# ---------------------------------------------------------------------------
-# doctor
-# ---------------------------------------------------------------------------
-@app.command("doctor")
-def cmd_doctor(
-    target: str = typer.Argument(...),
-    deep: bool = typer.Option(False, "--deep"),
-    init: bool = typer.Option(False, "--init", help="bootstrap launch.toml for this account"),
-    login: str | None = typer.Option(
-        None,
-        "--login",
-        help="user@host for --init (e.g. alice@<your-login-host>)",
-    ),
-) -> None:
-    """Health check for a target. With --init, probe and write launch.toml."""
-    # --init must work even when launch.toml is missing or broken.
-    if init:
-        if target != "bluevela":
-            _print_error(
-                LaunchError(
-                    what="--init is only supported for `bluevela`",
-                    why=f"target was {target!r}",
-                    next="local targets don't need probing — edit launch.toml by hand",
-                )
-            )
-            raise typer.Exit(1)
-        if not login:
-            login = typer.prompt("Blue Vela login (user@host)")
-
-        def block():
-            return bluevela.doctor_init(login=login)
-
-        written = _run(block)
-        print(f"wrote {written}")
-        print(f"review with `cat {written}` and re-run `mcode launch doctor bluevela`")
-        return
-
-    # Health-check path: lazy config load wrapped in _run so a malformed TOML
-    # surfaces as a formatted LaunchError, not a traceback.
-    cfg = _run(config_mod.load)
-    if target == "bluevela":
-        checks = bluevela.doctor(cfg)
-    elif target == "local-vllm":
-        checks = local_vllm.doctor(cfg)
-    elif target == "local-ollama":
-        checks = local_ollama.doctor(cfg)
-    else:
-        _print_error(
-            LaunchError(
-                what=f"unknown target {target!r}",
-                why="valid: bluevela, local-vllm, local-ollama",
-                next="pick one of those",
-            )
-        )
-        raise typer.Exit(1)
-
-    any_failed = False
-    for c in checks:
-        icon = "\033[32m✓\033[0m" if c.ok else "\033[31m✗\033[0m"
-        print(f"{icon} {c.name}")
-        if c.detail:
-            print(f"  {c.detail}")
-        if not c.ok and c.next:
-            print(f"  next: {c.next}")
-        any_failed = any_failed or not c.ok
     if any_failed:
         raise typer.Exit(1)
 

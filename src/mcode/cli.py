@@ -155,7 +155,7 @@ def doctor_cmd(
     init: bool = typer.Option(False, "--init", help="bootstrap launch.toml (bluevela only)"),
     login: str | None = typer.Option(None, "--login", help="user@host for --init"),
 ) -> None:
-    """System + launch diagnostics. Subsumes `mcode launch doctor`."""
+    """Run system and launch checks."""
     from mcode.doctor import render_check_lines, system_checks
     from mcode.launch import bluevela, local_ollama, local_vllm
     from mcode.launch import config as config_mod

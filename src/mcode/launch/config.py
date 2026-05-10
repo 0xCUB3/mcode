@@ -135,7 +135,7 @@ def load(path: Path | None = None) -> LaunchConfig:
             why=str(e),
             next=(
                 f"fix the TOML syntax, or `mv {cfg_path} {cfg_path}.bak` "
-                "and run `mcode launch doctor --init`"
+                "and run `mcode doctor bluevela --init`"
             ),
         ) from e
     return LaunchConfig(
@@ -200,7 +200,7 @@ def validate_for_bluevela(cfg: LaunchConfig) -> list[str]:
     bv = cfg.bluevela
     errs: list[str] = []
     if not bv.login:
-        errs.append("bluevela.login not set — run `mcode launch doctor bluevela --init`")
+        errs.append("bluevela.login not set — run `mcode doctor bluevela --init`")
     if "@" not in bv.login:
         errs.append(f"bluevela.login {bv.login!r} is not in user@host form")
     if not bv.group:

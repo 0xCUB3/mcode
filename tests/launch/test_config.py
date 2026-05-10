@@ -62,7 +62,7 @@ def test_malformed_toml_raises_launch_error(tmp_path: Path) -> None:
         cfg_mod.load(p)
     err = ei.value
     assert "not valid TOML" in err.what
-    assert "doctor --init" in err.next
+    assert "mcode doctor bluevela --init" in err.next
 
 
 def test_save_roundtrip(tmp_path: Path) -> None:

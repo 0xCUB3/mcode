@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
+
 from typer.testing import CliRunner
 
 from mcode.cli import app
@@ -42,3 +45,40 @@ def test_doctor_unknown_target_exits_nonzero():
     runner = CliRunner()
     res = runner.invoke(app, ["doctor", "no-such-target"])
     assert res.exit_code == 1
+
+
+def test_doctor_local_vllm_reports_checks(monkeypatch):
+    monkeypatch.setattr("mcode.launch.config.load", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        "mcode.launch.local_vllm.doctor",
+        lambda _cfg: [Check(name="local-vllm", ok=True, detail="ok")],
+    )
+    runner = CliRunner()
+    res = runner.invoke(app, ["doctor", "local-vllm"])
+    assert res.exit_code == 0
+    assert "local-vllm" in res.stdout
+    assert "✓" in res.stdout
+
+
+def test_doctor_init_writes_config(tmp_path: Path, monkeypatch):
+    written: dict[str, Path] = {}
+
+    def fake_init(*, login, cfg_path=None, **_):
+        p = tmp_path / "launch.toml"
+        p.write_text("[bluevela]\nlogin = '" + login + "'\n")
+        written["path"] = p
+        return p
+
+    monkeypatch.setattr("mcode.launch.bluevela.doctor_init", fake_init)
+    runner = CliRunner()
+    res = runner.invoke(app, ["doctor", "bluevela", "--init", "--login", "alice@host"])
+    assert res.exit_code == 0
+    assert "wrote" in res.stdout
+    assert written["path"].exists()
+
+
+def test_doctor_init_rejects_non_bluevela_target():
+    runner = CliRunner()
+    res = runner.invoke(app, ["doctor", "local-vllm", "--init"])
+    assert res.exit_code == 1
+    assert "only supported for `bluevela`" in res.output

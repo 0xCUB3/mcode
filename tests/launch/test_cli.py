@@ -198,19 +198,6 @@ def test_stop_nonexistent_id_exits_with_hint(runner: CliRunner, isolated_state: 
     assert "nope" in _all_output(result)
 
 
-def test_doctor_local_vllm_reports_checks(runner: CliRunner) -> None:
-    result = runner.invoke(app, ["doctor", "local-vllm"])
-    # Doctor can exit 1 if vllm isn't installed on the host; we just check
-    # the output shape (at least one ✓ or ✗ marker).
-    assert any(mark in result.stdout for mark in ("✓", "✗"))
-
-
-def test_doctor_unknown_target_errors(runner: CliRunner) -> None:
-    result = runner.invoke(app, ["doctor", "totally-not-a-target"])
-    assert result.exit_code == 1
-    assert "unknown target" in _all_output(result)
-
-
 def test_logs_for_bluevela_prints_ssh_hint(runner: CliRunner, isolated_state: Path) -> None:
     state.update(
         isolated_state,
@@ -298,30 +285,6 @@ def test_stop_local_target_works_even_when_bluevela_config_broken(
     result = runner.invoke(app, ["stop", "lv-1"])
     assert result.exit_code == 0
     assert stopped == ["lv-1"]
-
-
-def test_doctor_init_writes_config(
-    runner: CliRunner, isolated_state: Path, tmp_path: Path, monkeypatch
-) -> None:
-    written: dict[str, Path] = {}
-
-    def fake_init(*, login, cfg_path=None, **_):
-        p = tmp_path / "launch.toml"
-        p.write_text("[bluevela]\nlogin = '" + login + "'\n")
-        written["path"] = p
-        return p
-
-    monkeypatch.setattr("mcode.launch.cli.bluevela.doctor_init", fake_init)
-    result = runner.invoke(app, ["doctor", "bluevela", "--init", "--login", "alice@host"])
-    assert result.exit_code == 0
-    assert "wrote" in result.stdout
-    assert written["path"].exists()
-
-
-def test_doctor_init_rejects_non_bluevela_target(runner: CliRunner) -> None:
-    result = runner.invoke(app, ["doctor", "local-vllm", "--init"])
-    assert result.exit_code == 1
-    assert "only supported for `bluevela`" in _all_output(result)
 
 
 def test_refresh_walks_state(runner: CliRunner, isolated_state: Path, monkeypatch) -> None:

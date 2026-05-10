@@ -5,9 +5,8 @@ podman/docker available, mellea importable, ruff installed) plus all three
 launch targets.
 
 With a target argument (`bluevela` / `local-vllm` / `local-ollama`):
-delegates to the existing per-target doctors in `mcode.launch`. Same
-`--init`/`--login` flags as the legacy `mcode launch doctor` (only valid
-with `bluevela`).
+delegates to the per-target doctors in `mcode.launch`. `--init` and `--login`
+are only valid with `bluevela`.
 """
 
 from __future__ import annotations

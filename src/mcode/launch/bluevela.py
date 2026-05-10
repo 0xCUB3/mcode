@@ -123,7 +123,7 @@ _FAILURE_CATALOG: list[tuple[re.Pattern, list[str]]] = [
     (
         re.compile(r"queue .* closed|queue .* is closed|Queue only accepts interactive", re.I),
         [
-            "configured queue is closed or interactive-only; run `mcode launch doctor "
+            "configured queue is closed or interactive-only; run `mcode doctor "
             "bluevela --init` to re-detect available queues",
         ],
     ),
@@ -155,7 +155,7 @@ def _hint_for(error_text: str) -> str:
     for pattern, hints in _FAILURE_CATALOG:
         if pattern.search(error_text):
             return hints[0]
-    return "inspect the log and re-run `mcode launch doctor bluevela` to isolate"
+    return "inspect the log and re-run `mcode doctor bluevela` to isolate"
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +322,7 @@ def _pick_queue(ssh: SshClient, cfg: BluevelaConfig) -> str:
         raise LaunchError(
             what="no queues configured",
             why="[bluevela].queue_order is empty",
-            next="run `mcode launch doctor bluevela --init` to detect and write queue_order",
+            next="run `mcode doctor bluevela --init` to detect and write queue_order",
         )
     rejections: list[str] = []
     for q in cfg.queue_order:
@@ -333,7 +333,7 @@ def _pick_queue(ssh: SshClient, cfg: BluevelaConfig) -> str:
     raise LaunchError(
         what="no configured queue accepted the submission",
         why="\n".join(rejections),
-        next="run `mcode launch doctor bluevela --init` to refresh queue_order",
+        next="run `mcode doctor bluevela --init` to refresh queue_order",
     )
 
 
@@ -383,7 +383,7 @@ def launch(
         raise LaunchError(
             what="bluevela config incomplete",
             why="; ".join(errs),
-            next="run `mcode launch doctor bluevela --init`",
+            next="run `mcode doctor bluevela --init`",
         )
     ssh = ssh_client or SshClient(cfg.bluevela.login)
     bv = cfg.bluevela
@@ -848,7 +848,7 @@ def doctor(cfg: LaunchConfig | None = None, *, ssh_client: SshClient | None = No
             name="config complete",
             ok=not cfg_errs,
             detail="ok" if not cfg_errs else "; ".join(cfg_errs),
-            next=("" if not cfg_errs else "run `mcode launch doctor bluevela --init`"),
+            next=("" if not cfg_errs else "run `mcode doctor bluevela --init`"),
         )
     )
     if cfg_errs:

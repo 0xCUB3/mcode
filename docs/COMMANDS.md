@@ -45,8 +45,6 @@ System checks (no target):
 
 Per-target checks delegate to `src/mcode/launch/<target>.py:doctor()`.
 
-`mcode launch doctor` is preserved as an alias for back-compat.
-
 ## Watch — live dashboard
 
 ```bash
@@ -68,7 +66,6 @@ mcode launch stop <id>
 mcode launch stop --all                    # only recorded servers; never `bkill 0`
 mcode launch refresh                       # re-query each server/run, persist updated status
 mcode launch sync bluevela [--dry-run] [--src DIR] [--bootstrap]
-mcode launch doctor <target> [--init] [--login user@host] [--deep]
 ```
 
 Flags:

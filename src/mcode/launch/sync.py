@@ -76,7 +76,7 @@ def run_sync(spec: SyncSpec, *, cfg: config_mod.LaunchConfig | None = None) -> S
         raise LaunchError(
             what="bluevela config incomplete for sync",
             why="need [bluevela].login and [bluevela].workspace_root",
-            next="run `mcode launch doctor bluevela --init`",
+            next="run `mcode doctor bluevela --init`",
         )
 
     src = spec.src or _detect_repo_root()
@@ -140,7 +140,7 @@ def _check_remote_marker(*, login: str, workspace_root: str, bootstrap: bool) ->
         raise LaunchError(
             what="ssh to remote failed during sync preflight",
             why=(probe.stderr or "").strip()[:200],
-            next="check VPN + ssh keys; try `mcode launch doctor bluevela`",
+            next="check VPN + ssh keys; try `mcode doctor bluevela`",
         )
     state = probe.stdout.strip()
     if state == "marker":

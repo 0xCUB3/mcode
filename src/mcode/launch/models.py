@@ -133,7 +133,7 @@ class LaunchError(MCodeError):
 
 @dataclass
 class Check:
-    """One row in `mcode launch doctor` output."""
+    """One row in `mcode doctor` output."""
 
     name: str
     ok: bool
