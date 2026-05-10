@@ -1,169 +1,296 @@
-# Blue Vela workflow
+# Running mCode on Blue Vela
 
-Run mCode against a vLLM server on the Blue Vela LSF cluster. Steps are in the order you run them. For local-machine workflow, see [`local.md`](local.md). For the full flag reference, see [`COMMANDS.md`](COMMANDS.md).
+Blue Vela is where mCode is meant to run the bigger local-model experiments. The model server runs as a vLLM job under LSF. The benchmark can run on the cluster too, then rsync its SQLite DB and artifacts back to your laptop when it finishes.
 
-The cluster login host is `<user>@login3.bluevela.rmf.ibm.com`. You need IBM VPN access, an SSH key on the login node, and membership in `grp_runtime`.
+The workflow has a few moving parts, but the loop is simple once the config exists: check the cluster, sync the repo, launch vLLM, run the bench with `--on bluevela`, inspect the run, and stop the server.
 
-## 1. Install + bootstrap config
+The login host used in these examples is `<user>@login3.bluevela.rmf.ibm.com`. You need VPN access, SSH access to the login node, and membership in `grp_runtime`.
+
+## Install locally first
+
+Run these from your local checkout:
 
 ```bash
 uv sync --extra dev
 uv run mcode --version
-
-# system-level checks first
-uv run mcode doctor
-
-# probe the cluster, write ~/.config/mcode/launch.toml
-uv run mcode doctor bluevela --init --login <user>@login3.bluevela.rmf.ibm.com
-
-# verify everything mcode needs is there
-uv run mcode doctor bluevela
-```
-
-`doctor bluevela --init` SSHes to the login node, lists your bgroup membership and visible queues, and writes a config file with sensible defaults. After that, every subsequent run reads from `~/.config/mcode/launch.toml` (or `MCODE_LAUNCH_CONFIG`).
-
-The full bench dependency set:
-
-```bash
 uv run mcode deps sync --extra swebench --extra datasets
 ```
 
-## 2. Push the local repo to the cluster
+The commands that submit jobs and read state run locally. The benchmark code is copied to the cluster by `launch sync`, so keep your local checkout in the state you want to run before syncing.
 
-mCode runs benchmarks from a checkout on the cluster's shared filesystem. Sync your working copy:
+## Bootstrap the cluster config
+
+The first useful command is the Blue Vela doctor with `--init`:
 
 ```bash
-uv run mcode launch sync bluevela --dry-run    # preview rsync output
-uv run mcode launch sync bluevela              # actually sync
+uv run mcode doctor bluevela --init --login <user>@login3.bluevela.rmf.ibm.com
+```
 
-# only on the very first sync into a populated remote dir
+That command SSHes to the login node, checks your group membership and visible queues, and writes `~/.config/mcode/launch.toml` with the values mCode needs later. If you keep configs somewhere else, set `MCODE_LAUNCH_CONFIG`.
+
+After bootstrap, run the doctor again without `--init`:
+
+```bash
+uv run mcode doctor bluevela
+```
+
+The doctor output is meant to be followed literally. Red rows include a `next:` line. If SSH fails with too many authentication attempts, add an entry like this to `~/.ssh/config`:
+
+```sshconfig
+Host login3.bluevela.rmf.ibm.com
+  User <user>
+  IdentitiesOnly yes
+  IdentityFile ~/.ssh/id_ed25519
+```
+
+## Sync the repo
+
+mCode runs from a checkout on the cluster shared filesystem. Push your local checkout with:
+
+```bash
+uv run mcode launch sync bluevela --dry-run
+uv run mcode launch sync bluevela
+```
+
+The dry run is worth doing when you have uncommitted files or big local artifacts lying around. The sync respects `.gitignore` and excludes the usual junk: `.git/`, virtual environments, caches, and launcher-owned remote directories such as `runs/`, `bench-runs/`, and `benchmarks/`.
+
+There is a safety marker in the remote workspace. mCode will not run `rsync --delete` into a non-empty unmarked directory. If you are deliberately claiming an existing remote directory for the first time, use:
+
+```bash
 uv run mcode launch sync bluevela --bootstrap
 ```
 
-`launch sync` refuses `rsync --delete` into a remote dir without our `.mcode-launch-workspace` marker. The marker is created automatically on a clean dir; `--bootstrap` claims a populated one (destructive — it will mirror what you have locally).
+Treat `--bootstrap` with care. It tells mCode that the remote directory is the mirror target and that deletes are allowed on future syncs.
 
-The sync excludes `.git/`, virtual envs, caches, and the launcher-owned remote dirs (`runs/`, `bench-runs/`, `benchmarks/`).
+## Launch vLLM
 
-## 3. Launch a vLLM server
+Start a server job:
 
 ```bash
 uv run mcode launch bluevela --model Qwen/Qwen3.6-35B-A3B --json
 ```
 
-This submits an LSF job under your `grp_runtime` group, picks the highest-priority queue from your config, uploads `vllm.sh` + `env.json`, and waits for the server to become healthy. The four phases are visible in the live progress UI:
+The command chooses a queue from your config, submits an LSF job under `grp_runtime`, uploads the vLLM script and environment file, and waits until the server is healthy. The launch UI moves through submit, queued, starting, and ready. The starting phase includes container setup, model load, and the first health check, so it can be quiet for a while on a cold queue.
 
-1. **submit** — bsub accepts the job
-2. **queued** — LSF transitions PEND → RUN
-3. **starting** — container pull + model load + warmup (40 min hard deadline)
-4. **ready** — `vllm_host.txt` appears and `/v1/models` returns 200
-
-If you want to script the wait separately:
+You can split launch and wait if you want the shell back immediately:
 
 ```bash
 uv run mcode launch bluevela --model Qwen/Qwen3.6-35B-A3B --json &
-uv run mcode launch wait server-bv-<id> --timeout 1800
+uv run mcode launch wait <server-id> --timeout 1800
 ```
 
-Available profiles ship in `src/mcode/launch/profiles.py`: Qwen3.5 (27B / 35B-A3B), Qwen3.6-35B-A3B, Gemma-4-31B-it, Granite 4.0, MiniMax-M2.5. Add new ones there.
-
-## 4. Run a benchmark on Blue Vela
-
-`--on bluevela` runs the bench remotely (under `setsid` so cancel works), `--backend openai` auto-resolves the endpoint to the healthy server matching `--model`:
+The profile table lives in `src/mcode/launch/profiles.py`. The built-in profiles cover the Qwen, Gemma, Granite, and MiniMax models used by the research notes. If a profile default is close but not quite right, override tensor parallel or context length at launch time:
 
 ```bash
-# 16-task smoke slice — good first run
-MCODE_CONTEXT_WINDOW=262144 uv run mcode bench smoke \
-  --backend openai --model Qwen/Qwen3.6-35B-A3B \
-  --on bluevela --shards 4
+uv run mcode launch bluevela \
+  --model Qwen/Qwen3.6-35B-A3B \
+  --tensor-parallel 4 \
+  --max-model-len 262144
+```
 
-# SWE-bench Verified full
-MCODE_CONTEXT_WINDOW=262144 MCODE_MAX_NEW_TOKENS=4096 MCODE_REACT_TIMEOUT=2400 \
+## Run a smoke bench on the cluster
+
+Once a server is healthy, run the smoke slice remotely:
+
+```bash
+MCODE_CONTEXT_WINDOW=262144 \
+uv run mcode bench smoke \
+  --backend openai \
+  --model Qwen/Qwen3.6-35B-A3B \
+  --on bluevela \
+  --shards 4 \
+  --db research/$(date +%F)-bluevela-smoke/results.db
+```
+
+`--on bluevela` sends the benchmark to the remote workspace and runs it under `setsid`, which is what lets `bench cancel` kill the whole remote process group later. `--backend openai` asks mCode to find a healthy recorded server whose model matches `--model`. If you set `OPENAI_BASE_URL` yourself, that value wins.
+
+The local command streams the remote output, records the run in launch state, and fetches the DB back to the local `--db` path by default when the run ends.
+
+## Full SWE-bench Verified example
+
+This is the shape of the Qwen3.6 Verified runs in the research notes. Adjust the DB path and maybe the shard count before copying it into a shell.
+
+```bash
+MCODE_CONTEXT_WINDOW=262144 \
+MCODE_MAX_NEW_TOKENS=4096 \
+MCODE_REACT_TIMEOUT=2400 \
 uv run mcode bench swebench-lite \
-  --model Qwen/Qwen3.6-35B-A3B --backend openai \
+  --backend openai \
+  --model Qwen/Qwen3.6-35B-A3B \
   --dataset princeton-nlp/SWE-bench_Verified \
-  --loop-budget 20 --sampling multiturn --sampling-budget 2 --selection-attempts 3 \
-  --timeout 300 --mem-limit 8g --pids-limit 512 \
-  --on bluevela --shards 4 \
+  --loop-budget 20 \
+  --sampling multiturn \
+  --sampling-budget 2 \
+  --selection-attempts 3 \
+  --eval-repair-attempts 0 \
+  --timeout 300 \
+  --mem-limit 8g \
+  --pids-limit 512 \
+  --cpu-limit 32 \
+  --on bluevela \
+  --shards 4 \
   --db research/$(date +%F)-swebench-verified/results.db
-# Aider Polyglot, 225 tasks
-uv run mcode bench aider-polyglot \
-  --model Qwen/Qwen3.6-35B-A3B --backend openai \
-  --on bluevela --shards 4
+```
 
-# Mixed suite
+The `--cpu-limit` flag matters on shared login-style machines where runaway eval containers can get killed by administrators. It caps each SWE-bench eval container at a fixed number of cores. If your queue policy changes, revisit that value.
+
+## Aider Polyglot and the mixed suite
+
+Aider Polyglot is shorter to launch:
+
+```bash
+uv run mcode bench aider-polyglot \
+  --backend openai \
+  --model Qwen/Qwen3.6-35B-A3B \
+  --on bluevela \
+  --shards 4 \
+  --db research/$(date +%F)-aider-polyglot/results.db
+```
+
+The mixed suite is useful for harness changes because it exercises more than one adapter through the same runner. I often run generation first, then evaluate the saved artifacts:
+
+```bash
 uv run mcode bench suite \
-  --model Qwen/Qwen3.6-35B-A3B --backend openai \
+  --backend openai \
+  --model Qwen/Qwen3.6-35B-A3B \
+  --on bluevela \
+  --shards 4 \
   --phase generate \
   --artifact-dir research/mixed-suite/artifacts \
-  --db research/mixed-suite/generate.db \
+  --db research/mixed-suite/generate.db
+
+uv run mcode bench suite \
+  --backend openai \
+  --model Qwen/Qwen3.6-35B-A3B \
+  --on bluevela \
   --shards 4 \
-  --on bluevela
+  --phase evaluate \
+  --artifact-dir research/mixed-suite/artifacts \
+  --db research/mixed-suite/evaluate.db
 ```
 
-Add `--json` to any bench command to get a strictly-monotonic event stream you can pipe to `jq`. Add `--fetch-db / --no-fetch-db` to control whether the DB is rsync'd back when the run ends. Add `--fetch-artifacts` when you also want the artifact directory copied back for local replay or inspection. The benchmark phase split also works remotely: use `--phase generate` with an explicit `--artifact-dir DIR`, then rerun with `--phase evaluate` and the same artifact directory. The mixed suite command supports the same phase split, and it now supports both auto-merged `--shards` and manual `--shard-count / --shard-index`.
-
-Remote bench run directories are stable for the same model, local DB path, bench argv, and forwarded MCODE context env. If log streaming or DB fetch drops after the remote process finished, rerun the same command to resume remotely and fetch the existing DB metadata instead of starting from scratch. After the run is recorded, `uv run mcode bench artifacts fetch <run-id>` can fetch the artifact directory later if you skipped `--fetch-artifacts` the first time. If you do not want to look up the run id first, `uv run mcode bench artifacts fetch --db <results.db>` resolves the latest fetchable run recorded for that DB path.
-
-
-
-`OPENAI_BASE_URL` and `OPENAI_API_KEY` (if set) take precedence over auto-resolution.
-
-## 5. Watch / list / cancel running benches
-
-The Rich Live dashboard fans out per shard while a `--shards N` run executes. From a separate shell:
+Add `--fetch-artifacts` if you want the artifact directory copied back at the end of the remote run. If you skipped it, you can fetch later from the run record.
 
 ```bash
-uv run mcode bench list                 # all bench runs
+uv run mcode bench artifacts fetch <run-id> --dest research/mixed-suite/artifacts
+uv run mcode bench artifacts fetch --db research/mixed-suite/generate.db
+```
+
+## Remote resume and fetch behavior
+
+Remote bench directories are stable for the same model, local DB path, bench arguments, and forwarded `MCODE_*` context variables. If the SSH stream dies after the remote process finished, rerun the same command. mCode should find the existing remote run metadata and fetch the DB instead of starting over.
+
+The default is `--fetch-db`, which rsyncs the SQLite DB back when the run ends. Use `--no-fetch-db` only if you have a reason to leave the DB on the cluster. Artifact fetch is off by default because artifacts can be much larger. Pass `--fetch-artifacts` when you know you want local replay.
+
+For very long SWE-bench jobs, `--chunk-size N` runs remote chunks sequentially, writes chunk DBs, and merges them. If you also pass `--relaunch-vllm`, mCode can launch a fresh vLLM server between chunks when no healthy server exists. That path is meant for long cluster runs where model servers may time out before the full bench is finished.
+
+## Watching, listing, and showing runs
+
+From another shell:
+
+```bash
+uv run mcode bench list
+uv run mcode bench list --wide
 uv run mcode bench list --json | jq '.[] | select(.status == "running")'
-uv run mcode bench cancel <run-id>      # see "cancel semantics" below
-uv run mcode launch status              # servers + runs
-uv run mcode watch                      # combined live dashboard, refreshes every 2s
+uv run mcode bench show --latest
+uv run mcode launch status
+uv run mcode watch
 ```
 
-### Cancel semantics on Blue Vela
+`bench list` is intentionally compact by default. Use `--wide` when you need remote paths, DB paths, artifact status, and target columns. `bench show` is the detailed view. It shows DB summaries when the DB has been fetched, failed tasks, artifact fetch commands, rerun metadata, and remote process information.
 
-`bench cancel <run-id>` for a Blue Vela run SSHes to the login host and runs `kill -TERM -<pid>` (process group, works because the remote bench is started under `setsid`), then `kill -KILL -<pid>` after a 10s grace period, then verifies the process is actually gone with `kill -0`. If the process is still alive, the cancel is **rejected** and the record stays `running` so you can retry — the worst outcome is no silent leak.
-
-If the kill misses subprocesses (rare), you can verify orphans manually:
+If the state file gets noisy after experiments, prune it locally:
 
 ```bash
-ssh <user>@login3.bluevela.rmf.ibm.com 'pgrep -af mcode|podman'
+uv run mcode bench prune --status failed --older-than 7d
+uv run mcode bench prune --status failed --older-than 7d --yes
 ```
 
-## 6. Stop the server and fetch results
+That first command is a dry run. I always run the dry run first.
+
+## Cancelling a remote bench
+
+Cancel by run id:
+
+```bash
+uv run mcode bench cancel <run-id>
+```
+
+For Blue Vela runs, mCode SSHes to the login host, sends `TERM` to the remote process group, waits briefly, sends `KILL` if needed, and then checks that the process is gone. If that final check fails, the run record stays `running` and the command returns an error. That is intentional. A false cancelled state is worse than an annoying retry.
+
+If you suspect a leaked process, check manually:
+
+```bash
+ssh <user>@login3.bluevela.rmf.ibm.com 'pgrep -af "mcode|podman|vllm"'
+```
+
+## Stopping vLLM and refreshing state
+
+Stop the server when you are done:
 
 ```bash
 uv run mcode launch stop <server-id>
-# or
-uv run mcode launch stop --all          # only your recorded servers; never bkill 0
-
-uv run mcode launch refresh             # re-query state from LSF
 ```
 
-Results DBs are rsync'd back to the local `--db` path automatically (unless you passed `--no-fetch-db`). To inspect:
+Or stop every server recorded in your local launch state:
 
 ```bash
-uv run mcode results --db-dir research/<run> --benchmark swebench-live --time
-uv run mcode bench merge-shards --out merged.db research/<run>/results.db-shards/*/results-shard-*.db
+uv run mcode launch stop --all
 ```
 
-## Common environment variables
+`stop --all` does not issue a blanket `bkill` for your user. It only stops jobs that mCode recorded. If the state looks stale, refresh it from LSF:
 
-|Variable|Purpose|
+```bash
+uv run mcode launch refresh
+```
+
+## Inspecting results
+
+The DB should be local after a normal remote run. Query it directly:
+
+```bash
+uv run mcode results --db research/<run>/results.db --time
+uv run mcode results --db-dir research/<run> --benchmark swebench-lite --time
+```
+
+If you need to merge shard DBs by hand, use the bench subcommand:
+
+```bash
+uv run mcode bench merge-shards \
+  --out research/<run>/merged.db \
+  research/<run>/results.db-shards/*/results-shard-*.db
+```
+
+For analysis outside the CLI:
+
+```bash
+uv run mcode export-csv \
+  -i research/<run> \
+  --out-dir research/<run> \
+  --prefix mcode
+```
+
+## Environment variables I actually use
+
+|Variable|Why it matters on Blue Vela|
 |-|-|
-|`MCODE_LAUNCH_CONFIG`|Override `launch.toml` path|
-|`MCODE_LAUNCH_STATE`|Override the persistent state file path|
-|`MCODE_CONTEXT_WINDOW`|LLM context window (forwarded to the remote bench)|
-|`MCODE_MAX_NEW_TOKENS`|Max output tokens|
-|`MCODE_REACT_TIMEOUT`|ReACT loop timeout in seconds|
-|`OPENAI_BASE_URL` / `OPENAI_API_KEY`|Override auto-resolved endpoint|
+|`MCODE_LAUNCH_CONFIG`|Use a launch config outside `~/.config/mcode/launch.toml`|
+|`MCODE_LAUNCH_STATE`|Use a separate state file for a risky experiment|
+|`MCODE_CONTEXT_WINDOW`|Forward the model context size into the remote bench|
+|`MCODE_MAX_NEW_TOKENS`|Cap model output tokens|
+|`MCODE_REACT_TIMEOUT`|Give long ReACT loops enough time before timeout|
+|`OPENAI_BASE_URL`|Bypass launch-state endpoint discovery|
+|`OPENAI_API_KEY`|Set an API token for an external OpenAI-compatible server|
+|`MCODE_DEBUG`|Show raw tracebacks instead of the formatted error page|
 
-Full env-var list and every flag: [`COMMANDS.md`](COMMANDS.md).
+## Common Blue Vela problems
 
-## Troubleshooting
+If `doctor bluevela` reports `Permission denied`, load the SSH key you expect with `ssh-add` and check `IdentitiesOnly yes` for the Blue Vela host. The login node can reject you after too many offered keys.
 
-- `doctor bluevela` says "ssh reachable: Permission denied" — load your key with `ssh-add ~/.ssh/id_ed25519`. The Blue Vela host needs `IdentitiesOnly yes` in your `~/.ssh/config` to avoid "too many auth failures".
-- "queue stayed in PEND past 3600s" — your queues are backlogged; edit `[bluevela].queue_order` in `launch.toml` or wait. `doctor bluevela --init` will rewrite queue_order from current cluster state.
-- "vLLM did not become ready within 2400s" — usually a cold container pull; `tail -n 200 -f <log_path>` (the path is in `launch status`). For Qwen3.5/3.6, the per-job graphroot trades cross-run image caching for reliability.
-- Cancel failed with "remote pid still alive" — VPN dropped mid-cancel, or the job already moved off the login node's view. Run the manual `ssh ... kill -KILL -<pid>` from the error message and retry `bench cancel`.
-- `MCODE_DEBUG=1` disables the formatted error layout and dumps a raw traceback.
+If the queue stays in `PEND` for a long time, the queues in `launch.toml` may be backlogged. You can wait, edit `[bluevela].queue_order`, or rerun `doctor bluevela --init` to rewrite the queue order from what the cluster currently exposes.
+
+If vLLM does not become ready before the launch timeout, check the log path from `mcode launch status`. Cold image pulls and model loads can look dead until the server writes `vllm_host.txt` and answers `/v1/models`.
+
+If cancel fails with a message about the remote pid still being alive, do not mark the run stopped by hand. Retry once after checking VPN, then use the manual SSH command printed in the error if the process really needs to be killed.
+
+If a DB fetch fails after the remote run completed, rerun the same bench command or use `mcode bench show <run-id>` to find the remote DB path. Do not start a new run until you have checked whether the old one already finished.

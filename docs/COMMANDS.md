@@ -1,352 +1,487 @@
-# Commands
+# mCode commands
 
-Reference for every mcode command and flag. Run `mcode <command> --help` for the live source-of-truth.
+This is the command reference I wish I had while building the harness. It is still worth running `mcode <command> --help` when you need the exact Typer output, but this page explains how the commands fit together and which flags matter in real runs.
 
-## Global
+Examples use `uv run mcode`. If you installed the console script directly, use `mcode` instead.
+
+## Global behavior
+
+These work with any command:
 
 ```bash
-mcode --version                    # print the installed version and exit
-mcode --verbose | -v               # raise the Mellea + mcode logger to INFO (otherwise WARNING)
-mcode --help                       # list top-level commands
-NO_COLOR=1 mcode ...               # disable ANSI color (CI / piped logs)
-MCODE_NO_COLOR=1 mcode ...         # mcode-specific no-color override
-MCODE_DEBUG=1 mcode ...            # disable formatted error layout, surface raw tracebacks
-MCODE_LAUNCH_STATE=/path/state.json mcode ...   # override the persistent state file path
+uv run mcode --help
+uv run mcode --version
+uv run mcode --verbose <command>
+NO_COLOR=1 uv run mcode <command>
+MCODE_NO_COLOR=1 uv run mcode <command>
+MCODE_DEBUG=1 uv run mcode <command>
+MCODE_LAUNCH_STATE=/tmp/mcode-state.json uv run mcode <command>
 ```
 
-Exit codes:
+`--verbose` raises mCode and Mellea logging to INFO. `MCODE_DEBUG=1` turns off the formatted error page and lets raw tracebacks through, which is useful when you are fixing the harness rather than using it. `NO_COLOR` and `MCODE_NO_COLOR` are there for CI logs and terminals that do not want ANSI color.
+
+Exit codes are intentionally plain:
 
 |Code|Meaning|
 |-|-|
-|0|Success|
-|1|User-actionable failure (formatted as `✗ what / why / next / logs` on stderr)|
-|2|Usage error or "not cancellable from another shell"|
-|3|`mcode launch wait`: server id not found|
-|86|Retryable infrastructure failure (sharded benchmark)|
-|130|Interrupted (Ctrl+C)|
+|0|The command succeeded|
+|1|A user-actionable failure, usually printed with what happened and what to try next|
+|2|Bad command usage, or a bench cancel that cannot work from another shell|
+|3|`mcode launch wait` could not find that id|
+|86|A sharded benchmark hit retryable infrastructure trouble|
+|130|The process was interrupted with Ctrl+C|
 
-## Doctor — system + launch diagnostics
+## Doctor
 
-```bash
-mcode doctor                       # all system + per-target checks
-mcode doctor bluevela              # only Blue Vela checks (queues, group, ssh)
-mcode doctor local-vllm
-mcode doctor local-ollama
-mcode doctor bluevela --init --login user@login-host    # bootstrap launch.toml
-mcode doctor bluevela --deep       # extra probes (slow)
-```
-
-System checks (no target):
-
-- results dir writable (`MCODE_RESULTS_DIR` or `experiments/results`)
-- container runtime (podman or docker on PATH)
-- mellea importable
-- ruff present (PATH or via uv)
-
-Per-target checks delegate to `src/mcode/launch/<target>.py:doctor()`.
-
-## Watch — live dashboard
+The doctor is the first command to run on a new machine. It checks the local basics and, when you pass a target, asks that target to check what it needs.
 
 ```bash
-mcode watch                        # refreshes every 2s; quits on Ctrl+C
-```
-
-Combines `launch status` + `bench list` into a single Rich Live view. Recovers automatically from transient state-file read failures (partial writes, lock contention) by rendering the last-good snapshot with a warning footer.
-
-## Launch — server lifecycle
-
-```bash
-mcode launch bluevela --model Qwen/Qwen3.6-35B-A3B
-mcode launch local-vllm --model Qwen/Qwen2.5-0.5B
-mcode launch local-ollama --model granite4
-mcode launch status [--json] [--raw]
-mcode launch logs <id>
-mcode launch wait <id> [--timeout 600] [--poll 2.0] [--json]
-mcode launch stop <id>
-mcode launch stop --all                    # only recorded servers; never `bkill 0`
-mcode launch refresh                       # re-query each server/run, persist updated status
-mcode launch sync bluevela [--dry-run] [--src DIR] [--bootstrap]
-```
-
-Flags:
-
-- `--model / -m` — HF model id, e.g. `Qwen/Qwen3.6-35B-A3B`
-- `--json` — endpoint, status, etc. as machine-readable JSON
-- `--raw` (status) — include the raw LSF state in JSON
-- `--timeout N` (wait) — seconds before exit code 2; default 600
-- `--poll s` (wait) — seconds between polls; default 2.0
-- `--dry-run / -n` (sync) — preview the rsync, no file transfer
-- `--src DIR` (sync) — local source path; defaults to git rev-parse root
-- `--bootstrap` (sync) — claim a populated remote dir (creates safety marker)
-
-Wait exit codes: 0 healthy, 1 failed-or-stopped, 2 timeout (or transient state read failure past deadline), 3 no-such-id.
-
-## Bench — run benchmarks
-
-```bash
-uv run mcode bench list [--json] [--benchmark NAME] [--status running|done|failed|stopped] [--artifacts] [--limit N]
-uv run mcode bench cancel <run-id>
-uv run mcode bench swebench-live   --model M  [flags]
-uv run mcode bench swebench-lite   --model M  [flags]
-uv run mcode bench aider-polyglot  --model M  [flags]
-uv run mcode bench smoke           --model M  [flags]
-uv run mcode bench suite           --model M  [flags]
-```
-
-The normal benchmark path is intentionally small: one solver loop, the built-in code tools, optional split phases, SQLite results, artifacts, replay, and suite runs. Treat the flags below as controls for measurement and operations first. New capability should show up in results before it becomes part of the default path.
-
-### Common flags (`swebench-live` / `swebench-lite` / `aider-polyglot` / `smoke` / `suite`)
-
-- `--model M` — Mellea model id (required)
-- `--backend B` — Mellea backend: `ollama` (default for swebench), `openai` (default for smoke / aider)
-- `--loop-budget N` — agent retry budget per task; default 15
-- `--temperature F` — sampling temperature
-- `--seed N` — random seed
-- `--timeout N` — eval timeout per task in seconds
-- `--limit N` — run the first N tasks
-- `--task-ids X` — comma-separated ids or path to JSON / text file
-- `--db PATH` — SQLite results DB path
-- `--phase {run,generate,evaluate}` — `run` generates and evaluates in one pass; `generate` writes task artifacts only; `evaluate` loads those artifacts and records eval rows
-- `--artifact-dir DIR` — directory for generated task artifacts; defaults next to `--db` as `<db-stem>-artifacts`
-- `--shards N` — run N shard workers, merge per-shard DBs into `--db`
-- `--on {local,bluevela}` — where to run (default `local`)
-- `--fetch-db / --no-fetch-db` — rsync the DB back from Blue Vela
-- `--json` — machine-readable event stream (one JSON object per line, monotonic `seq`)
-- Advanced: `--shard-count C / --shard-index I` runs one manual shard. The auto `--shards` path uses this internally
-- Advanced: `--diagnostic-traces / --no-diagnostic-traces` persists compact bench trace events for debugging
-
-Re-running the same bench command against the same `--db` resumes the matching run. Completed task rows are skipped, retryable infra rows are retried, and sharded runs reuse stable shard DBs before merging whatever completed rows exist.
-
-### Artifact-backed phases
-
-Use `--phase generate` when you want to produce patch artifacts without running official evaluation yet. Reuse the same `--artifact-dir` with `--phase evaluate` to load the saved candidates and write results to the DB. The default `--phase run` keeps the old one-command path and still writes artifacts as it goes.
-
-```bash
-uv run mcode bench swebench-lite \
-  --backend openai --model granite4 --limit 16 --shards 4 \
-  --db experiments/results/lite-split.db \
-  --artifact-dir experiments/results/lite-split-artifacts \
-  --phase generate
-
-uv run mcode bench swebench-lite \
-  --backend openai --model granite4 --limit 16 --shards 4 \
-  --db experiments/results/lite-split.db \
-  --artifact-dir experiments/results/lite-split-artifacts \
-  --phase evaluate
-```
-
-### `suite`
-
-The mixed suite runs several benchmark slices through the same phase runner and writes all runs into one DB. Use it when you want a small, broader regression sweep instead of another SWE-only pass. For harness A/B work, run the bundled `src/mcode/bench/fixtures/aider-regression-suite.json` before and after a loop change, then gate with `mcode compare --max-lost 0`.
-
-```bash
-uv run mcode bench suite \
-  --backend openai --model granite4 \
-  --db experiments/results/mixed-suite.db \
-  --phase run
-
-uv run mcode bench suite \
-  --backend openai --model granite4 \
-  --db experiments/results/mixed-suite.db \
-  --artifact-dir experiments/results/mixed-suite-artifacts \
-  --phase generate
-
-uv run mcode bench suite \
-  --backend openai --model granite4 \
-  --db experiments/results/mixed-suite-eval.db \
-  --artifact-dir experiments/results/mixed-suite-artifacts \
-  --phase evaluate
-```
-
-- `--suite-file PATH` — optional JSON manifest overriding the bundled suite
-- `--shards N` — run N suite shard workers and merge all run DBs back into `--db`
-- `--retry-loop-budget N` — Aider Polyglot retry budget inside the suite
-- Advanced: `--shard-count C / --shard-index I` runs one manual shard for the whole suite. Each slice applies the same shard split
-
-### Artifact inspection
-
-Once a split-phase or suite run has written artifacts, inspect them directly from the DB without spelunking through directories by hand.
-
-```bash
-uv run mcode bench artifacts list --db experiments/results/mixed-suite-evaluate.db
-uv run mcode bench artifacts list --db experiments/results/mixed-suite-evaluate.db --task-id python/affine-cipher --phase evaluate --json
-uv run mcode bench artifacts show python/affine-cipher --db experiments/results/mixed-suite-evaluate.db
-uv run mcode bench artifacts patch python/affine-cipher --db experiments/results/mixed-suite-evaluate.db --out candidate.patch
-uv run mcode bench artifacts replay python/affine-cipher --db experiments/results/mixed-suite-generate.db
-uv run mcode bench artifacts fetch bench-<run-id> --dest research/mixed-suite/artifacts
-uv run mcode bench artifacts fetch --db experiments/results/mixed-suite-generate.db --json
-```
-
-- `artifacts list` shows task ids, phase, selected candidate index, whether that candidate verified, selected patch bytes, candidate count, evaluation count, and manifest path for one run. Add `--task-id`, `--phase`, or `--json` when you want a narrower machine-readable inventory
-- `artifacts show` prints the saved task manifest JSON for one task, or one candidate entry with `--candidate-index N`
-- `artifacts patch` prints the selected candidate diff, or writes it to a file with `--out PATH`
-- `artifacts replay` re-evaluates one saved candidate into a fresh DB, optionally with `--candidate-index N`, `--out-db PATH`, and `--benchmark-root PATH` for cross-machine polyglot artifacts
-- `artifacts fetch` downloads the saved remote artifact directory later, using either a recorded run id or the latest fetchable run for a local `--db` path. Add `--json` when another script needs the resolved local and remote paths
-### `swebench-live` / `swebench-lite` extras
-
-The SWE-bench extras below are mostly eval controls and ablation knobs. The default kernel does not need multiple samples or candidate selection to run; use those flags when measuring variance or isolating a change.
-
-- `--split` — `test` / `lite` / `verified` / `full` / `dev`
-- `--mem-limit` — eval container memory limit; default `4g`
-- `--pids-limit` — eval container PID limit; default 512
-- `--n-samples N` — outer attempts when `--sampling none`, sampling budget fallback otherwise
-- `--sampling {none,multiturn}` — Mellea sampling strategy
-- `--sampling-budget N` — sampling-loop budget override
-- `--selection-attempts N` — independent full-budget trajectories; pick one patch before official eval
-
-### `swebench-lite` only
-
-- `--namespace` — empty string forces local image builds; `swebench` (default) pulls prebuilt
-- `--arch` — image arch override (`auto` / `x86_64` / `arm64`)
-- `--max-workers N` — local image build concurrency
-- `--force-rebuild` — rebuild eval images even if cached
-- `--dataset` — HF dataset id (defaults to `SWE-bench/SWE-bench_Lite`)
-
-### `aider-polyglot`
-
-- `--language X` — `all` (default) or one of `python`, `go`, `rust`, `js`, `cpp`, `java`
-- `--exercise X` — single exercise (requires concrete `--language`)
-- `--benchmark-root DIR` — override the polyglot checkout location
-- `--no-retry` — disable the second-pass retry loop
-- `--retry-loop-budget N` — retry-attempt loop budget
-
-### `smoke`
-
-A 16-task SWE-bench Verified diagnostic slice (astropy + 6 projects). It runs `swebench-lite` under the hood with a bundled task-id list and sensible defaults, so the common phase and artifact flags apply there too.
-
-### JSON event stream
-
-Every bench command supports `--json`. Events are line-delimited JSON with strictly monotonic `seq`. Human output includes compact per-turn model/tool progress while each task is running; set `MCODE_LIVE_TRACE=0` to mute it. JSON output stays compact unless you set `MCODE_LIVE_TRACE=1`:
-
-```jsonl
-{"seq": 1, "ts": 1719445200.123, "kind": "run_start", "data": {"benchmark": "smoke", "model": "...", "shards": 4}}
-{"seq": 2, "ts": 1719445200.456, "kind": "shard_start", "shard": 0, "data": {"db": "...", "log": "..."}}
-{"seq": 3, "ts": 1719445201.012, "kind": "shard_stdout", "shard": 0, "data": {"line": "..."}}
-{"seq": 4, "ts": 1719445230.789, "kind": "shard_done", "shard": 0}
-{"seq": 5, "ts": 1719445999.000, "kind": "merged", "data": {"db": "..."}}
-```
-
-Kinds: `run_start`, `shard_start`, `shard_stdout`, `shard_done`, `shard_failed`, `shard_infra`, `infra_failure`, `merged`, `summary`, `remote_stdout`, `info`.
-`bench list` is sorted newest-first after filtering. Use `--limit N` when the state file is noisy and you only care about the most recent runs. Add `--wide` when you need target, shard, artifact, fetched, and DB columns. When a remote artifact directory exists, `--artifacts` filters to those runs.
-
-Use `mcode bench show <run-id>` or `mcode bench show --latest` to inspect one state record, DB summary, failed task rows, remote paths, and follow-up commands. The default table shows compact ids, and `bench show` accepts those ids as long as they match one run. For active local runs, `bench list` and `bench show` include the current task and stage when available.
-
-Use `mcode bench prune` to dry-run cleanup of stale state records whose DB path no longer exists. Add filters like `--status failed` or `--older-than 7d`, and add `--yes` to actually delete the matching records. Use `--any-db` only when you deliberately want the prune to ignore DB existence.
-
-### Cancel semantics
-
-`mcode bench cancel <run-id>` dispatches by run shape:
-
-|Shape|Action|
-|-|-|
-|`shard_pids` non-empty|local sharded → SIGTERM each pid, SIGKILL stragglers after 10s|
-|`remote` dict non-empty|Blue Vela → SSH `kill -TERM -<pid>`, `kill -KILL -<pid>`, then `kill -0` to verify dead|
-|neither|in-process single run → exit 2 with "not cancellable from another shell"|
-
-State transitions to `RunStatus.STOPPED` with `metadata.cancel_reason = "user"`. If the remote process can't be confirmed dead (kill verification fails), the cancel is rejected with a `MCodeError` so the record stays `running` and the user can retry rather than silently leak the job.
-
-## Results
-
-```bash
-uv run mcode results [--db PATH | --db-glob 'g' | --db-dir DIR] [--benchmark X] [--model M] [--backend B] [--suite S] [--suite-entry E] [--loop-budget N] [--timeout N] [--compare-configs] [--time] [--json]
-uv run mcode compare --baseline-dir A --candidate-dir B [--benchmark X] [--suite S] [--suite-entry E] [--task-ids file] [--max-lost N] [--min-net N] [--min-candidate-pass-rate F] [--json]
-mcode bench merge-shards --out merged.db shard-a.db shard-b.db
-mcode export-csv -i DIR --out-dir DIR --prefix mcode [--include-logs]
-```
-
-`compare` accepts either DB files or directories on both sides. For generate-only runs, `--json` includes artifact summary fields like generated task count, evaluated task count, selected verified candidate count, and total selected patch bytes so you can compare two unevaluated scaffolds before paying for official eval.
-
-`results` flags:
-
-- `--db PATH` (repeatable) — explicit DB paths
-- `--db-glob 'glob'` (repeatable) — glob (quote it!)
-- `--db-dir DIR` (repeatable) — recursively scan for `*.db`
-- `--benchmark X` — filter by benchmark name
-- `--model M / --backend B / --loop-budget N / --timeout N` — config filters
-- `--compare-configs` — group results by `(backend_name, timeout_s, loop_budget)`
-- `--time` — include `sec/solve`, `solves/hour`, p95 metrics
-
-`export-csv` always writes runs, task_results, and artifact CSVs. The run and task result exports now include `suite_name` and `suite_entry_name`, and the artifact exports include those suite columns too so mixed-suite analysis stays join-free.
-
-## Deps
-
-```bash
-mcode deps sync                                # default extras (dev)
-mcode deps sync --extra swebench --extra datasets
-mcode deps sync --extra swebench --extra datasets --extra observability
-mcode deps sync --no-dev                       # skip dev extras
-MCODE_MELLEA_PATH=/path/to/mellea-checkout mcode deps sync ...
-
-mcode deps toolchains --benchmark aider-polyglot
-mcode deps toolchains --benchmark aider-polyglot --language go --language rust
-mcode deps toolchains --benchmark aider-polyglot --install
-```
-
-`MCODE_MELLEA_PATH` overrides the pinned upstream Mellea with a local working copy.
-`deps toolchains` checks the local Aider Polyglot runtimes before long suite runs. With `--install`, it uses the local platform package manager when supported: Homebrew on macOS, winget/choco on Windows, and apt/dnf/pacman on Linux. Aider Polyglot runs now fail fast on missing language runtimes instead of spending a task budget on `command not found` loops.
-
-## Environment variables
-
-|Variable|Purpose|
-|-|-|
-|`MCODE_DEBUG`|Disable formatted error layout, surface raw tracebacks|
-|`MCODE_LAUNCH_STATE`|Override the persistent state file path|
-|`MCODE_LAUNCH_CONFIG`|Override `launch.toml` path|
-|`MCODE_RESULTS_DIR`|Override the results dir doctor checks for writability|
-|`MCODE_CACHE_DIR`|Bench cache dir (otherwise `XDG_CACHE_HOME/mcode` or `/tmp/mcode-cache`)|
-|`MCODE_KEEP_IMAGES`|Skip post-task image cleanup|
-|`MCODE_SKIP_IMAGE_PULL`|Skip Docker image pre-pull (use existing local images)|
-|`MCODE_CONTEXT_WINDOW`|LLM context window override (int)|
-|`MCODE_MAX_NEW_TOKENS`|LLM max output tokens|
-|`MCODE_REACT_TIMEOUT`|ReACT loop timeout in seconds|
-|`MCODE_AIDER_POLYGLOT_ROOT`|Aider polyglot benchmark root override|
-|`MCODE_PODMAN_PULL_ATTEMPTS`|Podman pull retry count|
-|`MCODE_PODMAN_PULL_RETRY_DELAY`|Seconds between podman pull retries|
-|`MCODE_NO_TTY`|Force non-TTY mode for the dashboard|
-|`MCODE_NO_COLOR` / `NO_COLOR`|Disable ANSI color|
-|`MCODE_MELLEA_PATH`|Local Mellea checkout for `deps sync`|
-|`OPENAI_BASE_URL`|Override the auto-resolved endpoint for `--backend openai`|
-|`OPENAI_API_KEY`|API key for `--backend openai` (defaults to `dummy`)|
-|`MELLEA_METRICS_ENABLED` / `MELLEA_METRICS_CONSOLE`|Mellea token metrics (observability extra)|
-|`MELLEA_TRACE_APPLICATION` / `MELLEA_TRACE_BACKEND` / `MELLEA_LOGS_OTLP`|Mellea tracing (observability extra)|
-
-## Examples
-
-End-to-end Blue Vela run:
-
-```bash
-# bootstrap config and validate
-uv run mcode doctor bluevela --init --login <user>@login3.bluevela.rmf.ibm.com
+uv run mcode doctor
+uv run mcode doctor local-ollama
+uv run mcode doctor local-vllm
 uv run mcode doctor bluevela
-
-# push the local repo
-uv run mcode launch sync bluevela
-
-# bring up a vLLM server
-uv run mcode launch bluevela --model Qwen/Qwen3.6-35B-A3B --json
-
-# wait for it (block until ready or 20 min)
-uv run mcode launch wait server-bv-abc123 --timeout 1200
-
-# run the smoke slice with 4 shards and a JSON event stream
-MCODE_CONTEXT_WINDOW=262144 \
-uv run mcode bench smoke \
-  --backend openai --model Qwen/Qwen3.6-35B-A3B \
-  --on bluevela --shards 4 --json
-
-# inspect / cancel
-uv run mcode bench list --benchmark suite --artifacts --limit 5
-uv run mcode bench list --json | jq '.[] | select(.status == "running")'
-uv run mcode bench cancel run-abc123
-uv run mcode launch stop server-bv-abc123
+uv run mcode doctor bluevela --init --login <user>@login3.bluevela.rmf.ibm.com
+uv run mcode doctor bluevela --deep
 ```
-`compare` accepts either DB files or directories on both sides. When a run has no evaluated task rows yet, the JSON output still includes artifact summary fields such as generated task count, evaluated task count, selected verified candidate count, and total selected patch bytes so you can compare generate-only experiments before official eval.
 
+With no target, the doctor checks the results directory, a container runtime, Mellea importability, and Ruff. `local-ollama` checks the local Ollama path. `local-vllm` checks the local vLLM path. `bluevela` checks SSH, queues, group membership, and config. `--init` is Blue Vela only and writes `~/.config/mcode/launch.toml` after probing the cluster.
 
-Local Ollama smoke:
+When a row is red, read the `next:` line. It is usually more useful than the exception text.
+
+## Launch commands
+
+Launch commands manage model servers and the remote workspace. They do not run benchmarks by themselves, but benchmark commands use their state to find healthy OpenAI-compatible endpoints.
 
 ```bash
 uv run mcode launch local-ollama --model granite4
-uv run mcode launch wait <id> --timeout 120
-uv run mcode bench swebench-lite --backend openai --model granite4 --limit 16 --shards 4
+uv run mcode launch local-vllm --model Qwen/Qwen2.5-0.5B
+uv run mcode launch bluevela --model Qwen/Qwen3.6-35B-A3B
+uv run mcode launch status
+uv run mcode launch wait <server-id> --timeout 600
+uv run mcode launch logs <server-id>
+uv run mcode launch stop <server-id>
+uv run mcode launch stop --all
+uv run mcode launch refresh
+uv run mcode launch sync bluevela
+```
+
+`local-ollama` records an existing Ollama model server and exposes its OpenAI-compatible endpoint to the rest of mCode. Use the exact model name from `ollama list`.
+
+`local-vllm` starts a local vLLM server and records it. It accepts the same `--model` shape you would pass to vLLM.
+
+`bluevela` submits a vLLM server job to Blue Vela. The required flag is `--model`. You can also pass `--tensor-parallel N`, `--max-model-len N`, and `--json`. The built-in model profiles live in `src/mcode/launch/profiles.py`.
+
+`launch wait` exits 0 when a server is healthy, 1 if it failed or stopped, 2 on timeout, and 3 if the id is unknown. I use it in scripts because it lets the next line assume the endpoint is ready.
+
+`launch stop --all` only stops servers recorded in your state file. It does not run a broad kill for your whole user account.
+
+`launch sync bluevela` rsyncs the local repo to the configured Blue Vela workspace. Useful flags are `--dry-run`, `--src DIR`, and `--bootstrap`. The bootstrap flag claims a populated remote directory and should be used deliberately.
+
+## Bench commands at a glance
+
+The bench command tree now has two kinds of commands: commands that run benchmarks and commands that manage run records.
+
+```bash
+uv run mcode bench smoke --model M [flags]
+uv run mcode bench swebench-lite --model M [flags]
+uv run mcode bench swebench-live --model M [flags]
+uv run mcode bench aider-polyglot --model M [flags]
+uv run mcode bench suite --model M [flags]
+
+uv run mcode bench list
+uv run mcode bench show --latest
+uv run mcode bench show <run-id>
+uv run mcode bench cancel <run-id>
+uv run mcode bench prune
+uv run mcode bench merge-shards --out merged.db shard-a.db shard-b.db
+uv run mcode bench artifacts list --db results.db
+```
+
+Every real benchmark prints a run plan, writes SQLite rows, updates launch state, and prints a footer at the end. The human view includes compact live progress by default. Add `--json` for line-delimited JSON events. Set `MCODE_LIVE_TRACE=0` to mute the human live trace, or `MCODE_LIVE_TRACE=1` to include live trace events in JSON mode.
+
+### Common benchmark flags
+
+These flags are shared by most benchmark commands:
+
+|Flag|Use|
+|-|-|
+|`--model M`|Model name used by Mellea and endpoint discovery|
+|`--backend B`|Mellea backend. Local SWE-bench defaults to `ollama`; smoke, suite, and Aider Polyglot usually use `openai`|
+|`--loop-budget N`|Agent turn budget per task|
+|`--temperature F`|Sampling temperature|
+|`--seed N`|Random seed|
+|`--timeout N`|Evaluation timeout per task|
+|`--limit N`|Run the first N selected tasks|
+|`--task-ids X`|Comma-separated task ids, or a JSON/text file with task ids|
+|`--db PATH`|SQLite DB path. Pick this explicitly for runs you care about|
+|`--phase`|Use `run`, `generate`, `evaluate`, or `prepare`|
+|`--artifact-dir DIR`|Directory for generated task artifacts. Defaults next to the DB|
+|`--shards N`|Start N workers and merge their DBs when they finish|
+|`--shard-count C --shard-index I`|Manual shard mode. The automatic `--shards` path uses this internally|
+|`--on`|Use `local` or `bluevela`|
+|`--fetch-db / --no-fetch-db`|For Blue Vela, copy the DB back when the remote run ends|
+|`--fetch-artifacts / --no-fetch-artifacts`|For Blue Vela, copy the artifact directory back too|
+|`--diagnostic-traces / --no-diagnostic-traces`|Persist compact diagnostic trace events|
+|`--json`|Emit JSON objects instead of the human display|
+
+Rerunning the same command against the same DB resumes work. Finished task rows are skipped. Retryable infrastructure failures can be retried. Sharded runs reuse stable shard DBs under `<db-stem>-shards/` and merge whatever finished.
+
+A bad `--task-ids` filter fails before work starts. If you ask for `python/word-count` and the selected benchmark has no such task, mCode tells you rather than creating an empty successful run.
+
+## Smoke
+
+`bench smoke` is a 16-task SWE-bench Verified diagnostic slice. It uses the SWE-bench runner underneath, so the same phase, artifact, shard, and remote flags apply.
+
+```bash
+uv run mcode bench smoke \
+  --backend openai \
+  --model granite4 \
+  --shards 4 \
+  --db experiments/results/smoke.db
+```
+
+I use this before any larger run. It is short enough to fail fast when Docker, endpoint discovery, or result writing is broken.
+
+## SWE-bench Lite, Verified, and Live
+
+`bench swebench-lite` is the main SWE-bench command. Despite the name, it can run other SWE-bench datasets with `--dataset`, including Verified.
+
+```bash
+uv run mcode bench swebench-lite \
+  --backend openai \
+  --model Qwen/Qwen3.6-35B-A3B \
+  --dataset princeton-nlp/SWE-bench_Verified \
+  --loop-budget 20 \
+  --sampling multiturn \
+  --sampling-budget 2 \
+  --selection-attempts 3 \
+  --timeout 300 \
+  --mem-limit 8g \
+  --pids-limit 512 \
+  --shards 4 \
+  --db research/swebench-verified/results.db
+```
+
+SWE-bench-specific flags:
+
+|Flag|Use|
+|-|-|
+|`--split`|Dataset split, usually `test`|
+|`--dataset`|Hugging Face dataset name. Defaults to `SWE-bench/SWE-bench_Lite`|
+|`--namespace`|Prebuilt image namespace. The default is `swebench`; set `""` to build locally|
+|`--arch`|Image architecture: `auto`, `x86_64`, or `arm64`|
+|`--max-workers N`|Parallelism for local image building|
+|`--force-rebuild`|Rebuild images even when cached|
+|`--mem-limit TEXT`|Eval container memory limit|
+|`--pids-limit N`|Eval container process limit|
+|`--cpu-limit N`|Cap each eval container at N CPU cores|
+|`--check-image-digests / --no-check-image-digests`|Check registry digests before reusing cached images|
+|`--n-samples N`|Outer attempts, or the fallback sampling budget|
+|`--sampling`|Use `none` or `multiturn`|
+|`--sampling-budget N`|Override the sampling loop budget|
+|`--selection-attempts N`|Run independent full-budget trajectories and select one before official eval|
+|`--eval-repair-attempts N`|Retry failed official evaluations with deterministic eval feedback|
+|`--chunk-size N`|On Blue Vela, run sequential chunks and merge their DBs|
+|`--relaunch-vllm / --no-relaunch-vllm`|With chunks, start a fresh Blue Vela vLLM server when needed|
+|`--vllm-tensor-parallel N`|Override tensor parallel for chunk relaunch|
+|`--vllm-max-model-len N`|Override model length for chunk relaunch|
+
+`bench swebench-live` runs Microsoft SWE-bench Live. It shares most SWE-bench flags, but it is an advanced command and normally not the first place to debug harness changes.
+
+## Aider Polyglot
+
+Aider Polyglot exercises small tasks across several languages. It has a first attempt and, unless you pass `--no-retry`, a second attempt that sees test output from the first failure.
+
+```bash
+uv run mcode bench aider-polyglot \
+  --backend openai \
+  --model granite4 \
+  --db experiments/results/polyglot.db
+```
+
+Useful Aider Polyglot flags:
+
+|Flag|Use|
+|-|-|
+|`--language X`|`all`, or one language such as `python`, `go`, `rust`, `js`, `cpp`, or `java`|
+|`--exercise X`|Run one exercise. Use it with a concrete language|
+|`--benchmark-root DIR`|Use an existing clone of the Aider Polyglot benchmark|
+|`--no-retry`|Disable the second attempt with feedback|
+|`--retry-loop-budget N`|Turn budget for the second attempt|
+|`--sampling`|Use `none` or `multiturn`|
+|`--selection-attempts N`|Generate multiple candidates and select one|
+
+Before a full polyglot run, use:
+
+```bash
+uv run mcode deps toolchains --benchmark aider-polyglot
+```
+
+## Suite
+
+`bench suite` runs a mixed manifest through the shared runner. It is the command I reach for after changing the harness because it catches more than a single SWE-only smoke.
+
+```bash
+uv run mcode bench suite \
+  --backend openai \
+  --model granite4 \
+  --db experiments/results/mixed-suite.db
+```
+
+The suite has a bundled manifest, but you can supply your own:
+
+```bash
+uv run mcode bench suite \
+  --backend openai \
+  --model granite4 \
+  --suite-file path/to/suite.json \
+  --db experiments/results/custom-suite.db
+```
+
+Suite-specific flags are `--suite-file`, `--retry-loop-budget`, and the SWE-bench eval controls `--timeout`, `--mem-limit`, `--pids-limit`, `--cpu-limit`, and image digest checking. The normal phase, artifact, shard, remote, and JSON flags also work.
+
+## Phases and artifacts
+
+The default phase is `run`, which generates and evaluates in one pass. Use `generate` when you want to save candidates without running official evaluation. Use `evaluate` to read saved artifacts and write result rows later.
+
+```bash
+uv run mcode bench swebench-lite \
+  --backend openai --model granite4 \
+  --limit 16 \
+  --db experiments/results/lite-generate.db \
+  --artifact-dir experiments/results/lite-artifacts \
+  --phase generate
+
+uv run mcode bench swebench-lite \
+  --backend openai --model granite4 \
+  --limit 16 \
+  --db experiments/results/lite-evaluate.db \
+  --artifact-dir experiments/results/lite-artifacts \
+  --phase evaluate
+```
+
+Artifact commands are grouped under `mcode bench artifacts`:
+
+```bash
+uv run mcode bench artifacts list --db experiments/results/lite-evaluate.db
+uv run mcode bench artifacts list --db experiments/results/lite-evaluate.db --task-id astropy__astropy-12907 --phase evaluate --json
+uv run mcode bench artifacts show astropy__astropy-12907 --db experiments/results/lite-evaluate.db
+uv run mcode bench artifacts show astropy__astropy-12907 --db experiments/results/lite-evaluate.db --candidate-index 0
+uv run mcode bench artifacts patch astropy__astropy-12907 --db experiments/results/lite-evaluate.db --out candidate.patch
+uv run mcode bench artifacts replay astropy__astropy-12907 --db experiments/results/lite-generate.db --out-db replay.db
+uv run mcode bench artifacts fetch <run-id> --dest research/run-artifacts
+uv run mcode bench artifacts fetch --db research/run/results.db --json
+```
+
+`artifacts list` accepts `--db`, `--run-id`, `--task-id`, `--phase`, and `--json`. If you omit `--run-id`, it uses the latest run in that DB.
+
+`artifacts show` takes a task id and accepts `--db`, `--run-id`, and `--candidate-index`. Without a candidate index, it prints the task manifest.
+
+`artifacts patch` takes a task id and accepts `--db`, `--run-id`, `--candidate-index`, and `--out`. Without `--out`, it prints the patch.
+
+`artifacts replay` takes a task id and accepts `--db`, `--run-id`, `--out-db`, `--candidate-index`, `--benchmark-root`, `--artifact-dir`, and `--fetch-missing-artifacts`. It re-evaluates a saved candidate through the benchmark adapter.
+
+`artifacts fetch` fetches a remote artifact directory for a recorded Blue Vela run. Pass a run id, or pass `--db` and let mCode resolve the latest fetchable run for that DB. It also accepts `--dest` and `--json`.
+
+The old dashed commands, such as `mcode bench artifacts-list`, still work as hidden aliases for old scripts. New docs and new scripts should use the grouped form.
+
+## Bench run records
+
+The launch state file records bench runs so you can find, show, cancel, and prune them without opening JSON by hand.
+
+```bash
+uv run mcode bench list
+uv run mcode bench list --wide
+uv run mcode bench list --status running
+uv run mcode bench list --benchmark swebench-lite --limit 10
+uv run mcode bench list --artifacts
+uv run mcode bench list --json
+```
+
+The default list is compact and newest first. Use `--wide` when you need DB paths, remote paths, target, shard counts, artifact status, and fetch status.
+
+```bash
+uv run mcode bench show --latest
+uv run mcode bench show <run-id>
+uv run mcode bench show <compact-id>
+uv run mcode bench show <run-id> --json
+```
+
+`bench show` prints the run record, DB summary, failed task rows, paths, progress, and follow-up commands. Compact ids from `bench list` are accepted when they are unambiguous.
+
+Prune is deliberately safe by default:
+
+```bash
+uv run mcode bench prune
+uv run mcode bench prune --status failed --older-than 7d
+uv run mcode bench prune --status failed --older-than 7d --yes
+uv run mcode bench prune --any-db --older-than 30d --yes
+uv run mcode bench prune --json
+```
+
+Without `--yes`, prune only prints what it would remove. Without `--any-db`, it only targets records whose DB path is missing.
+
+## Cancelling benches
+
+```bash
+uv run mcode bench cancel <run-id>
+```
+
+Cancellation depends on how the run was started. Local sharded runs get SIGTERM for each worker pid, then SIGKILL for stragglers after a short grace period. Blue Vela runs get process-group termination over SSH, followed by a check that the process is gone. Single in-process local runs are not cancellable from another shell, so the command exits 2 and tells you to use Ctrl+C in the original terminal.
+
+If Blue Vela kill verification fails, the run stays marked as running. That is safer than claiming success while a remote job may still be alive.
+
+## Manual shard merge
+
+Most sharded runs merge automatically. Use this command when you are recovering by hand:
+
+```bash
+uv run mcode bench merge-shards \
+  --out merged.db \
+  shard-a.db shard-b.db shard-c.db
+```
+
+Add `--force` to overwrite an existing output DB. The older top-level `mcode merge-shards` command still exists as a hidden compatibility alias, but the documented command is `mcode bench merge-shards`.
+
+## Results, compare, and CSV export
+
+`results` reads one or more SQLite DBs and prints pass-rate summaries:
+
+```bash
+uv run mcode results --db experiments/results/results.db
+uv run mcode results --db-dir experiments/results --benchmark swebench-lite
+uv run mcode results --db-glob 'research/*/results.db' --time
+uv run mcode results --db-dir research --compare-configs --json
+```
+
+Results flags:
+
+|Flag|Use|
+|-|-|
+|`--db PATH`|Read a DB. Repeat it for more DBs|
+|`--db-glob TEXT`|Read DBs matching a quoted glob|
+|`--db-dir DIR`|Recursively scan a directory for `*.db`|
+|`--benchmark X`|Filter by benchmark name|
+|`--model M`|Filter by model|
+|`--backend B`|Filter by backend|
+|`--suite S`|Filter by suite name|
+|`--suite-entry E`|Filter by suite entry|
+|`--loop-budget N`|Filter by loop budget|
+|`--timeout N`|Filter by timeout|
+|`--compare-configs`|Group by backend, timeout, and loop budget|
+|`--time`|Include sec/solve, solves/hour, and p95 timing|
+|`--json`|Print JSON|
+
+`compare` is the regression gate:
+
+```bash
+uv run mcode compare \
+  --baseline-dir experiments/results/baseline.db \
+  --candidate-dir experiments/results/candidate.db \
+  --max-lost 0
+```
+
+It accepts DB files or directories on either side. Useful gate flags are `--max-lost`, `--min-net`, `--min-candidate-pass-rate`, and `--min-candidate-passed`. You can also filter with `--task-ids`, `--benchmark`, `--suite`, and `--suite-entry`.
+
+For generate-only experiments, JSON compare output includes artifact counts such as generated tasks, evaluated tasks, selected verified candidates, and selected patch bytes. That lets you compare scaffolds before running official evaluation.
+
+CSV export writes runs, task results, diagnostic events, and artifact tables:
+
+```bash
+uv run mcode export-csv \
+  -i experiments/results \
+  --out-dir experiments/results \
+  --prefix mcode
+```
+
+Add `--include-logs` only when you really want stdout, stderr, and error text in the CSV. Those columns can get large.
+
+## Deps
+
+`deps sync` wraps the repo's `uv` setup. With no flags it installs the default dev extra.
+
+```bash
+uv run mcode deps sync
+uv run mcode deps sync --extra swebench --extra datasets
+uv run mcode deps sync --extra swebench --extra datasets --extra observability
+uv run mcode deps sync --no-dev
+MCODE_MELLEA_PATH=/path/to/mellea uv run mcode deps sync
+```
+
+`MCODE_MELLEA_PATH` replaces the pinned Mellea dependency with a local checkout. I use that when changing Mellea and mCode together.
+
+`deps toolchains` checks or installs Aider Polyglot language runtimes:
+
+```bash
+uv run mcode deps toolchains --benchmark aider-polyglot
+uv run mcode deps toolchains --benchmark aider-polyglot --language go --language rust
+uv run mcode deps toolchains --benchmark aider-polyglot --install
+```
+
+With `--install`, mCode uses the platform package manager when supported: Homebrew on macOS, winget or choco on Windows, and apt, dnf, or pacman on Linux.
+
+## Environment variables
+
+The env vars below are the ones that change behavior often enough to document.
+
+|Variable|Use|
+|-|-|
+|`MCODE_DEBUG`|Show raw tracebacks|
+|`MCODE_LAUNCH_STATE`|Use a different launch and bench state file|
+|`MCODE_LAUNCH_CONFIG`|Use a different launch config file|
+|`MCODE_RESULTS_DIR`|Directory checked by doctor for results writability|
+|`MCODE_CACHE_DIR`|Bench cache dir. Defaults to XDG cache or `/tmp/mcode-cache`|
+|`MCODE_KEEP_IMAGES`|Skip post-task image cleanup|
+|`MCODE_SKIP_IMAGE_PULL`|Use cached SWE-bench images instead of pulling first|
+|`MCODE_CONTEXT_WINDOW`|Override model context window|
+|`MCODE_MAX_NEW_TOKENS`|Override max output tokens|
+|`MCODE_REACT_TIMEOUT`|Timeout for the ReACT loop|
+|`MCODE_LIVE_TRACE`|Control live progress trace. `0` mutes human trace, `1` adds trace to JSON|
+|`MCODE_AIDER_POLYGLOT_ROOT`|Aider Polyglot benchmark checkout override|
+|`MCODE_PODMAN_PULL_ATTEMPTS`|Retry count for Podman pulls|
+|`MCODE_PODMAN_PULL_RETRY_DELAY`|Seconds between Podman pull retries|
+|`MCODE_NO_COLOR` / `NO_COLOR`|Disable ANSI color|
+|`MCODE_MELLEA_PATH`|Use a local Mellea checkout for deps sync|
+|`OPENAI_BASE_URL`|Override endpoint discovery for `--backend openai`|
+|`OPENAI_API_KEY`|API token for an OpenAI-compatible endpoint. Defaults to `dummy` for local servers|
+|`MELLEA_METRICS_ENABLED` / `MELLEA_METRICS_CONSOLE`|Mellea metrics when the observability extra is installed|
+|`MELLEA_TRACE_APPLICATION` / `MELLEA_TRACE_BACKEND` / `MELLEA_LOGS_OTLP`|Mellea tracing settings|
+
+## A full local example
+
+```bash
+uv run mcode doctor local-ollama
+uv run mcode launch local-ollama --model granite4
+uv run mcode launch wait <server-id> --timeout 120
+
+uv run mcode bench smoke \
+  --backend openai \
+  --model granite4 \
+  --shards 4 \
+  --db experiments/results/local-smoke.db
+
+uv run mcode bench show --latest
+uv run mcode results --db experiments/results/local-smoke.db --time
+uv run mcode launch stop <server-id>
+```
+
+## A full Blue Vela example
+
+```bash
+uv run mcode doctor bluevela --init --login <user>@login3.bluevela.rmf.ibm.com
+uv run mcode launch sync bluevela
+uv run mcode launch bluevela --model Qwen/Qwen3.6-35B-A3B --json
+uv run mcode launch wait <server-id> --timeout 1800
+
+MCODE_CONTEXT_WINDOW=262144 \
+uv run mcode bench smoke \
+  --backend openai \
+  --model Qwen/Qwen3.6-35B-A3B \
+  --on bluevela \
+  --shards 4 \
+  --db research/bluevela-smoke/results.db
+
+uv run mcode bench show --latest
+uv run mcode results --db research/bluevela-smoke/results.db --time
+uv run mcode launch stop <server-id>
 ```
