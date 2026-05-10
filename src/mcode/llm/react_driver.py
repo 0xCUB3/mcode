@@ -202,6 +202,13 @@ class SolveTraceCollector:
         )
 
 
+@dataclass
+class FilteredToolCalls:
+    valid: dict
+    invalid_reasons: list[str]
+    blocked_finalizer_reasons: list[str]
+
+
 class SolveTracePlugin(Plugin, name="mcode-solve-trace", priority=20):
     def __init__(self, collector: SolveTraceCollector):
         self.collector = collector
@@ -358,94 +365,28 @@ async def run_react_loop(
 
             tool_responses = []
             if result.tool_calls:
-                invalid_calls = []
-                blocked_finalizers = []
-                valid_tool_calls = {}
-                policy_state = ToolPolicyState(
-                    must_edit_now=must_edit_now,
-                    must_run_tests_now=must_run_tests_now,
-                    has_run_tests_tool=has_run_tests_tool,
-                    verification_succeeded=collector.verification_succeeded,
-                    finalizer_tool_name=MELLEA_FINALIZER_TOOL,
+                filtered_calls = _filter_tool_calls(
+                    result.tool_calls,
+                    policy_state=ToolPolicyState(
+                        must_edit_now=must_edit_now,
+                        must_run_tests_now=must_run_tests_now,
+                        has_run_tests_tool=has_run_tests_tool,
+                        verification_succeeded=collector.verification_succeeded,
+                        finalizer_tool_name=MELLEA_FINALIZER_TOOL,
+                    ),
+                    collector=collector,
                 )
-                for key, tool_call in result.tool_calls.items():
-                    tool_name = getattr(tool_call, "name", "") or str(key)
-                    if not tool_name:
-                        continue
-                    _normalize_tool_call_args(tool_name, tool_call)
-                    policy_decision = check_tool_call(tool_name, policy_state)
-                    if not policy_decision.allowed:
-                        if policy_decision.kind == "blocked_finalizer":
-                            blocked_finalizers.append(policy_decision.reason)
-                        else:
-                            invalid_calls.append(policy_decision.reason)
-                        continue
-                    missing_args = _missing_required_args(tool_call)
-                    if _should_autofill_finalizer(
-                        tool_name,
-                        missing_args,
-                        collector=collector,
-                    ):
-                        tool_call.args = {"answer": "Verified patch ready."}
-                        missing_args = []
-                        collector.note_event(
-                            "final_answer",
-                            {"action": "autofilled", "reason": "verified_missing_answer"},
-                        )
-                    if missing_args and not _allow_default_missing_args(
-                        tool_name,
-                        missing_args,
-                    ):
-                        invalid_calls.append(
-                            f"{tool_name} is missing required args: {', '.join(missing_args)}"
-                        )
-                        continue
-                    valid_tool_calls[key] = tool_call
-                collector.note_event(
-                    "tool_call_filter",
-                    {
-                        "total_call_count": len(result.tool_calls),
-                        "valid_call_count": len(valid_tool_calls),
-                        "invalid_call_count": len(invalid_calls),
-                        "blocked_finalizer_count": len(blocked_finalizers),
-                        "invalid_reasons": invalid_calls,
-                        "blocked_finalizer_reasons": blocked_finalizers,
-                        "valid_tool_names": [
-                            getattr(call, "name", str(key))
-                            for key, call in valid_tool_calls.items()
-                        ],
-                    },
+                context = _add_filtered_tool_feedback(
+                    context=context,
+                    message_cls=Message,
+                    filtered_calls=filtered_calls,
+                    collector=collector,
                 )
-                if blocked_finalizers:
-                    context = context.add(
-                        Message(
-                            role="user",
-                            content=(
-                                "Do not call final_answer yet. Run run_tests with "
-                                'test_cmd="default" or fix the failing tests first. '
-                                + " ".join(blocked_finalizers)
-                            ),
-                        )
-                    )
-                    collector.note_event(
-                        "final_answer",
-                        {"action": "blocked", "reasons": blocked_finalizers},
-                    )
-                if invalid_calls:
-                    context = context.add(
-                        Message(
-                            role="user",
-                            content=(
-                                "Some tool calls were malformed and were skipped. "
-                                "Retry them with all required arguments. " + " ".join(invalid_calls)
-                            ),
-                        )
-                    )
-                if not valid_tool_calls:
+                if not filtered_calls.valid:
                     continue
 
-                if len(valid_tool_calls) != len(result.tool_calls):
-                    result.tool_calls = valid_tool_calls
+                if len(filtered_calls.valid) != len(result.tool_calls):
+                    result.tool_calls = filtered_calls.valid
                 compat_stats = inspect_tool_call_arg_compat(result.tool_calls)
                 if compat_stats["raw_arg_call_count"]:
                     collector.note_event("tool_arg_compat", compat_stats)
@@ -525,6 +466,99 @@ async def run_react_loop(
         return await asyncio.wait_for(_run(), timeout=timeout_s)
     except TimeoutError:
         return None, "budget_exhausted"
+
+
+def _filter_tool_calls(
+    tool_calls: dict,
+    *,
+    policy_state: ToolPolicyState,
+    collector: SolveTraceCollector,
+) -> FilteredToolCalls:
+    invalid_reasons: list[str] = []
+    blocked_finalizer_reasons: list[str] = []
+    valid: dict = {}
+
+    for key, tool_call in tool_calls.items():
+        tool_name = getattr(tool_call, "name", "") or str(key)
+        if not tool_name:
+            continue
+        _normalize_tool_call_args(tool_name, tool_call)
+        policy_decision = check_tool_call(tool_name, policy_state)
+        if not policy_decision.allowed:
+            if policy_decision.kind == "blocked_finalizer":
+                blocked_finalizer_reasons.append(policy_decision.reason)
+            else:
+                invalid_reasons.append(policy_decision.reason)
+            continue
+
+        missing_args = _missing_required_args(tool_call)
+        if _should_autofill_finalizer(tool_name, missing_args, collector=collector):
+            tool_call.args = {"answer": "Verified patch ready."}
+            missing_args = []
+            collector.note_event(
+                "final_answer",
+                {"action": "autofilled", "reason": "verified_missing_answer"},
+            )
+        if missing_args and not _allow_default_missing_args(tool_name, missing_args):
+            invalid_reasons.append(
+                f"{tool_name} is missing required args: {', '.join(missing_args)}"
+            )
+            continue
+        valid[key] = tool_call
+
+    collector.note_event(
+        "tool_call_filter",
+        {
+            "total_call_count": len(tool_calls),
+            "valid_call_count": len(valid),
+            "invalid_call_count": len(invalid_reasons),
+            "blocked_finalizer_count": len(blocked_finalizer_reasons),
+            "invalid_reasons": invalid_reasons,
+            "blocked_finalizer_reasons": blocked_finalizer_reasons,
+            "valid_tool_names": [getattr(call, "name", str(key)) for key, call in valid.items()],
+        },
+    )
+    return FilteredToolCalls(
+        valid=valid,
+        invalid_reasons=invalid_reasons,
+        blocked_finalizer_reasons=blocked_finalizer_reasons,
+    )
+
+
+def _add_filtered_tool_feedback(
+    *,
+    context: object,
+    message_cls: type,
+    filtered_calls: FilteredToolCalls,
+    collector: SolveTraceCollector,
+) -> object:
+    if filtered_calls.blocked_finalizer_reasons:
+        context = context.add(
+            message_cls(
+                role="user",
+                content=(
+                    "Do not call final_answer yet. Run run_tests with "
+                    'test_cmd="default" or fix the failing tests first. '
+                    + " ".join(filtered_calls.blocked_finalizer_reasons)
+                ),
+            )
+        )
+        collector.note_event(
+            "final_answer",
+            {"action": "blocked", "reasons": filtered_calls.blocked_finalizer_reasons},
+        )
+    if filtered_calls.invalid_reasons:
+        context = context.add(
+            message_cls(
+                role="user",
+                content=(
+                    "Some tool calls were malformed and were skipped. "
+                    "Retry them with all required arguments. "
+                    + " ".join(filtered_calls.invalid_reasons)
+                ),
+            )
+        )
+    return context
 
 
 def _add_turn_feedback(
