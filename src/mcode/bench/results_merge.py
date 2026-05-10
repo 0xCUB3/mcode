@@ -7,6 +7,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 from mcode.bench.results_artifacts_copy import copy_artifact_task_from_conn
+from mcode.bench.results_sqlite import row_value as _row_value
+from mcode.bench.results_sqlite import sqlite_table_exists as _sqlite_table_exists
 
 
 def merge_shard_dbs(
@@ -241,18 +243,3 @@ def _diagnostic_events_for_task(
 
 def _config_json(config: dict) -> str:
     return json.dumps(config, sort_keys=True, default=str)
-
-
-def _sqlite_table_exists(conn: sqlite3.Connection, table: str) -> bool:
-    row = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-        (table,),
-    ).fetchone()
-    return row is not None
-
-
-def _row_value(row: sqlite3.Row, key: str, default=None):
-    keys = row.keys() if hasattr(row, "keys") else ()
-    if key in keys:
-        return row[key]
-    return default

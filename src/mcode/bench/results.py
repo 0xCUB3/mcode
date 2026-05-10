@@ -10,6 +10,8 @@ from pathlib import Path
 from mcode.bench import results_export, results_ingest, results_merge, results_metrics
 from mcode.bench.artifacts import TaskArtifactManifest
 from mcode.bench.results_schema import init_results_schema, table_columns
+from mcode.bench.results_sqlite import row_value as _row_value
+from mcode.bench.results_sqlite import sqlite_table_exists as _sqlite_table_exists
 
 
 @dataclass(frozen=True)
@@ -575,14 +577,6 @@ def _coerce_diagnostic_event(
     )
 
 
-def _sqlite_table_exists(conn: sqlite3.Connection, table: str) -> bool:
-    row = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-        (table,),
-    ).fetchone()
-    return row is not None
-
-
 def _enrich_result_with_diagnostic_metrics(result: dict) -> dict:
     enriched = dict(result)
     events = enriched.get("diagnostic_events")
@@ -669,13 +663,6 @@ def _turn_gap(start: object, end: object) -> int | None:
 
 def _config_json(config: dict) -> str:
     return json.dumps(config, sort_keys=True, default=str)
-
-
-def _row_value(row: sqlite3.Row, key: str, default=None):
-    keys = row.keys() if hasattr(row, "keys") else ()
-    if key in keys:
-        return row[key]
-    return default
 
 
 def merge_shard_dbs(*, out_path: Path, shard_paths: list[Path], force: bool = False) -> dict:

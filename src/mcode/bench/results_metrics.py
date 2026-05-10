@@ -4,6 +4,8 @@ import math
 import sqlite3
 from collections.abc import Sequence
 
+from mcode.bench.results_sqlite import row_value as _row_value
+
 _TERMINAL_REASON_BUCKETS = (
     "budget_exhausted",
     "unverified_diff_discarded",
@@ -726,10 +728,3 @@ def _time_percentiles_ms(time_ms: list[int]) -> dict[str, float | None]:
         "p50_ms": _percentile(values, 0.50),
         "p95_ms": _percentile(values, 0.95),
     }
-
-
-def _row_value(row: sqlite3.Row, key: str, default=None):
-    keys = row.keys() if hasattr(row, "keys") else ()
-    if key in keys:
-        return row[key]
-    return default
