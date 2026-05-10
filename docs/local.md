@@ -1,10 +1,10 @@
-# Running mCode locally
+# Local workflow
 
 This is the path I use when I want a fast answer from a model I can run on my own machine. Ollama is the easiest route because it already exposes an OpenAI-compatible endpoint. Local vLLM is better when you want to match the server stack used on Blue Vela or tune vLLM itself.
 
 The examples below assume you are in the repo and using `uv run`. If you installed the package another way, drop the `uv run` prefix.
 
-## What you need before starting
+## Prerequisites
 
 You need Python 3.11 or newer, `uv`, a container runtime for SWE-bench evaluation, and either Ollama or vLLM. Docker Desktop is fine for local SWE-bench. Podman can work too, but most of the day-to-day local testing here has been with Docker.
 
@@ -35,7 +35,7 @@ For Aider Polyglot, check the language runtimes before you launch a long job. Th
 uv run mcode deps toolchains --benchmark aider-polyglot
 ```
 
-## Starting a model
+## Model server setup
 
 ### Ollama
 
@@ -72,7 +72,7 @@ uv run mcode launch wait <server-id> --timeout 600
 
 Use this when you want vLLM behavior locally, or when you are debugging a model profile before trying the same model on Blue Vela.
 
-## The first benchmark to run
+## Smoke test
 
 Run the smoke slice first. It is a small SWE-bench Verified slice that exercises the agent loop, patch handling, container evaluation, result DB writes, sharding, and run state.
 
@@ -102,7 +102,7 @@ uv run mcode bench smoke --backend openai --model granite4 --shards 4 --json | j
 
 The JSON stream stays compact by default. If you want live model/tool trace events in JSON too, set `MCODE_LIVE_TRACE=1`. If the human trace is too noisy, set `MCODE_LIVE_TRACE=0`.
 
-## Running the real benches
+## Benchmark examples
 
 SWE-bench Lite with the first 16 tasks:
 
@@ -140,7 +140,7 @@ uv run mcode bench suite \
   --db experiments/results/mixed-suite.db
 ```
 
-## Resuming, sharding, and zero-task mistakes
+## Resume and sharding behavior
 
 A benchmark resumes when you rerun the same command against the same DB. Finished task rows are skipped, retryable infrastructure failures are retried, and sharded runs reuse their shard DBs under `<db-stem>-shards/` before merging completed rows back into the main DB.
 
@@ -170,7 +170,7 @@ uv run mcode bench swebench-lite \
 
 The default `--phase run` does both steps in one command and still writes artifacts as it goes.
 
-## Looking at runs after they finish
+## Run inspection
 
 `bench list` reads the persistent launch state file. The compact id in the first column is accepted by `bench show` as long as it matches one run.
 
@@ -205,7 +205,7 @@ uv run mcode bench artifacts replay <task-id> --db experiments/results/lite-spli
 
 `artifacts list` gives you the inventory. `artifacts show` dumps the saved manifest for a task, or one candidate if you pass `--candidate-index`. `artifacts patch` is the quick way to pull out the selected diff. `artifacts replay` takes a saved candidate and runs evaluation again into a fresh DB.
 
-## Stopping things cleanly
+## Server shutdown
 
 Stop one server:
 
@@ -248,7 +248,7 @@ uv run mcode export-csv \
   --prefix mcode
 ```
 
-## Common local fixes
+## Troubleshooting
 
 If Docker is not running, SWE-bench will fail before official evaluation. Start Docker Desktop or set `DOCKER_HOST` for your daemon and rerun the task. The common error mentions the Docker socket path and says the daemon is not reachable.
 

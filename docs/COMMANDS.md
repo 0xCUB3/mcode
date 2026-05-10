@@ -77,7 +77,7 @@ uv run mcode launch sync bluevela
 
 `launch sync bluevela` rsyncs the local repo to the configured Blue Vela workspace. Useful flags are `--dry-run`, `--src DIR`, and `--bootstrap`. The bootstrap flag claims a populated remote directory and should be used deliberately.
 
-## Bench commands at a glance
+## Benchmark commands
 
 The bench command tree now has two kinds of commands: commands that run benchmarks and commands that manage run records.
 
@@ -128,7 +128,7 @@ Rerunning the same command against the same DB resumes work. Finished task rows 
 
 A bad `--task-ids` filter fails before work starts. If you ask for `python/word-count` and the selected benchmark has no such task, mCode tells you rather than creating an empty successful run.
 
-## Smoke
+## Smoke benchmark
 
 `bench smoke` is a 16-task SWE-bench Verified diagnostic slice. It uses the SWE-bench runner underneath, so the same phase, artifact, shard, and remote flags apply.
 
@@ -321,7 +321,7 @@ uv run mcode bench prune --json
 
 Without `--yes`, prune only prints what it would remove. Without `--any-db`, it only targets records whose DB path is missing.
 
-## Cancelling benches
+## Benchmark cancellation
 
 ```bash
 uv run mcode bench cancel <run-id>
@@ -396,7 +396,7 @@ uv run mcode export-csv \
 
 Add `--include-logs` only when you really want stdout, stderr, and error text in the CSV. Those columns can get large.
 
-## Deps
+## Dependency management
 
 `deps sync` wraps the repo's `uv` setup. With no flags it installs the default dev extra.
 
@@ -447,7 +447,7 @@ The env vars below are the ones that change behavior often enough to document.
 |`MELLEA_METRICS_ENABLED` / `MELLEA_METRICS_CONSOLE`|Mellea metrics when the observability extra is installed|
 |`MELLEA_TRACE_APPLICATION` / `MELLEA_TRACE_BACKEND` / `MELLEA_LOGS_OTLP`|Mellea tracing settings|
 
-## A full local example
+## Local workflow example
 
 ```bash
 uv run mcode doctor local-ollama
@@ -465,7 +465,7 @@ uv run mcode results --db experiments/results/local-smoke.db --time
 uv run mcode launch stop <server-id>
 ```
 
-## A full Blue Vela example
+## Blue Vela workflow example
 
 ```bash
 uv run mcode doctor bluevela --init --login <user>@login3.bluevela.rmf.ibm.com

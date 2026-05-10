@@ -4,7 +4,7 @@ mCode is the benchmark harness I use for local model coding runs. It wraps the M
 
 It runs SWE-bench Verified, SWE-bench Live, SWE-bench Lite, Aider Polyglot, and a small mixed suite. You can point it at Ollama, a local vLLM server, an OpenAI-compatible endpoint, or a vLLM job on IBM's Blue Vela cluster.
 
-## Best results so far
+## Results
 
 These are the best mCode runs I have in the repo right now, using Qwen3.6-35B-A3B served by vLLM.
 
@@ -15,7 +15,7 @@ These are the best mCode runs I have in the repo right now, using Qwen3.6-35B-A3
 
 Bare model means the model was asked to solve the task without this harness. Base Mellea means the upstream Mellea ReACT loop. mCode adds the harness pieces this repo is about: workspace inspection, tool policy, verification, patch selection, split generation and evaluation, sharding, artifacts, and run bookkeeping. The notes and raw summaries live under [`research/`](research/).
 
-## Install
+## Installation
 
 I use `uv` for this repo.
 
@@ -36,7 +36,7 @@ If you are only running Aider Polyglot, check the language toolchains before a l
 uv run mcode deps toolchains --benchmark aider-polyglot
 ```
 
-## A first local run
+## Local quick start
 
 This is the smallest path I trust when I want to know whether the checkout, model server, Docker setup, and result DB are all working.
 
@@ -50,7 +50,7 @@ uv run mcode bench show --latest
 
 For a local Qwen or other Ollama model, use the exact name from `ollama list` in both commands. For example, if Ollama shows `qwen3.6:35b-a3b`, pass that string to `launch local-ollama` and to `bench`.
 
-## A first Blue Vela run
+## Blue Vela quick start
 
 The cluster path is longer because there is an SSH config, an rsync step, and an LSF vLLM server job involved. Once the config is written, the normal rhythm is sync, launch server, run bench, inspect, stop server.
 
@@ -69,7 +69,7 @@ uv run mcode bench show --latest
 uv run mcode launch stop <server-id>
 ```
 
-## The docs worth reading
+## Documentation
 
 Start with the workflow that matches where you plan to run the model.
 
@@ -80,7 +80,7 @@ Start with the workflow that matches where you plan to run the model.
 |Command reference with the weird corners included|[`docs/COMMANDS.md`](docs/COMMANDS.md)|
 |How the code is put together|[`docs/architecture.md`](docs/architecture.md)|
 
-## The commands I reach for most
+## Common commands
 
 ```bash
 mcode doctor
@@ -98,12 +98,12 @@ mcode compare --baseline-dir old.db --candidate-dir new.db --max-lost 0
 
 Most benchmark commands accept `--json` if you want one JSON object per line instead of the human progress display. I usually keep the human view on for long local runs because it shows each task moving through repo prep, model turns, tool calls, and official evaluation. Set `MCODE_LIVE_TRACE=0` if that is too noisy.
 
-## Where state and outputs go
+## State and output locations
 
 Benchmark rows go into SQLite, usually `experiments/results/results.db` unless you pass `--db`. Generated task artifacts sit next to the DB by default as `<db-stem>-artifacts`. Sharded runs create per-shard DBs under `<db-stem>-shards/` and merge them back into the DB you asked for.
 
 Launch and bench state lives in `~/.config/mcode/launch-state.json`, or wherever `MCODE_LAUNCH_STATE` points. That state file is what powers `bench list`, `bench show`, `bench cancel`, `launch status`, and `watch`. If it gets full of failed experiments, use `bench prune`; do not hand edit it unless you have to.
 
-## A few habits that save time
+## Usage notes
 
 Run `mcode doctor <target>` before blaming the model. Use `bench smoke` before spending hours on Verified. Keep explicit `--db` paths for anything you may want to compare later. When running on Blue Vela, keep the server id and run id until the DB and artifacts have been fetched back. If a remote bench finishes but the fetch dies, rerun the same command or use `mcode bench artifacts fetch` rather than starting the whole benchmark again.

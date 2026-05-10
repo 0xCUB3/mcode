@@ -1,4 +1,4 @@
-# Running mCode on Blue Vela
+# Blue Vela workflow
 
 Blue Vela is where mCode is meant to run the bigger local-model experiments. The model server runs as a vLLM job under LSF. The benchmark can run on the cluster too, then rsync its SQLite DB and artifacts back to your laptop when it finishes.
 
@@ -6,7 +6,7 @@ The workflow has a few moving parts, but the loop is simple once the config exis
 
 The login host used in these examples is `<user>@login3.bluevela.rmf.ibm.com`. You need VPN access, SSH access to the login node, and membership in `grp_runtime`.
 
-## Install locally first
+## Local installation
 
 Run these from your local checkout:
 
@@ -18,7 +18,7 @@ uv run mcode deps sync --extra swebench --extra datasets
 
 The commands that submit jobs and read state run locally. The benchmark code is copied to the cluster by `launch sync`, so keep your local checkout in the state you want to run before syncing.
 
-## Bootstrap the cluster config
+## Cluster configuration
 
 The first useful command is the Blue Vela doctor with `--init`:
 
@@ -43,7 +43,7 @@ Host login3.bluevela.rmf.ibm.com
   IdentityFile ~/.ssh/id_ed25519
 ```
 
-## Sync the repo
+## Repository sync
 
 mCode runs from a checkout on the cluster shared filesystem. Push your local checkout with:
 
@@ -62,7 +62,7 @@ uv run mcode launch sync bluevela --bootstrap
 
 Treat `--bootstrap` with care. It tells mCode that the remote directory is the mirror target and that deletes are allowed on future syncs.
 
-## Launch vLLM
+## vLLM launch
 
 Start a server job:
 
@@ -88,7 +88,7 @@ uv run mcode launch bluevela \
   --max-model-len 262144
 ```
 
-## Run a smoke bench on the cluster
+## Smoke benchmark
 
 Once a server is healthy, run the smoke slice remotely:
 
@@ -134,7 +134,7 @@ uv run mcode bench swebench-lite \
 
 The `--cpu-limit` flag matters on shared login-style machines where runaway eval containers can get killed by administrators. It caps each SWE-bench eval container at a fixed number of cores. If your queue policy changes, revisit that value.
 
-## Aider Polyglot and the mixed suite
+## Aider Polyglot and mixed suite
 
 Aider Polyglot is shorter to launch:
 
@@ -184,7 +184,7 @@ The default is `--fetch-db`, which rsyncs the SQLite DB back when the run ends. 
 
 For very long SWE-bench jobs, `--chunk-size N` runs remote chunks sequentially, writes chunk DBs, and merges them. If you also pass `--relaunch-vllm`, mCode can launch a fresh vLLM server between chunks when no healthy server exists. That path is meant for long cluster runs where model servers may time out before the full bench is finished.
 
-## Watching, listing, and showing runs
+## Run monitoring
 
 From another shell:
 
@@ -208,7 +208,7 @@ uv run mcode bench prune --status failed --older-than 7d --yes
 
 That first command is a dry run. I always run the dry run first.
 
-## Cancelling a remote bench
+## Remote cancellation
 
 Cancel by run id:
 
@@ -224,7 +224,7 @@ If you suspect a leaked process, check manually:
 ssh <user>@login3.bluevela.rmf.ibm.com 'pgrep -af "mcode|podman|vllm"'
 ```
 
-## Stopping vLLM and refreshing state
+## Server shutdown and state refresh
 
 Stop the server when you are done:
 
@@ -244,7 +244,7 @@ uv run mcode launch stop --all
 uv run mcode launch refresh
 ```
 
-## Inspecting results
+## Results inspection
 
 The DB should be local after a normal remote run. Query it directly:
 
@@ -270,7 +270,7 @@ uv run mcode export-csv \
   --prefix mcode
 ```
 
-## Environment variables I actually use
+## Environment variables
 
 |Variable|Why it matters on Blue Vela|
 |-|-|
@@ -283,7 +283,7 @@ uv run mcode export-csv \
 |`OPENAI_API_KEY`|Set an API token for an external OpenAI-compatible server|
 |`MCODE_DEBUG`|Show raw tracebacks instead of the formatted error page|
 
-## Common Blue Vela problems
+## Troubleshooting
 
 If `doctor bluevela` reports `Permission denied`, load the SSH key you expect with `ssh-add` and check `IdentitiesOnly yes` for the Blue Vela host. The login node can reject you after too many offered keys.
 
