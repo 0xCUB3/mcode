@@ -36,6 +36,10 @@ def _default_cache_dir() -> Path:
     return Path.home() / ".cache" / "mcode"
 
 
+class NoTasksMatchedError(ValueError):
+    """Raised when an explicit task selector matches no benchmark tasks."""
+
+
 @dataclass(frozen=True)
 class BenchConfig:
     model_id: str
@@ -111,10 +115,12 @@ class BenchmarkRunner:
         config: BenchConfig,
         results_db: ResultsDB,
         json_mode: bool = False,
+        state_run_id: str | None = None,
     ) -> None:
         self.config = config
         self.results_db = results_db
         self.json_mode = json_mode
+        self.state_run_id = state_run_id
         self._active_reporter = None
         self._live_trace_attempt_label: str | None = None
         self.llm = self._build_llm(loop_budget=config.loop_budget)
@@ -144,9 +150,30 @@ class BenchmarkRunner:
             ),
         )
 
+    def _patch_state_progress(self, **progress: object) -> None:
+        if not self.state_run_id:
+            return
+        try:
+            from mcode.bench import runstate
+
+            runstate.patch_run(run_id=self.state_run_id, progress=progress)
+        except Exception:
+            pass
+
+    def _patch_state_metadata(self, **metadata: object) -> None:
+        if not self.state_run_id:
+            return
+        try:
+            from mcode.bench import runstate
+
+            runstate.patch_run(run_id=self.state_run_id, metadata=metadata)
+        except Exception:
+            pass
+
     def _report_task_progress(self, text: str) -> None:
         if self._active_reporter is not None:
             self._active_reporter.event("info", text)
+        self._patch_state_progress(stage=text)
 
     def _live_trace_event(self, event_type: str, event: object) -> None:
         if self._active_reporter is None:
@@ -156,6 +183,7 @@ class BenchmarkRunner:
             if self._live_trace_attempt_label and text.startswith("turn "):
                 text = f"{self._live_trace_attempt_label}: {text}"
             self._active_reporter.event("info", text)
+            self._patch_state_progress(**_progress_from_live_trace_event(event_type, event, text))
 
     def _start_or_resume_run(self, benchmark: str, config: dict) -> _RunResume:
         run_id = self.results_db.find_latest_run_by_config(benchmark, config)
@@ -285,6 +313,9 @@ class BenchmarkRunner:
         task_ids: list[str] | None,
     ) -> RunSummary:
         tasks = adapter.load_tasks(limit, task_ids)
+        if task_ids and not tasks:
+            requested = ", ".join(task_ids)
+            raise NoTasksMatchedError(f"No tasks matched --task-ids: {requested}")
         tasks = _apply_task_shard(
             tasks,
             self.config.task_shard_count,
@@ -293,7 +324,9 @@ class BenchmarkRunner:
         config = _augment_run_config(asdict(self.config))
         config["planned_task_count"] = len(tasks)
         config["dataset"] = adapter.dataset_metadata()
+        self._patch_state_progress(current=0, total=len(tasks))
         resume = self._start_or_resume_run(adapter.benchmark, config)
+        self._patch_state_metadata(results_run_id=resume.run_id)
         pending_tasks = [
             task for task in tasks if self._should_run_task(resume, adapter.task_id(task))
         ]
@@ -325,8 +358,16 @@ class BenchmarkRunner:
             self._active_reporter = reporter
             try:
                 reporter.total(len(pending_tasks))
-                for task in pending_tasks:
+                for index, task in enumerate(pending_tasks, start=1):
                     task_id = adapter.task_id(task)
+                    self._patch_state_progress(
+                        current=index - 1,
+                        total=len(pending_tasks),
+                        task_id=task_id,
+                        stage="starting",
+                        turn=None,
+                        last_tool=None,
+                    )
                     reporter.event("info", f"starting {task_id}")
                     result = adapter.run_task(task, environment, resume.run_id)
                     if result is not None:
@@ -336,6 +377,12 @@ class BenchmarkRunner:
                         detail = f"{task_id} generated"
                     adapter.cleanup_task(task, environment)
                     reporter.advance(detail=detail)
+                    self._patch_state_progress(
+                        current=index,
+                        total=len(pending_tasks),
+                        task_id=task_id,
+                        stage="done" if result and result.get("passed") else "failed",
+                    )
             finally:
                 self._active_reporter = None
 
@@ -1462,6 +1509,35 @@ def _live_trace_enabled(config: BenchConfig, *, json_mode: bool) -> bool:
     if config.live_trace:
         return True
     return not json_mode
+
+
+def _progress_from_live_trace_event(
+    event_type: str,
+    event: object,
+    text: str,
+) -> dict[str, object]:
+    progress: dict[str, object] = {"stage": text}
+    if isinstance(event, Mapping):
+        turn = event.get("turn")
+        if turn:
+            progress["turn"] = turn
+        payload = event.get("payload")
+        if isinstance(payload, Mapping):
+            if event_type == "generation":
+                calls = payload.get("tool_calls")
+                if isinstance(calls, list) and calls:
+                    names = [
+                        str(call.get("name", ""))
+                        for call in calls
+                        if isinstance(call, Mapping) and call.get("name")
+                    ]
+                    if names:
+                        progress["last_tool"] = ", ".join(names)
+            elif event_type in {"read_search_target", "edit_result", "run_tests", "tool_result"}:
+                tool_name = payload.get("tool_name")
+                if tool_name:
+                    progress["last_tool"] = str(tool_name)
+    return progress
 
 
 def _format_live_trace_event(event_type: str, event: object) -> str | None:

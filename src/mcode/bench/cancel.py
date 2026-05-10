@@ -13,12 +13,16 @@ State transitions to RunStatus.STOPPED with metadata.cancel_reason="user" so
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import signal
+import sqlite3
 import time
 from datetime import datetime
+from pathlib import Path
 
+from mcode.bench.results import ResultsDB
 from mcode.launch import state as launch_state
 from mcode.launch.models import RunRecord, RunStatus
 from mcode.ui.console import console
@@ -108,6 +112,61 @@ def list_runs(
             progress,
         )
     console.print(table)
+    return 0
+
+
+def show_run(run_id: str, *, json_mode: bool = False) -> int:
+    """Print one run with state, result rows, and useful follow-up commands."""
+    s = launch_state.load()
+    run = s.run(run_id)
+    if run is None:
+        raise MCodeError(
+            what=f"no run with id {run_id!r}",
+            why="",
+            next="`mcode bench list --limit 20` to see recent runs",
+        )
+
+    result_info = _result_info(run)
+    if json_mode:
+        print(json.dumps({"run": _run_payload(run), "results": result_info}, indent=2, default=str))
+        return 0
+
+    console.print(f"[bold]{run.id}[/bold]")
+    console.print(
+        f"status={run.status.value} benchmark={run.benchmark} target={run.target.value} "
+        f"started={_format_ts(run.started_at)} ended={_format_ts(run.ended_at)}"
+    )
+    if run.db_path:
+        console.print(f"db={run.db_path}")
+    if run.progress:
+        console.print(f"progress={_format_progress(run.progress)}")
+    command = (run.metadata or {}).get("command")
+    if command:
+        console.print(f"rerun={command}")
+    env = (run.metadata or {}).get("env")
+    if isinstance(env, dict) and env:
+        env_text = " ".join(f"{key}={shlex.quote(str(value))}" for key, value in env.items())
+        console.print(f"env={env_text}")
+    if run.remote:
+        _print_remote_paths(run)
+    if result_info.get("summary"):
+        summary = result_info["summary"]
+        console.print(
+            f"results={summary['passed']}/{summary['total']} passed "
+            f"({summary['pass_rate']:.1%}) results_run_id={summary['run_id']}"
+        )
+    failures = result_info.get("failures") or []
+    if failures:
+        console.print("failed tasks:")
+        for row in failures[:10]:
+            reason = row.get("terminal_reason") or row.get("error") or "failed"
+            console.print(f"  - {row['task_id']}: {reason}")
+    console.print("commands:")
+    console.print(f"  mcode bench cancel {run.id}")
+    if run.remote.get("remote_artifact_dir"):
+        console.print(f"  mcode bench artifacts-fetch {run.id}")
+    if run.db_path:
+        console.print(f"  mcode export-csv --db {shlex.quote(run.db_path)}")
     return 0
 
 
@@ -350,9 +409,87 @@ def _format_progress(p: dict) -> str:
         return "—"
     cur = p.get("current", 0)
     total = p.get("total", 0)
-    if total:
-        return f"{cur}/{total}"
-    return str(cur)
+    head = f"{cur}/{total}" if total else str(cur)
+    task_id = p.get("task_id")
+    stage = p.get("stage")
+    details = [str(value) for value in (task_id, stage) if value]
+    return f"{head} {' · '.join(details)}" if details else head
 
 
-__all__ = ["cancel_run", "list_runs"]
+def _run_payload(run: RunRecord) -> dict:
+    return {
+        "id": run.id,
+        "benchmark": run.benchmark,
+        "target": run.target.value,
+        "status": run.status.value,
+        "started_at": run.started_at,
+        "ended_at": run.ended_at,
+        "db_path": run.db_path,
+        "progress": run.progress,
+        "remote": run.remote,
+        "metadata": run.metadata,
+    }
+
+
+def _result_info(run: RunRecord) -> dict:
+    db_path = Path(run.db_path) if run.db_path else None
+    if db_path is None or not db_path.exists():
+        return {}
+    try:
+        with ResultsDB(db_path) as rdb:
+            run_id = _results_run_id(run, rdb)
+            if run_id is None:
+                return {}
+            summary = rdb.run_summary(run_id)
+            failures = [
+                dict(row)
+                for row in rdb.conn.execute(
+                    """
+                    SELECT task_id, error, terminal_reason, timed_out, exit_code
+                    FROM task_results
+                    WHERE run_id = ? AND NOT passed
+                    ORDER BY task_id
+                    LIMIT 20
+                    """,
+                    (run_id,),
+                ).fetchall()
+            ]
+    except (OSError, sqlite3.Error):
+        return {}
+    return {
+        "summary": {
+            "run_id": summary.run_id,
+            "total": summary.total,
+            "passed": summary.passed,
+            "pass_rate": summary.pass_rate,
+        },
+        "failures": failures,
+    }
+
+
+def _results_run_id(run: RunRecord, rdb: ResultsDB) -> int | None:
+    raw = (run.metadata or {}).get("results_run_id")
+    if raw is not None:
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
+def _print_remote_paths(run: RunRecord) -> None:
+    for key in (
+        "login",
+        "run_dir",
+        "remote_db",
+        "remote_log",
+        "remote_script",
+        "remote_artifact_dir",
+        "local_artifact_dir",
+    ):
+        value = run.remote.get(key)
+        if value:
+            console.print(f"{key}={value}")
+
+
+__all__ = ["cancel_run", "list_runs", "show_run"]

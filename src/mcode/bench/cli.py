@@ -8,7 +8,7 @@ import typer
 
 from mcode.bench.artifacts_cli import register_artifact_commands
 from mcode.bench.results import ResultsDB
-from mcode.bench.runner import BenchConfig, BenchmarkRunner
+from mcode.bench.runner import BenchConfig, BenchmarkRunner, NoTasksMatchedError
 from mcode.bench.shards import (
     SHARDED_INFRA_EXIT_CODE,
     _full_db_summary,
@@ -18,6 +18,14 @@ from mcode.bench.shards import (
     _run_sharded_benchmark,
 )
 from mcode.bench.suite_cli import register_suite_commands
+from mcode.bench.summary import (
+    RunPlan,
+    print_failure_hints,
+    print_run_footer,
+    print_run_plan,
+    safe_rerun_metadata,
+    task_time_ms,
+)
 from mcode.cli_shared import (
     DEFAULT_DB_PATH,
     _append_option,
@@ -49,18 +57,53 @@ def _run_single_benchmark(
     from mcode.launch.models import RunStatus, Target
 
     parsed_task_ids = _parse_task_ids(task_ids)
-    runner = BenchmarkRunner(config=config, results_db=ResultsDB(db), json_mode=json_mode)
     run_id = runstate.make_run_id(benchmark)
-    runstate.open_run(run_id=run_id, benchmark=benchmark, target=Target.LOCAL_VLLM, db_path=db)
+    runstate.open_run(
+        run_id=run_id,
+        benchmark=benchmark,
+        target=Target.LOCAL_VLLM,
+        db_path=db,
+        metadata=safe_rerun_metadata(),
+    )
     final_status: RunStatus = RunStatus.FAILED
     cancel_reason: str | None = None
     try:
+        runner = BenchmarkRunner(
+            config=config,
+            results_db=ResultsDB(db),
+            json_mode=json_mode,
+            state_run_id=run_id,
+        )
+        if not json_mode:
+            print_run_plan(
+                RunPlan(
+                    benchmark=benchmark,
+                    backend=backend,
+                    model=model,
+                    db=db,
+                    loop_budget=loop_budget,
+                    timeout_s=timeout_s,
+                    phase=config.phase,
+                    location="local",
+                    artifact_dir=config.artifact_dir,
+                    limit=limit,
+                    task_ids=task_ids,
+                    shard_count=config.task_shard_count,
+                    shard_index=config.task_shard_index,
+                )
+            )
         try:
             summary = runner.run_benchmark(benchmark, limit=limit, task_ids=parsed_task_ids)
         except KeyboardInterrupt:
             final_status = RunStatus.STOPPED
             cancel_reason = "interrupt"
             raise
+        except NoTasksMatchedError as e:
+            if json_mode:
+                print(json.dumps({"kind": "error", "error": str(e)}, sort_keys=True))
+            else:
+                typer.echo(f"✗ {e}", err=True)
+            raise typer.Exit(2) from e
         except Exception as e:
             if _is_polyglot_toolchain_exception(e):
                 if json_mode:
@@ -110,6 +153,13 @@ def _run_single_benchmark(
                 loop_budget=loop_budget,
                 timeout_s=timeout_s,
             )
+            print_run_footer(
+                db=db,
+                summary=summary,
+                task_time_ms=task_time_ms(db, summary.run_id),
+            )
+            print_failure_hints(db=db, run_id=summary.run_id)
+        runstate.patch_run(run_id=run_id, metadata={"results_run_id": summary.run_id})
         final_status = RunStatus.DONE
     finally:
         try:
@@ -133,6 +183,8 @@ def _run_bluevela_benchmark(
 ) -> None:
     from mcode.bench.remote import RemoteBenchError, run_bench_on_bluevela
 
+    if "--json" not in argv:
+        _print_remote_run_plan(command=command, argv=argv, model=model, db=db)
     try:
         rc = run_bench_on_bluevela(
             bench_argv=[command, *argv],
@@ -145,6 +197,49 @@ def _run_bluevela_benchmark(
         typer.echo(f"✗ {e}", err=True)
         raise typer.Exit(1) from e
     raise typer.Exit(rc)
+
+
+def _option_value(argv: list[str], flag: str) -> str | None:
+    if flag not in argv:
+        return None
+    index = argv.index(flag)
+    if index + 1 >= len(argv):
+        return None
+    return argv[index + 1]
+
+
+def _optional_int(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _optional_path(value: str | None) -> Path | None:
+    return Path(value) if value else None
+
+
+def _print_remote_run_plan(*, command: str, argv: list[str], model: str, db: Path) -> None:
+    print_run_plan(
+        RunPlan(
+            benchmark=command,
+            backend=_option_value(argv, "--backend") or "openai",
+            model=model,
+            db=db,
+            loop_budget=int(_option_value(argv, "--loop-budget") or 0),
+            timeout_s=int(_option_value(argv, "--timeout") or 0),
+            phase=_option_value(argv, "--phase") or "run",
+            location="bluevela",
+            artifact_dir=_optional_path(_option_value(argv, "--artifact-dir")),
+            limit=_optional_int(_option_value(argv, "--limit")),
+            task_ids=_option_value(argv, "--task-ids"),
+            shards=_optional_int(_option_value(argv, "--shards")),
+            shard_count=_optional_int(_option_value(argv, "--shard-count")),
+            shard_index=_optional_int(_option_value(argv, "--shard-index")),
+        )
+    )
 
 
 def _run_bluevela_benchmark_rc(
@@ -619,6 +714,24 @@ def bench_list(
     )
     if rc != 0:
         raise typer.Exit(rc)
+
+
+@bench_app.command("show")
+def bench_show(
+    run_id: str = typer.Argument(..., help="run id (from `mcode bench list`)"),
+    json_mode: JsonFlag = False,
+) -> None:
+    """Show one recorded bench run with result and artifact paths."""
+    from mcode.bench.cancel import show_run
+    from mcode.ui.errors import handle_errors
+
+    @handle_errors
+    def _do() -> None:
+        rc = show_run(run_id, json_mode=json_mode)
+        if rc != 0:
+            raise typer.Exit(rc)
+
+    _do()
 
 
 @bench_app.command("cancel")

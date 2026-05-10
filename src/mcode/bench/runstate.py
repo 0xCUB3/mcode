@@ -29,6 +29,7 @@ def open_run(
     db_path: Path,
     shard_pids: list[int] | None = None,
     remote: dict | None = None,
+    metadata: dict | None = None,
 ) -> None:
     """Create the initial RunRecord with status=running."""
 
@@ -41,6 +42,7 @@ def open_run(
             db_path=str(db_path),
             shard_pids=list(shard_pids or []),
             remote=dict(remote or {}),
+            metadata=dict(metadata or {}),
             started_at=time.time(),
             updated_at=str(time.time()),
         )
@@ -55,6 +57,7 @@ def patch_run(
     shard_pids: list[int] | None = None,
     remote: dict | None = None,
     progress: dict | None = None,
+    metadata: dict | None = None,
 ) -> None:
     """Patch a run in flight (e.g. record shard pids once subprocesses launch)."""
 
@@ -68,6 +71,8 @@ def patch_run(
             rec.remote = {**rec.remote, **remote}
         if progress is not None:
             rec.progress = {**rec.progress, **progress}
+        if metadata is not None:
+            rec.metadata = {**rec.metadata, **metadata}
         rec.updated_at = str(time.time())
         s.upsert_run(rec)
 

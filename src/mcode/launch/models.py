@@ -113,7 +113,7 @@ class RunRecord:
     db_path: str | None = None
     shard_pids: list[int] = field(default_factory=list)
     remote: dict[str, Any] = field(default_factory=dict)
-    progress: dict[str, int] = field(default_factory=dict)
+    progress: dict[str, Any] = field(default_factory=dict)
 
 
 class LaunchError(MCodeError):
