@@ -16,6 +16,7 @@ from mellea.plugins.base import Plugin
 from mellea.plugins.decorators import hook
 from mellea.plugins.types import PluginMode
 
+from mcode.agent.tool_policy import ToolPolicyState, check_tool_call
 from mcode.mellea_compat import acall_tools_with_arg_compat, inspect_tool_call_arg_compat
 
 
@@ -397,30 +398,24 @@ async def run_react_loop(
                 invalid_calls = []
                 blocked_finalizers = []
                 valid_tool_calls = {}
+                policy_state = ToolPolicyState(
+                    must_edit_now=must_edit_now,
+                    must_run_tests_now=must_run_tests_now,
+                    has_run_tests_tool=has_run_tests_tool,
+                    verification_succeeded=collector.verification_succeeded,
+                    finalizer_tool_name=MELLEA_FINALIZER_TOOL,
+                )
                 for key, tool_call in result.tool_calls.items():
                     tool_name = getattr(tool_call, "name", "") or str(key)
                     if not tool_name:
                         continue
                     _normalize_tool_call_args(tool_name, tool_call)
-                    if must_run_tests_now and tool_name != "run_tests":
-                        invalid_calls.append(
-                            "run_tests is required now because source files changed "
-                            "since the last verification"
-                        )
-                        continue
-                    if must_edit_now and tool_name != "edit":
-                        invalid_calls.append(
-                            "edit is required now because no source file has been changed yet"
-                        )
-                        continue
-                    if (
-                        tool_name == MELLEA_FINALIZER_TOOL
-                        and has_run_tests_tool
-                        and not collector.verification_succeeded
-                    ):
-                        blocked_finalizers.append(
-                            "final_answer requires successful verification first"
-                        )
+                    policy_decision = check_tool_call(tool_name, policy_state)
+                    if not policy_decision.allowed:
+                        if policy_decision.kind == "blocked_finalizer":
+                            blocked_finalizers.append(policy_decision.reason)
+                        else:
+                            invalid_calls.append(policy_decision.reason)
                         continue
                     missing_args = _missing_required_args(tool_call)
                     if _should_autofill_finalizer(

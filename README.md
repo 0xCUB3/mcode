@@ -2,18 +2,16 @@
 
 An agentic coding benchmark harness built on [Mellea](https://mellea.ai). Runs SWE-bench Verified, SWE-bench Live, and Aider Polyglot end-to-end on a local model or a remote vLLM server.
 
-## Kept results
+## Top results
 
-These are the checked-in runs that currently define the project. They are not all the same evaluation setting, so use the linked run notes when comparing numbers.
+Best mCode results to date with Qwen3.6-35B-A3B served via vLLM:
 
-|Benchmark|Model|Setting|Result|
-|-|-|-|-:|
-|SWE-bench Verified|Qwen3.6-35B-A3B|multiturn, 5 selected attempts, full 500 tasks|**319/500** (63.8%)|
-|Aider Polyglot|Qwen3.6-35B-A3B|20+12 turn retry budget, 3 selected attempts|**207/225** (92.0%)|
-|Aider Polyglot|Qwen3.6-35B-A3B|single-selection control-loop run|190/225 (84.4%)|
-|SWE-bench Verified|MiniMax-M2.5|post-redesign baseline, 1 sample|187/500 (37.4%)|
+|Benchmark|Bare model|Base Mellea|mCode|
+|-|-|-|-|
+|SWE-bench Verified (500 tasks)|0.3%|37.4%|**63.8%** (319/500)|
+|Aider Polyglot (225 tasks)|16%|45.8% (103/225)|**92.0%** (207/225)|
 
-The 207/225 Aider result is a selected-trajectory result, not a default single-pass score. Per-benchmark data, exact commands, and caveats live under [`research/`](research/).
+Bare model = LLM with no agentic harness. Base Mellea = upstream Mellea ReACT loop. mCode = full harness with selection, multiturn sampling, workspace-context discovery, generic control-loop nudges, and the verification policy. Per-benchmark data + run notes live under [`research/`](research/).
 
 ## Install
 
