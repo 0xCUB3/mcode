@@ -9,8 +9,7 @@ internal per-shard state, and emits to the chosen renderer:
 - Rich (TTY): a `rich.live.Live` table that updates in place. Multi-shard
   rows + an overall row with ok/fail/infra counters and a running ETA.
 - Plain (non-TTY / CI / MCODE_NO_TTY=1): one human-readable line per
-  state change. Format-equivalent (not byte-equivalent) to the
-  pre-Wave-2 _run_sharded_benchmark output.
+  state change, close enough to the old sharded-run logs for simple scrapers.
 - Json (`--json`): one JSON object per line with strictly monotonic seq.
 
 Threading invariants:
@@ -263,11 +262,9 @@ class Dashboard:
         print(json.dumps(payload, sort_keys=True), file=self._stream, flush=True)
 
     def _render_plain(self, evt: DashEvent) -> None:
-        # Lines preserved verbatim (or near-verbatim) from the pre-Wave-2
-        # _run_sharded_benchmark output so existing log scrapers stay valid.
-        # run_start carries data but doesn't print in plain mode — the
-        # orchestrator prints the equivalent "▶ sharded run command=..."
-        # info line, matching the pre-Wave-2 format exactly.
+        # Keep the old sharded-run text format; some logs are scraped by
+        # simple line matching. run_start carries data but stays quiet here
+        # because the orchestrator prints the matching command line.
         if evt.kind == "run_start":
             return
         if evt.kind == "shard_start":

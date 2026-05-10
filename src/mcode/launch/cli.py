@@ -404,9 +404,7 @@ def cmd_doctor(
     ),
 ) -> None:
     """Health check for a target. With --init, probe and write launch.toml."""
-    # Regression: don't load existing config for --init. The
-    # whole point of --init is to recover a missing/broken launch.toml; eager
-    # loading defeats that.
+    # --init must work even when launch.toml is missing or broken.
     if init:
         if target != "bluevela":
             _print_error(
@@ -488,10 +486,7 @@ def cmd_refresh() -> None:
                 elif srv.target == Target.LOCAL_VLLM:
                     updated = local_vllm.refresh(srv)
                 elif srv.target == Target.LOCAL_OLLAMA:
-                    # Regression: pass cfg so custom Ollama
-                    # host/port settings are honoured during refresh. Without
-                    # this, non-default daemons get refreshed against
-                    # 127.0.0.1:11434 and healthy records flip to stopped.
+                    # Use the configured host and port, not the Ollama defaults.
                     updated = local_ollama.refresh(srv, cfg=need_cfg())
                 else:
                     continue

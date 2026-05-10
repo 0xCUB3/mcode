@@ -1,20 +1,14 @@
-"""Local Ollama target.
+"""Local Ollama setup.
 
-v1 scope: the `ollama serve` daemon is the user's responsibility (it usually
-runs via brew services / systemd / launchctl and stays running). This module
-verifies the daemon is reachable, pulls the requested model (with progress),
-and records the OpenAI-compatible endpoint.
-
-The "model pull" phase is the real UX win — Ollama's download can take
-minutes for large models, and progress is streamable from its API.
+Assumes `ollama serve` is already running. Checks the daemon, pulls the
+requested model when needed, and records the OpenAI-compatible endpoint.
 
 Phases:
-    check   → ollama daemon reachable
-    pull    → model present (skipped if already pulled)
-    ready   → /v1/models returns the model
+    check   → daemon reachable
+    pull    → model present
+    ready   → `/v1/models` lists the model
 
-Endpoint: http://<host>:<port>/v1 — Ollama exposes an OpenAI-compatible
-surface since 0.1.30+.
+Endpoint: http://<host>:<port>/v1
 """
 
 from __future__ import annotations
@@ -151,9 +145,8 @@ def _pull_stream(cfg: LaunchConfig, model: str, deadline: float):
             try:
                 evt = json.loads(line)
             except json.JSONDecodeError as e:
-                # Regression: don't silently swallow malformed frames — the
-                # heartbeat gets stuck on stale progress and the real pull
-                # failure is obscured. Surface as LaunchError with context.
+                # Malformed progress frames leave the heartbeat showing stale
+                # status, so fail with the bad line attached.
                 raise LaunchError(
                     what=f"ollama pull produced malformed JSON for {model!r}",
                     why=f"{e}: {line[:200]!r}",
@@ -241,9 +234,8 @@ def launch(
         reporter.finish(PhaseStatus.DONE)
 
     # --- ready phase -------------------------------------------------------
-    # Regression: prove the model is served at /v1/models (the advertised
-    # endpoint), not just that /api/tags lists it. Tags and /v1 can disagree
-    # during daemon restarts or manifest shuffles.
+    # Check the endpoint we hand to clients. `/api/tags` and `/v1/models` can
+    # disagree during daemon restarts or manifest changes.
     reporter.start("ready")
     served = _v1_models(cfg)
     if not _model_in_tags(spec.model, served):

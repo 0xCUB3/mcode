@@ -8,7 +8,7 @@ Schema:
     shared_root = "<$HOME>/mcode-shared"
     queue_order = ["normal"]       # populated by doctor --init from real bqueues
     group = ""                     # must be set (by doctor --init or manually)
-    gpu_mode = "exclusive_process" # Phase 0.5 probe finding
+    gpu_mode = "exclusive_process"
     hf_env = "<$HOME>/.config/mcode/hf-env.sh"
 
     [bluevela.podman]

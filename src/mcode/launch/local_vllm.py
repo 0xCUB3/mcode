@@ -1,21 +1,15 @@
-"""Local vLLM target.
+"""Local vLLM server launcher.
 
-Simplest end-to-end path — no SSH, no LSF. Spawns `vllm serve` as a local
-subprocess, polls the HTTP health endpoint until ready, writes a
-ServerRecord with the endpoint, and returns.
-
-v1 scope: server lifecycle only. Benchmark invocation is out-of-scope for
-local-vllm; user runs `OPENAI_BASE_URL=... mcode bench ...` themselves
-against the printed endpoint. Bluevela.py is where shard lifecycle lives
-because LSF is what the launcher exists to tame.
+Starts `vllm serve` as a local subprocess, waits for `/v1/models`, records the
+endpoint, and returns. Benchmark runs use the printed `OPENAI_BASE_URL`.
 
 Phases:
-    submit   → spawning vllm serve
-    starting → model load + warmup
-    ready    → HTTP /v1/models returns 200
+    submit   → spawn vLLM
+    starting → model load and warmup
+    ready    → `/v1/models` returns 200
 
-Server stop: `stop(record_id)` sends SIGTERM, waits, SIGKILL, cleans state.
-Refresh: `refresh(record)` checks the pid; stale records flip to stopped.
+`stop(record_id)` sends SIGTERM, then SIGKILL if needed. `refresh(record)`
+checks the pid and marks stale records as stopped.
 """
 
 from __future__ import annotations

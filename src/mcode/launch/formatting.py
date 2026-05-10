@@ -18,9 +18,8 @@ _SERVER_MARKERS = {"healthy": "✓", "pending": "·", "failed": "✗", "stopped"
 def format_status_json(s: State, *, raw: bool) -> dict[str, Any]:
     """Build the dict that `mcode launch status --json` serializes.
 
-    Wave 1 added `shard_pids` to `RunRecord`; the `shards` count falls back
-    to len(shard_pids) when shard_job_ids is empty so local sharded bench
-    runs report a sensible count.
+    Local sharded runs store process ids instead of LSF job ids, so count
+    either field when reporting the shard count.
     """
     return {
         "servers": [

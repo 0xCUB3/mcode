@@ -133,13 +133,7 @@ class JsonReporter(_Base):
 
 
 class PlainReporter(_Base):
-    """Non-TTY output. One line per event in human-readable form.
-
-    Wave 2 grows this into a sharded-dashboard equivalent that preserves the
-    pre-existing _run_sharded_benchmark line shapes. For Wave 1 we ship a
-    small but well-formed default so any caller that picks PlainReporter
-    today gets useful output.
-    """
+    """Non-TTY output. One readable line per event."""
 
     def _emit(self, event: Event) -> None:
         if event.kind == "total":
@@ -165,10 +159,7 @@ class PlainReporter(_Base):
 
 
 class RichReporter(_Base):
-    """Rich-rendered TTY output. Wave 1 keeps it minimal; Wave 2 promotes it
-    to the multi-shard dashboard. For now it falls back to plain print
-    semantics inside a Rich Console so colors render but layout doesn't yet
-    use Live."""
+    """TTY output with Rich colors and the same line shape as PlainReporter."""
 
     def __init__(self, stream: IO[str] | None = None) -> None:
         super().__init__(stream=stream)

@@ -10,7 +10,7 @@ uv run mcode --version
 uv run mcode doctor local-ollama
 ```
 
-For a local-only Ollama handoff, `mcode doctor local-ollama` is the most useful check. The targetless `mcode doctor` also probes Blue Vela and local vLLM, so it may fail on machines that are intentionally Ollama-only. Red `✗` means follow the `next:` line.
+For local Ollama runs, `mcode doctor local-ollama` is the most useful check. The targetless `mcode doctor` also probes Blue Vela and local vLLM, so it may fail on machines that are intentionally Ollama-only. Red `✗` means follow the `next:` line.
 
 For the full bench dependency set:
 

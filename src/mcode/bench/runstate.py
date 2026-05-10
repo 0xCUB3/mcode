@@ -1,11 +1,9 @@
 """RunRecord lifecycle helpers for bench invocations.
 
-Wave 1 wires every bench entrypoint (local sharded, local single, Blue Vela
-remote) through these helpers so `mcode bench list` and `mcode bench cancel`
-(Wave 4) have a consistent view of what's running. Old state files load
-unchanged because every new field on `RunRecord` has a default and no new
-`RunStatus` value is introduced — cancellation reuses `RunStatus.STOPPED`
-plus `metadata["cancel_reason"]`.
+Bench commands record enough state for `mcode bench list` and `mcode bench
+cancel` to work across local, sharded, and Blue Vela runs. Existing state files
+still load because new `RunRecord` fields have defaults; cancellation records
+`RunStatus.STOPPED` with `metadata["cancel_reason"]`.
 """
 
 from __future__ import annotations

@@ -1,30 +1,25 @@
-"""Blue Vela LSF target — server launch.
+"""Blue Vela vLLM launcher.
 
-v1 scope: vLLM server lifecycle on Blue Vela. Submits a vLLM job, waits until
-the advertised endpoint is healthy, records the ServerRecord. Shard
-submission, fetch, and snapshot are follow-ons.
+Submits a vLLM job through LSF, waits for the advertised endpoint, and records
+the server. Sharded benchmark jobs use the recorded server later.
 
-Architecture invariants (see the plan):
+Rules that keep the cluster side predictable:
 
-- Every bsub carries `-G <group>`. Empty group is a hard LaunchError.
-- Login nodes only. No ssh to compute nodes ever.
-- `env.json` + `jq @sh` carries all Python→shell config. No Python-side
-  `export KEY=VALUE` assembly (B7).
-- Podman paths derived inside the shell script from $LSB_JOBID etc (B5).
-- Queue "auto" = config-declared queue_order + `bsub -H` hold validation (B4).
-- Automatic server reuse is OFF in v1 — opt-in via LaunchSpec.reuse_server
-  with full config_hash match (B1).
-- Absolute startup deadline in addition to stall timeout (don't-regress).
-- Transitions driven by explicit signals: bsub accept, LSF state leaves PEND,
-  host file appears, HTTP /v1/models returns 200. Log markers decorate detail
-  line but never drive transitions (M1).
-- stop --all scopes to the caller's recorded runs — never bkill 0/-u.
+- Every `bsub` includes `-G <group>`; missing group is an error.
+- Commands run on login nodes only. Do not ssh to compute nodes.
+- Python writes `env.json`; shell scripts read it with `jq @sh`.
+- Podman paths are derived inside the shell script from LSF job state.
+- Queue `auto` tries the configured queues with held-job validation.
+- Server reuse is explicit and requires a matching config hash.
+- Readiness comes from LSF state, the host file, and `/v1/models`; log lines
+  are only shown as detail text.
+- `stop --all` only touches runs recorded by this user.
 
 Phases:
     submit   → `bsub` returns a job id
-    queued   → LSF state is PEND (may take minutes on busy queues)
-    starting → container pull + model load + warmup (single phase per M1)
-    ready    → vllm_host.txt on remote AND HTTP /v1/models returns 200
+    queued   → LSF state is PEND
+    starting → container pull, model load, warmup
+    ready    → host file exists and `/v1/models` returns 200
 """
 
 from __future__ import annotations
@@ -65,10 +60,8 @@ PHASES: list[Phase] = [
 ]
 
 _STARTUP_ABSOLUTE_DEADLINE_S = 2400  # 40 min from bsub accept to HTTP 200
-# 40 min not 30: the per-job podman graphroot (in bluevela_vllm.sh) trades
-# cross-run image caching for reliability — every launch cold-pulls the vLLM
-# container (~5-10 min on this cluster) before model load. The old 1800s
-# budget left too little slack for model load + warmup under load.
+# Per-job podman graphroots avoid cross-job cache problems, but each launch may
+# cold-pull the vLLM image before model load. Keep enough slack for busy queues.
 _HOST_FILE_DEADLINE_S = 3600  # 1 h for LSF to start the job + write host file
 _HEALTH_POLL_SLOW_S = 10.0
 _DEFAULT_VLLM_IMAGE = "docker.io/vllm/vllm-openai:v0.17.0"
@@ -103,9 +96,8 @@ def _absorb_ssh_blip(streak: int, exc: TransportError, *, phase: str) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Failure catalog: list of (regex, [hints]) — multiple hints per pattern,
-# labeled by severity. No destructive hints (M6). Applied against stderr +
-# the tail of vllm.log to generate the LaunchError.next: line.
+# Failure catalog used for LaunchError.next. Match stderr plus the tail of
+# vllm.log, then show safe recovery hints.
 # ---------------------------------------------------------------------------
 _FAILURE_CATALOG: list[tuple[re.Pattern, list[str]]] = [
     (
@@ -240,9 +232,7 @@ def _shared_path(cfg: BluevelaConfig, *parts: str) -> str:
 # ---------------------------------------------------------------------------
 _JOB_ID_RE = re.compile(r"Job\s*<(\d+)>")
 
-# Regression: tight allowlists on anything we're about to interpolate into a
-# remote shell command. Values that don't match are rejected up-front, so we
-# never pass injection-prone characters to `bsub`/`bjobs`/`bkill`.
+# Tight allowlists for values interpolated into remote shell commands.
 _SAFE_IDENT_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,63}$")  # queue, group, job name
 _SAFE_DIGITS_RE = re.compile(r"^\d{1,18}$")  # LSF job id
 _SAFE_POSIX_PATH_RE = re.compile(r"^/[A-Za-z0-9_./\-]{0,511}$")  # remote paths
@@ -292,10 +282,10 @@ def _validate_queue(
     """bsub -H a no-op to validate queue+group+gpu submission. Returns None
     on success (the no-op is bkill'd immediately), error text on rejection.
 
-    Per plan B4: cheap validation that catches 'queue closed', 'not in group',
-    resource-string mismatches without waiting in the real queue.
+    This catches 'queue closed', 'not in group', and resource-string mistakes
+    without waiting in the real queue.
 
-    Timeout 60s (not 30): we disable SSH ControlPath multiplexing on purpose,
+    Timeout 60s (not 30): SSH ControlPath is disabled,
     so each call pays the full connect+auth cost. Over VPN that's 5-10s per
     call before bsub even runs. bsub itself is <100ms.
     """
@@ -1014,9 +1004,8 @@ def doctor_init(
     values (group membership and open queues). Caller supplies the login
     string since we can't invent a hostname.
 
-    Per M7: strict SSH preflight — a 5s connect test runs first. If it fails,
-    the function raises LaunchError with actionable next-steps and does NOT
-    attempt probes against a broken connection.
+    A 5s SSH preflight runs first. If it fails, the function raises LaunchError
+    and does not run probes against a broken connection.
 
     All launcher-owned paths live under `/proj/dmfexp/<user>`. We derive that
     from the login user instead of probing `$HOME`, so `doctor --init` cannot
@@ -1143,7 +1132,7 @@ def doctor_init(
     cfg.bluevela.hf_env = f"{proj_root}/mcode-shared/hf-env.sh"
     cfg.bluevela.group = group
     cfg.bluevela.queue_order = queue_order
-    cfg.bluevela.gpu_mode = "exclusive_process"  # Phase 0.5 finding
+    cfg.bluevela.gpu_mode = "exclusive_process"
 
     dst = cfg_path or config_mod.default_config_path()
     config_mod.save(cfg, dst)

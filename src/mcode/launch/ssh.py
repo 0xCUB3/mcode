@@ -1,13 +1,12 @@
 """Thin SSH wrapper for Blue Vela.
 
-Why this exists: the progress UI needs to distinguish "remote command ran and
-returned non-zero" from "SSH couldn't reach the host at all". OpenSSH signals
-the latter with exit code 255 + characteristic stderr. The rest of the
-launcher treats SshResult as ground truth for both.
+The launcher needs to tell apart a remote command failure from a transport
+failure. OpenSSH uses exit code 255 for the latter, so `SshResult` keeps that
+case visible to callers.
 
-No shell quoting is done here — callers pass a pre-formed command string, or
-use `upload_env_json()` + the env.json + `jq @sh` contract defined in the
-shell scripts. That removes the entire class of Python-side quoting bugs.
+Callers pass a complete command string. For config-heavy commands, they upload
+`env.json` and let the shell script read it with `jq @sh`; Python does not
+build long `export KEY=VALUE` strings.
 
 Public API:
 
@@ -16,9 +15,6 @@ Public API:
     client.upload(src: Path, dst: str, *, timeout: float) -> None
     client.download(src: str, dst: Path, *, timeout: float) -> None
     client.download_tree(src: str, dst: Path, *, timeout: float) -> None
-Log tailing for the progress heartbeat uses `client.run("tail -n 20 ...")` —
-we don't need a streaming primitive for v1. `launch logs --follow` can add
-one later when it has a real consumer.
 
 Integration-test hook: set `MCODE_TEST_SSH_LOGIN=user@host` to enable
 real-cluster round-trip tests (gated in tests/launch/test_ssh.py).
@@ -37,8 +33,7 @@ from mcode.launch.progress import TransportError
 # - BatchMode: fail fast when keys/agent aren't set (don't prompt).
 # - ConnectTimeout: transport failure surfaces within 10 s, not minutes.
 # - ServerAliveInterval/Countmax: detect dead connections during long commands.
-# - ControlPath OFF on purpose: multiplexing is nice for interactive use but
-#   it introduces shared-state failure modes during concurrent launches.
+# - ControlPath OFF: concurrent launches should not share SSH state.
 DEFAULT_SSH_OPTIONS: tuple[str, ...] = (
     "-o",
     "BatchMode=yes",

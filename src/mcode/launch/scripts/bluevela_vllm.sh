@@ -6,12 +6,11 @@
 # Writes the compute-node hostname to $RUN_DIR/vllm_host.txt so the launcher
 # can discover the endpoint. Writes vLLM stdout/stderr to $RUN_DIR/vllm.log.
 #
-# Derivations (per plan B5): graphroot per host (shared across jobs),
-# runroot per-job-index, both inside this script.
+# This script derives graphroot per host and runroot per job index.
 
 set -euo pipefail
 
-# env.json contract — see plan "Shell scripts over string assembly":
+# env.json contract:
 #   MODEL, VLLM_IMAGE, VLLM_FLAGS[], EXTRA_ENV{}, CHAT_TEMPLATE_PATH,
 #   VLLM_PORT, GPU_COUNT, RUN_DIR, BV_SHARED_DIR
 #

@@ -1,6 +1,6 @@
-"""Phase-list progress UI with heartbeat.
+"""Progress UI for long-running launch steps.
 
-Design invariants for the phase-based progress UI with heartbeat:
+Rules for progress reporting:
 
 - Each target declares a list[Phase]. Exactly one phase is active at a time.
 - The active phase has a background heartbeat thread that refreshes its detail
@@ -10,8 +10,8 @@ Design invariants for the phase-based progress UI with heartbeat:
   markers or bjobs changes decorate the detail line but never drive transitions.
 - Transport failures render distinctly: detail becomes "⚠ ssh unreachable ..."
   rather than being mistaken for "remote quiet".
-- --json mode: emit one line per transition + every 30 s during a phase, not
-  every heartbeat tick (m2).
+- --json mode emits one line per transition and one heartbeat every 30 seconds,
+  not every UI tick.
 - No percentages. No rescaling.
 
 Usage:
@@ -459,8 +459,7 @@ class PlainReporter(_ReporterBase):
 
 
 class JsonReporter(_ReporterBase):
-    """Emits one JSON object per phase transition, plus one every 30 s during
-    long phases (m2 cadence)."""
+    """Emits phase transitions as JSON, with a heartbeat every 30 seconds."""
 
     def __init__(self, stream: IO[str] | None = None) -> None:
         super().__init__()
