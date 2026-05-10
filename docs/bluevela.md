@@ -102,7 +102,7 @@ uv run mcode bench suite \
 
 Add `--json` to any bench command to get a strictly-monotonic event stream you can pipe to `jq`. Add `--fetch-db / --no-fetch-db` to control whether the DB is rsync'd back when the run ends. Add `--fetch-artifacts` when you also want the artifact directory copied back for local replay or inspection. The benchmark phase split also works remotely: use `--phase generate` with an explicit `--artifact-dir DIR`, then rerun with `--phase evaluate` and the same artifact directory. The mixed suite command supports the same phase split, and it now supports both auto-merged `--shards` and manual `--shard-count / --shard-index`.
 
-Remote bench run directories are stable for the same model, local DB path, bench argv, and forwarded MCODE context env. If log streaming or DB fetch drops after the remote process finished, rerun the same command to resume remotely and fetch the existing DB metadata instead of starting from scratch. After the run is recorded, `uv run mcode bench artifacts-fetch <run-id>` can fetch the artifact directory later if you skipped `--fetch-artifacts` the first time. If you do not want to look up the run id first, `uv run mcode bench artifacts-fetch --db <results.db>` resolves the latest fetchable run recorded for that DB path.
+Remote bench run directories are stable for the same model, local DB path, bench argv, and forwarded MCODE context env. If log streaming or DB fetch drops after the remote process finished, rerun the same command to resume remotely and fetch the existing DB metadata instead of starting from scratch. After the run is recorded, `uv run mcode bench artifacts fetch <run-id>` can fetch the artifact directory later if you skipped `--fetch-artifacts` the first time. If you do not want to look up the run id first, `uv run mcode bench artifacts fetch --db <results.db>` resolves the latest fetchable run recorded for that DB path.
 
 
 
@@ -144,7 +144,7 @@ Results DBs are rsync'd back to the local `--db` path automatically (unless you 
 
 ```bash
 uv run mcode results --db-dir research/<run> --benchmark swebench-live --time
-uv run mcode merge-shards --shards-glob 'research/<run>/results.db-shards/*/results-shard-*.db' --out merged.db
+uv run mcode bench merge-shards --out merged.db research/<run>/results.db-shards/*/results-shard-*.db
 ```
 
 ## Common environment variables

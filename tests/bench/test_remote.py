@@ -166,7 +166,7 @@ def test_bench_artifacts_fetch_downloads_saved_remote_dir(tmp_path: Path, monkey
 
     res = CliRunner().invoke(
         app,
-        ["bench", "artifacts-fetch", "run-1", "--dest", str(tmp_path / "out"), "--json"],
+        ["bench", "artifacts", "fetch", "run-1", "--dest", str(tmp_path / "out"), "--json"],
         color=False,
     )
 

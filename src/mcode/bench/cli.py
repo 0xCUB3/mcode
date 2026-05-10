@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 import typer
 
 from mcode.bench.artifacts_cli import register_artifact_commands
-from mcode.bench.results import ResultsDB
+from mcode.bench.results import ResultsDB, merge_shard_dbs
 from mcode.bench.runner import BenchConfig, BenchmarkRunner, NoTasksMatchedError
 from mcode.bench.shards import (
     SHARDED_INFRA_EXIT_CODE,
@@ -35,6 +35,7 @@ from mcode.cli_shared import (
     _validate_sampling,
     _validate_shard_options,
 )
+from mcode.ui.console import console
 from mcode.ui.flags import JsonFlag
 
 bench_app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -795,6 +796,24 @@ def bench_cancel(
 
 register_artifact_commands(bench_app)
 register_suite_commands(bench_app)
+
+
+@bench_app.command("merge-shards")
+def bench_merge_shards(
+    out: Annotated[Path, typer.Option("--out", help="Output SQLite DB path")],
+    shards: Annotated[list[Path], typer.Argument(..., help="Shard SQLite DB paths")],
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Overwrite output DB if it exists"),
+    ] = False,
+) -> None:
+    """Merge shard SQLite DBs into a single run DB."""
+    report = merge_shard_dbs(out_path=out, shard_paths=shards, force=force)
+    console.print(
+        f"out={report['out_path']} benchmark={report['benchmark']} run_id={report['run_id']} "
+        f"tasks={report['tasks_written']} shards_used={report['shards_used']} "
+        f"shards_ignored={report['shards_ignored']}"
+    )
 
 
 @bench_app.command("swebench-live")

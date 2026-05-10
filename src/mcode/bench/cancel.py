@@ -176,7 +176,7 @@ def show_run(run_id: str | None = None, *, latest: bool = False, json_mode: bool
     console.print("commands:")
     _print_command(f"mcode bench cancel {run.id}")
     if run.remote.get("remote_artifact_dir"):
-        _print_command(f"mcode bench artifacts-fetch {run.id}")
+        _print_command(f"mcode bench artifacts fetch {run.id}")
     if run.db_path:
         _print_command(f"mcode export-csv --db {shlex.quote(run.db_path)}")
     return 0

@@ -91,7 +91,7 @@ def test_bench_artifacts_list_and_show(tmp_path: Path) -> None:
 
     list_res = runner.invoke(
         app,
-        ["bench", "artifacts-list", "--db", str(db_path), "--run-id", str(run_id)],
+        ["bench", "artifacts", "list", "--db", str(db_path), "--run-id", str(run_id)],
         color=False,
     )
     assert list_res.exit_code == 0
@@ -101,7 +101,8 @@ def test_bench_artifacts_list_and_show(tmp_path: Path) -> None:
         app,
         [
             "bench",
-            "artifacts-list",
+            "artifacts",
+            "list",
             "--db",
             str(db_path),
             "--run-id",
@@ -120,7 +121,8 @@ def test_bench_artifacts_list_and_show(tmp_path: Path) -> None:
         app,
         [
             "bench",
-            "artifacts-list",
+            "artifacts",
+            "list",
             "--db",
             str(db_path),
             "--run-id",
@@ -140,7 +142,8 @@ def test_bench_artifacts_list_and_show(tmp_path: Path) -> None:
         app,
         [
             "bench",
-            "artifacts-patch",
+            "artifacts",
+            "patch",
             task_id,
             "--db",
             str(db_path),
@@ -158,7 +161,8 @@ def test_bench_artifacts_list_and_show(tmp_path: Path) -> None:
         app,
         [
             "bench",
-            "artifacts-show",
+            "artifacts",
+            "show",
             task_id,
             "--db",
             str(db_path),
@@ -176,7 +180,7 @@ def test_bench_artifacts_list_and_show(tmp_path: Path) -> None:
 
     show_res = runner.invoke(
         app,
-        ["bench", "artifacts-show", task_id, "--db", str(db_path), "--run-id", str(run_id)],
+        ["bench", "artifacts", "show", task_id, "--db", str(db_path), "--run-id", str(run_id)],
         color=False,
     )
     assert show_res.exit_code == 0

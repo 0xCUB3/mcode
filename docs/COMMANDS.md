@@ -168,20 +168,20 @@ uv run mcode bench suite \
 Once a split-phase or suite run has written artifacts, inspect them directly from the DB without spelunking through directories by hand.
 
 ```bash
-uv run mcode bench artifacts-list --db experiments/results/mixed-suite-evaluate.db
-uv run mcode bench artifacts-list --db experiments/results/mixed-suite-evaluate.db --task-id python/affine-cipher --phase evaluate --json
-uv run mcode bench artifacts-show python/affine-cipher --db experiments/results/mixed-suite-evaluate.db
-uv run mcode bench artifacts-patch python/affine-cipher --db experiments/results/mixed-suite-evaluate.db --out candidate.patch
-uv run mcode bench artifacts-replay python/affine-cipher --db experiments/results/mixed-suite-generate.db
-uv run mcode bench artifacts-fetch bench-<run-id> --dest research/mixed-suite/artifacts
-uv run mcode bench artifacts-fetch --db experiments/results/mixed-suite-generate.db --json
+uv run mcode bench artifacts list --db experiments/results/mixed-suite-evaluate.db
+uv run mcode bench artifacts list --db experiments/results/mixed-suite-evaluate.db --task-id python/affine-cipher --phase evaluate --json
+uv run mcode bench artifacts show python/affine-cipher --db experiments/results/mixed-suite-evaluate.db
+uv run mcode bench artifacts patch python/affine-cipher --db experiments/results/mixed-suite-evaluate.db --out candidate.patch
+uv run mcode bench artifacts replay python/affine-cipher --db experiments/results/mixed-suite-generate.db
+uv run mcode bench artifacts fetch bench-<run-id> --dest research/mixed-suite/artifacts
+uv run mcode bench artifacts fetch --db experiments/results/mixed-suite-generate.db --json
 ```
 
-- `artifacts-list` shows task ids, phase, selected candidate index, whether that candidate verified, selected patch bytes, candidate count, evaluation count, and manifest path for one run. Add `--task-id`, `--phase`, or `--json` when you want a narrower machine-readable inventory
-- `artifacts-show` prints the saved task manifest JSON for one task, or one candidate entry with `--candidate-index N`
-- `artifacts-patch` prints the selected candidate diff, or writes it to a file with `--out PATH`
-- `artifacts-replay` re-evaluates one saved candidate into a fresh DB, optionally with `--candidate-index N`, `--out-db PATH`, and `--benchmark-root PATH` for cross-machine polyglot artifacts
-- `artifacts-fetch` downloads the saved remote artifact directory later, using either a recorded run id or the latest fetchable run for a local `--db` path. Add `--json` when another script needs the resolved local and remote paths
+- `artifacts list` shows task ids, phase, selected candidate index, whether that candidate verified, selected patch bytes, candidate count, evaluation count, and manifest path for one run. Add `--task-id`, `--phase`, or `--json` when you want a narrower machine-readable inventory
+- `artifacts show` prints the saved task manifest JSON for one task, or one candidate entry with `--candidate-index N`
+- `artifacts patch` prints the selected candidate diff, or writes it to a file with `--out PATH`
+- `artifacts replay` re-evaluates one saved candidate into a fresh DB, optionally with `--candidate-index N`, `--out-db PATH`, and `--benchmark-root PATH` for cross-machine polyglot artifacts
+- `artifacts fetch` downloads the saved remote artifact directory later, using either a recorded run id or the latest fetchable run for a local `--db` path. Add `--json` when another script needs the resolved local and remote paths
 ### `swebench-live` / `swebench-lite` extras
 
 The SWE-bench extras below are mostly eval controls and ablation knobs. The default kernel does not need multiple samples or candidate selection to run; use those flags when measuring variance or isolating a change.
@@ -250,7 +250,7 @@ State transitions to `RunStatus.STOPPED` with `metadata.cancel_reason = "user"`.
 ```bash
 uv run mcode results [--db PATH | --db-glob 'g' | --db-dir DIR] [--benchmark X] [--model M] [--backend B] [--suite S] [--suite-entry E] [--loop-budget N] [--timeout N] [--compare-configs] [--time] [--json]
 uv run mcode compare --baseline-dir A --candidate-dir B [--benchmark X] [--suite S] [--suite-entry E] [--task-ids file] [--max-lost N] [--min-net N] [--min-candidate-pass-rate F] [--json]
-mcode merge-shards --shards-glob 'glob' --out merged.db
+mcode bench merge-shards --out merged.db shard-a.db shard-b.db
 mcode export-csv -i DIR --out-dir DIR --prefix mcode [--include-logs]
 ```
 

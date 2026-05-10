@@ -77,11 +77,11 @@ EXPECTED_OPTIONS: dict[tuple[str, ...], set[str]] = {
         "shard_count",
         "shard_index",
     },
-    ("bench", "artifacts-list"): {"db", "run_id", "task_id", "phase", "json_mode"},
-    ("bench", "artifacts-fetch"): {"db", "dest", "json_mode"},
-    ("bench", "artifacts-show"): {"db", "run_id", "candidate_index"},
-    ("bench", "artifacts-patch"): {"db", "run_id", "candidate_index", "out"},
-    ("bench", "artifacts-replay"): {
+    ("bench", "artifacts", "list"): {"db", "run_id", "task_id", "phase", "json_mode"},
+    ("bench", "artifacts", "fetch"): {"db", "dest", "json_mode"},
+    ("bench", "artifacts", "show"): {"db", "run_id", "candidate_index"},
+    ("bench", "artifacts", "patch"): {"db", "run_id", "candidate_index", "out"},
+    ("bench", "artifacts", "replay"): {
         "db",
         "run_id",
         "out_db",
@@ -90,6 +90,7 @@ EXPECTED_OPTIONS: dict[tuple[str, ...], set[str]] = {
         "artifact_dir",
         "fetch_missing_artifacts",
     },
+    ("bench", "merge-shards"): {"out", "shards", "force"},
 }
 
 HELP_COMMANDS = [
@@ -137,6 +138,18 @@ def test_cli_options_are_registered() -> None:
 def test_cli_help() -> None:
     for args in HELP_COMMANDS:
         _invoke_help(*args)
+
+
+def test_bench_help_shows_grouped_artifacts_and_hides_legacy_names() -> None:
+    output = _strip_ansi(_invoke_help("bench", "--help"))
+    assert "artifacts" in output
+    assert "artifacts-list" not in output
+    assert "artifacts-show" not in output
+
+
+def test_root_help_hides_manual_merge_alias() -> None:
+    output = _strip_ansi(_invoke_help("--help"))
+    assert "merge-shards" not in output
 
 
 def test_cli_rejects_sampling_budget_without_sampling() -> None:

@@ -405,8 +405,18 @@ def bench_artifacts_patch(
 
 
 def register_artifact_commands(app: typer.Typer) -> None:
-    app.command("artifacts-list")(bench_artifacts_list)
-    app.command("artifacts-fetch")(bench_artifacts_fetch)
-    app.command("artifacts-show")(bench_artifacts_show)
-    app.command("artifacts-replay")(bench_artifacts_replay)
-    app.command("artifacts-patch")(bench_artifacts_patch)
+    artifacts_app = typer.Typer(add_completion=False, no_args_is_help=True)
+    artifacts_app.command("list")(bench_artifacts_list)
+    artifacts_app.command("fetch")(bench_artifacts_fetch)
+    artifacts_app.command("show")(bench_artifacts_show)
+    artifacts_app.command("replay")(bench_artifacts_replay)
+    artifacts_app.command("patch")(bench_artifacts_patch)
+    app.add_typer(
+        artifacts_app, name="artifacts", help="Inspect, fetch, and replay saved artifacts."
+    )
+
+    app.command("artifacts-list", hidden=True)(bench_artifacts_list)
+    app.command("artifacts-fetch", hidden=True)(bench_artifacts_fetch)
+    app.command("artifacts-show", hidden=True)(bench_artifacts_show)
+    app.command("artifacts-replay", hidden=True)(bench_artifacts_replay)
+    app.command("artifacts-patch", hidden=True)(bench_artifacts_patch)
