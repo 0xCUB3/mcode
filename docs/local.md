@@ -113,8 +113,6 @@ uv run mcode launch stop --all          # only your recorded servers; never bkil
 
 uv run mcode results --benchmark swebench-live
 uv run mcode results --benchmark swebench-live --time
-
-uv run mcode report --db-dir ./experiments/results --benchmark swebench-live --out report.html
 uv run mcode export-csv -i experiments/results --out-dir experiments/results --prefix mcode
 ```
 

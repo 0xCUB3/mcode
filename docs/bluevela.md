@@ -144,7 +144,6 @@ Results DBs are rsync'd back to the local `--db` path automatically (unless you 
 
 ```bash
 uv run mcode results --db-dir research/<run> --benchmark swebench-live --time
-uv run mcode report --db-dir research/<run> --benchmark swebench-live --out report.html
 uv run mcode merge-shards --shards-glob 'research/<run>/results.db-shards/*/results-shard-*.db' --out merged.db
 ```
 

@@ -93,7 +93,6 @@ EXPECTED_OPTIONS: dict[tuple[str, ...], set[str]] = {
 HELP_COMMANDS = [
     ("--help",),
     ("bench", "swebench-lite", "--help"),
-    ("report", "--help"),
     ("compare", "--help"),
     ("deps", "sync", "--help"),
     ("deps", "toolchains", "--help"),

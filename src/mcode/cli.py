@@ -7,7 +7,6 @@ import typer
 from rich.table import Table
 
 from mcode.bench.cli import bench_app
-from mcode.bench.report import render_report_html
 from mcode.bench.results import export_csv as export_csv_results
 from mcode.bench.results import merge_shard_dbs
 from mcode.cli_shared import _expand_db_paths, _open_results_view, _parse_task_ids
@@ -570,75 +569,6 @@ def compare(
     if failures:
         raise typer.Exit(1)
 
-
-@app.command("report")
-def report(
-    db: Annotated[
-        list[Path] | None,
-        typer.Option("--db", help="SQLite DB path (repeatable)"),
-    ] = None,
-    db_glob: Annotated[
-        list[str] | None,
-        typer.Option("--db-glob", help="Glob for SQLite DBs (quote to prevent shell expansion)"),
-    ] = None,
-    db_dir: Annotated[
-        list[Path] | None,
-        typer.Option("--db-dir", help="Directory to scan recursively for *.db files"),
-    ] = None,
-    out: Annotated[Path, typer.Option("--out", help="Output HTML report path")] = Path(
-        "mcode-report.html"
-    ),
-    benchmark: Annotated[str | None, typer.Option("--benchmark")] = None,
-    model: Annotated[str | None, typer.Option("--model")] = None,
-    backend: Annotated[str | None, typer.Option("--backend")] = None,
-    suite_name: Annotated[str | None, typer.Option("--suite")] = None,
-    suite_entry_name: Annotated[str | None, typer.Option("--suite-entry")] = None,
-    loop_budget: Annotated[int | None, typer.Option("--loop-budget", min=1)] = None,
-    timeout_s: Annotated[int | None, typer.Option("--timeout", min=1)] = None,
-    per_run: Annotated[
-        bool, typer.Option("--per-run", help="Plot each run separately (vs grouped)")
-    ] = False,
-) -> None:
-    """Generate a lightweight HTML report (Plotly) for pass rate vs time-to-solve."""
-    group_by_config = (
-        "suite_name",
-        "suite_entry_name",
-        "backend_name",
-        "timeout_s",
-        "loop_budget",
-    )
-    group_by = () if per_run else group_by_config
-
-    db_paths = _expand_db_paths(db=db, db_glob=db_glob, db_dir=db_dir)
-    with _open_results_view(db_paths) as rdb:
-        rows = rdb.run_metrics_grouped(
-            benchmark=benchmark,
-            model_id=model,
-            backend_name=backend,
-            timeout_s=timeout_s,
-            suite_name=suite_name,
-            suite_entry_name=suite_entry_name,
-            group_by=group_by,
-            loop_budget=loop_budget,
-            include_percentiles=True,
-        )
-
-    title = "mCode benchmark report"
-    if benchmark:
-        title += f" | benchmark={benchmark}"
-    if backend:
-        title += f" | backend={backend}"
-    if model:
-        title += f" | model={model}"
-    if suite_name:
-        title += f" | suite={suite_name}"
-    if suite_entry_name:
-        title += f" | suite_entry={suite_entry_name}"
-
-    out.parent.mkdir(parents=True, exist_ok=True)
-    html = render_report_html(rows, title=title)
-    out.write_text(html, encoding="utf-8")
-    typer.echo(f"Wrote report: {out}")
 
 
 @app.command("merge-shards")

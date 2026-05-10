@@ -252,7 +252,6 @@ State transitions to `RunStatus.STOPPED` with `metadata.cancel_reason = "user"`.
 ```bash
 uv run mcode results [--db PATH | --db-glob 'g' | --db-dir DIR] [--benchmark X] [--model M] [--backend B] [--suite S] [--suite-entry E] [--loop-budget N] [--timeout N] [--compare-configs] [--time] [--json]
 uv run mcode compare --baseline-dir A --candidate-dir B [--benchmark X] [--suite S] [--suite-entry E] [--task-ids file] [--max-lost N] [--min-net N] [--min-candidate-pass-rate F] [--json]
-mcode report [--db ... | --db-dir DIR] [--benchmark X] --out report.html
 mcode merge-shards --shards-glob 'glob' --out merged.db
 mcode export-csv -i DIR --out-dir DIR --prefix mcode [--include-logs]
 ```
@@ -270,10 +269,6 @@ mcode export-csv -i DIR --out-dir DIR --prefix mcode [--include-logs]
 - `--time` — include `sec/solve`, `solves/hour`, p95 metrics
 
 `export-csv` always writes runs, task_results, and artifact CSVs. The run and task result exports now include `suite_name` and `suite_entry_name`, and the artifact exports include those suite columns too so mixed-suite analysis stays join-free.
-
-
-
-`report` produces a Plotly HTML report comparing pass rate vs time-to-solve across the matched runs.
 
 ## Deps
 

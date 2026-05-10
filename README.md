@@ -53,7 +53,7 @@ mcode results --benchmark swebench-live
 
 ## Notes
 
-- [`research/`](research/) — benchmark run notes and rendered HTML reports.
+- [`research/`](research/) — benchmark run notes and result summaries.
 - [`docs/COMMANDS.md`](docs/COMMANDS.md) — full reference with every flag.
 - `MCODE_DEBUG=1` re-enables raw tracebacks; `NO_COLOR=1` disables ANSI color.
 - Launch state lives at `$MCODE_LAUNCH_STATE` (default `~/.config/mcode/launch-state.json`).
