@@ -247,6 +247,80 @@ def _print_remote_run_plan(*, command: str, argv: list[str], model: str, db: Pat
     )
 
 
+def _dispatch_benchmark_run(
+    *,
+    command: str,
+    on: str,
+    base_argv: list[str],
+    config: BenchConfig,
+    db: Path,
+    limit: int | None,
+    task_ids: str | None,
+    backend: str,
+    model: str,
+    loop_budget: int,
+    timeout_s: int,
+    shards: int | None,
+    shard_count: int | None,
+    shard_index: int | None,
+    default_db_path: Path,
+    fetch_db: bool,
+    fetch_artifacts: bool,
+    json_mode: bool,
+) -> None:
+    if on == "bluevela":
+        remote_argv = [*base_argv]
+        _append_option(remote_argv, "--shards", shards)
+        _append_option(remote_argv, "--shard-count", shard_count)
+        _append_option(remote_argv, "--shard-index", shard_index)
+        if json_mode:
+            remote_argv.append("--json")
+        _run_bluevela_benchmark(
+            command=command,
+            argv=remote_argv,
+            model=model,
+            db=db,
+            fetch_db=fetch_db,
+            fetch_artifacts=fetch_artifacts,
+        )
+    if on != "local":
+        typer.echo(f"✗ unknown --on target {on!r}; expected local or bluevela", err=True)
+        raise typer.Exit(2)
+    if shards and shards > 1:
+        _run_sharded_benchmark(
+            command=command,
+            base_argv=base_argv,
+            shards=shards,
+            db=db,
+            benchmark=command,
+            backend=backend,
+            model=model,
+            loop_budget=loop_budget,
+            timeout_s=timeout_s,
+            json_mode=json_mode,
+        )
+        return
+    if shard_count and shard_count > 1 and db == default_db_path:
+        typer.echo(
+            "Note: when running shards in parallel, use a unique --db per shard to avoid SQLite "
+            "locks.",
+            err=True,
+        )
+
+    _run_single_benchmark(
+        benchmark=command,
+        config=config,
+        db=db,
+        limit=limit,
+        task_ids=task_ids,
+        backend=backend,
+        model=model,
+        loop_budget=loop_budget,
+        timeout_s=timeout_s,
+        json_mode=json_mode,
+    )
+
+
 def _run_bluevela_benchmark_rc(
     *,
     command: str,
@@ -955,87 +1029,28 @@ def bench_swebench_live(
         sampling_budget=sampling_budget,
     )
     resolved_artifact_dir = _resolve_artifact_dir(db, artifact_dir)
-    if on == "bluevela":
-        argv = _swebench_live_cli_args(
-            model=model,
-            backend=backend,
-            loop_budget=loop_budget,
-            temperature=temperature,
-            seed=seed,
-            timeout_s=timeout_s,
-            split=split,
-            mem_limit=mem_limit,
-            pids_limit=pids_limit,
-            cpu_limit=cpu_limit,
-            limit=limit,
-            n_samples=n_samples,
-            sampling=sampling,
-            sampling_budget=sampling_budget,
-            selection_attempts=selection_attempts,
-            task_ids=task_ids,
-            diagnostic_traces=diagnostic_traces,
-            check_image_digests=check_image_digests,
-            phase=phase,
-            artifact_dir=resolved_artifact_dir,
-        )
-        _append_option(argv, "--shards", shards)
-        _append_option(argv, "--shard-count", shard_count)
-        _append_option(argv, "--shard-index", shard_index)
-        if json_mode:
-            argv.append("--json")
-        _run_bluevela_benchmark(
-            command="swebench-live",
-            argv=argv,
-            model=model,
-            db=db,
-            fetch_db=fetch_db,
-            fetch_artifacts=fetch_artifacts,
-        )
-    if on != "local":
-        typer.echo(f"✗ unknown --on target {on!r}; expected local or bluevela", err=True)
-        raise typer.Exit(2)
-    if shards and shards > 1:
-        _run_sharded_benchmark(
-            command="swebench-live",
-            base_argv=_swebench_live_cli_args(
-                model=model,
-                backend=backend,
-                loop_budget=loop_budget,
-                temperature=temperature,
-                seed=seed,
-                timeout_s=timeout_s,
-                split=split,
-                mem_limit=mem_limit,
-                pids_limit=pids_limit,
-                cpu_limit=cpu_limit,
-                limit=limit,
-                n_samples=n_samples,
-                sampling=sampling,
-                sampling_budget=sampling_budget,
-                selection_attempts=selection_attempts,
-                task_ids=task_ids,
-                diagnostic_traces=diagnostic_traces,
-                check_image_digests=check_image_digests,
-                phase=phase,
-                artifact_dir=resolved_artifact_dir,
-            ),
-            shards=shards,
-            db=db,
-            benchmark="swebench-live",
-            backend=backend,
-            model=model,
-            loop_budget=loop_budget,
-            timeout_s=timeout_s,
-            json_mode=json_mode,
-        )
-        return
-    if shard_count and shard_count > 1 and db == DEFAULT_DB_PATH:
-        typer.echo(
-            "Note: when running shards in parallel, use a unique --db per shard to avoid SQLite "
-            "locks.",
-            err=True,
-        )
-
+    base_argv = _swebench_live_cli_args(
+        model=model,
+        backend=backend,
+        loop_budget=loop_budget,
+        temperature=temperature,
+        seed=seed,
+        timeout_s=timeout_s,
+        split=split,
+        mem_limit=mem_limit,
+        pids_limit=pids_limit,
+        cpu_limit=cpu_limit,
+        limit=limit,
+        n_samples=n_samples,
+        sampling=sampling,
+        sampling_budget=sampling_budget,
+        selection_attempts=selection_attempts,
+        task_ids=task_ids,
+        diagnostic_traces=diagnostic_traces,
+        check_image_digests=check_image_digests,
+        phase=phase,
+        artifact_dir=resolved_artifact_dir,
+    )
     config = BenchConfig(
         backend_name=backend,
         model_id=model,
@@ -1058,8 +1073,10 @@ def bench_swebench_live(
         selection_attempts=selection_attempts,
         diagnostic_traces=diagnostic_traces,
     )
-    _run_single_benchmark(
-        benchmark="swebench-live",
+    _dispatch_benchmark_run(
+        command="swebench-live",
+        on=on,
+        base_argv=base_argv,
         config=config,
         db=db,
         limit=limit,
@@ -1068,6 +1085,12 @@ def bench_swebench_live(
         model=model,
         loop_budget=loop_budget,
         timeout_s=timeout_s,
+        shards=shards,
+        shard_count=shard_count,
+        shard_index=shard_index,
+        default_db_path=DEFAULT_DB_PATH,
+        fetch_db=fetch_db,
+        fetch_artifacts=fetch_artifacts,
         json_mode=json_mode,
     )
 
@@ -1312,99 +1335,34 @@ def bench_swebench_lite(
             vllm_max_model_len=vllm_max_model_len,
             json_mode=json_mode,
         )
-    if on == "bluevela":
-        argv = _swebench_lite_cli_args(
-            model=model,
-            backend=backend,
-            loop_budget=loop_budget,
-            temperature=temperature,
-            seed=seed,
-            timeout_s=timeout_s,
-            split=split,
-            arch=arch,
-            namespace=namespace,
-            max_workers=max_workers,
-            force_rebuild=force_rebuild,
-            mem_limit=mem_limit,
-            pids_limit=pids_limit,
-            cpu_limit=cpu_limit,
-            limit=limit,
-            n_samples=n_samples,
-            sampling=sampling,
-            sampling_budget=sampling_budget,
-            selection_attempts=selection_attempts,
-            task_ids=task_ids,
-            dataset=dataset,
-            diagnostic_traces=diagnostic_traces,
-            check_image_digests=check_image_digests,
-            eval_repair_attempts=eval_repair_attempts,
-            phase=phase,
-            artifact_dir=resolved_artifact_dir,
-        )
-        _append_option(argv, "--shards", shards)
-        _append_option(argv, "--shard-count", shard_count)
-        _append_option(argv, "--shard-index", shard_index)
-        if json_mode:
-            argv.append("--json")
-        _run_bluevela_benchmark(
-            command="swebench-lite",
-            argv=argv,
-            model=model,
-            db=db,
-            fetch_db=fetch_db,
-            fetch_artifacts=fetch_artifacts,
-        )
-    if on != "local":
-        typer.echo(f"✗ unknown --on target {on!r}; expected local or bluevela", err=True)
-        raise typer.Exit(2)
-    if shards and shards > 1:
-        _run_sharded_benchmark(
-            command="swebench-lite",
-            base_argv=_swebench_lite_cli_args(
-                model=model,
-                backend=backend,
-                loop_budget=loop_budget,
-                temperature=temperature,
-                seed=seed,
-                timeout_s=timeout_s,
-                split=split,
-                arch=arch,
-                namespace=namespace,
-                max_workers=max_workers,
-                force_rebuild=force_rebuild,
-                mem_limit=mem_limit,
-                pids_limit=pids_limit,
-                cpu_limit=cpu_limit,
-                limit=limit,
-                n_samples=n_samples,
-                sampling=sampling,
-                sampling_budget=sampling_budget,
-                selection_attempts=selection_attempts,
-                task_ids=task_ids,
-                dataset=dataset,
-                diagnostic_traces=diagnostic_traces,
-                check_image_digests=check_image_digests,
-                eval_repair_attempts=eval_repair_attempts,
-                phase=phase,
-                artifact_dir=resolved_artifact_dir,
-            ),
-            shards=shards,
-            db=db,
-            benchmark="swebench-lite",
-            backend=backend,
-            model=model,
-            loop_budget=loop_budget,
-            timeout_s=timeout_s,
-            json_mode=json_mode,
-        )
-        return
-    if shard_count and shard_count > 1 and db == DEFAULT_DB_PATH:
-        typer.echo(
-            "Note: when running shards in parallel, use a unique --db per shard to avoid SQLite "
-            "locks.",
-            err=True,
-        )
-
+    base_argv = _swebench_lite_cli_args(
+        model=model,
+        backend=backend,
+        loop_budget=loop_budget,
+        temperature=temperature,
+        seed=seed,
+        timeout_s=timeout_s,
+        split=split,
+        arch=arch,
+        namespace=namespace,
+        max_workers=max_workers,
+        force_rebuild=force_rebuild,
+        mem_limit=mem_limit,
+        pids_limit=pids_limit,
+        cpu_limit=cpu_limit,
+        limit=limit,
+        n_samples=n_samples,
+        sampling=sampling,
+        sampling_budget=sampling_budget,
+        selection_attempts=selection_attempts,
+        task_ids=task_ids,
+        dataset=dataset,
+        diagnostic_traces=diagnostic_traces,
+        check_image_digests=check_image_digests,
+        eval_repair_attempts=eval_repair_attempts,
+        phase=phase,
+        artifact_dir=resolved_artifact_dir,
+    )
     config = BenchConfig(
         backend_name=backend,
         model_id=model,
@@ -1433,8 +1391,10 @@ def bench_swebench_lite(
         swebench_eval_repair_attempts=eval_repair_attempts,
         diagnostic_traces=diagnostic_traces,
     )
-    _run_single_benchmark(
-        benchmark="swebench-lite",
+    _dispatch_benchmark_run(
+        command="swebench-lite",
+        on=on,
+        base_argv=base_argv,
         config=config,
         db=db,
         limit=limit,
@@ -1443,6 +1403,12 @@ def bench_swebench_lite(
         model=model,
         loop_budget=loop_budget,
         timeout_s=timeout_s,
+        shards=shards,
+        shard_count=shard_count,
+        shard_index=shard_index,
+        default_db_path=DEFAULT_DB_PATH,
+        fetch_db=fetch_db,
+        fetch_artifacts=fetch_artifacts,
         json_mode=json_mode,
     )
 
@@ -1586,83 +1552,27 @@ def bench_aider_polyglot(
     if exercise is not None:
         selected_task_ids = f"{language}/{exercise}"
 
-    if on == "bluevela":
-        argv = _aider_polyglot_cli_args(
-            model=model,
-            backend=backend,
-            loop_budget=loop_budget,
-            retry_loop_budget=retry_loop_budget,
-            temperature=temperature,
-            seed=seed,
-            benchmark_root=selected_root,
-            language=language,
-            exercise=exercise,
-            limit=limit,
-            no_retry=no_retry,
-            task_ids=task_ids,
-            sampling=sampling,
-            sampling_budget=sampling_budget,
-            diagnostic_traces=diagnostic_traces,
-            selection_attempts=selection_attempts,
-            phase=phase,
-            artifact_dir=resolved_artifact_dir,
-        )
-        _append_option(argv, "--shards", shards)
-        _append_option(argv, "--shard-count", shard_count)
-        _append_option(argv, "--shard-index", shard_index)
-        if json_mode:
-            argv.append("--json")
-        _run_bluevela_benchmark(
-            command="aider-polyglot",
-            argv=argv,
-            model=model,
-            db=db,
-            fetch_db=fetch_db,
-            fetch_artifacts=fetch_artifacts,
-        )
-    if on != "local":
-        typer.echo(f"✗ unknown --on target {on!r}; expected local or bluevela", err=True)
-        raise typer.Exit(2)
-    if shards and shards > 1:
-        _run_sharded_benchmark(
-            command="aider-polyglot",
-            base_argv=_aider_polyglot_cli_args(
-                model=model,
-                backend=backend,
-                loop_budget=loop_budget,
-                retry_loop_budget=retry_loop_budget,
-                temperature=temperature,
-                seed=seed,
-                benchmark_root=selected_root,
-                language=language,
-                exercise=exercise,
-                limit=limit,
-                no_retry=no_retry,
-                task_ids=task_ids,
-                sampling=sampling,
-                sampling_budget=sampling_budget,
-                diagnostic_traces=diagnostic_traces,
-                selection_attempts=selection_attempts,
-                phase=phase,
-                artifact_dir=resolved_artifact_dir,
-            ),
-            shards=shards,
-            db=db,
-            benchmark="aider-polyglot",
-            backend=backend,
-            model=model,
-            loop_budget=loop_budget + (0 if no_retry else retry_loop_budget),
-            timeout_s=300,
-            json_mode=json_mode,
-        )
-        return
-    if shard_count and shard_count > 1 and db == Path("experiments/results/aider-polyglot.db"):
-        typer.echo(
-            "Note: when running shards in parallel, use a unique --db per shard to avoid SQLite "
-            "locks.",
-            err=True,
-        )
-
+    base_argv = _aider_polyglot_cli_args(
+        model=model,
+        backend=backend,
+        loop_budget=loop_budget,
+        retry_loop_budget=retry_loop_budget,
+        temperature=temperature,
+        seed=seed,
+        benchmark_root=selected_root,
+        language=language,
+        exercise=exercise,
+        limit=limit,
+        no_retry=no_retry,
+        task_ids=task_ids,
+        sampling=sampling,
+        sampling_budget=sampling_budget,
+        diagnostic_traces=diagnostic_traces,
+        selection_attempts=selection_attempts,
+        phase=phase,
+        artifact_dir=resolved_artifact_dir,
+    )
+    effective_loop_budget = loop_budget + (0 if no_retry else retry_loop_budget)
     config = BenchConfig(
         backend_name=backend,
         model_id=model,
@@ -1683,15 +1593,23 @@ def bench_aider_polyglot(
         diagnostic_traces=diagnostic_traces,
         selection_attempts=selection_attempts,
     )
-    _run_single_benchmark(
-        benchmark="aider-polyglot",
+    _dispatch_benchmark_run(
+        command="aider-polyglot",
+        on=on,
+        base_argv=base_argv,
         config=config,
         db=db,
         limit=limit,
         task_ids=selected_task_ids,
         backend=backend,
         model=model,
-        loop_budget=loop_budget + (0 if no_retry else retry_loop_budget),
+        loop_budget=effective_loop_budget,
         timeout_s=300,
+        shards=shards,
+        shard_count=shard_count,
+        shard_index=shard_index,
+        default_db_path=Path("experiments/results/aider-polyglot.db"),
+        fetch_db=fetch_db,
+        fetch_artifacts=fetch_artifacts,
         json_mode=json_mode,
     )
