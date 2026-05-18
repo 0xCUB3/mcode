@@ -231,6 +231,7 @@ def test_terminal_bench_cli_forwards_config(monkeypatch, tmp_path: Path) -> None
     assert config.model_id == "test-model"
     assert config.backend_name == "openai"
     assert config.agent == "mcode"
+    assert config.agent_kwargs["loop_budget"] == "25"
     assert config.jobs_dir == tmp_path / "jobs"
     assert config.artifact_dir == tmp_path / "artifacts"
 

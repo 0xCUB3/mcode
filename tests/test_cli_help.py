@@ -51,6 +51,7 @@ EXPECTED_OPTIONS: dict[tuple[str, ...], set[str]] = {
         "job_name",
         "environment_type",
         "n_concurrent",
+        "loop_budget",
         "timeout_multiplier",
         "agent_timeout_s",
         "verifier_timeout_s",

@@ -682,6 +682,7 @@ def _terminal_bench_cli_args(
     job_name: str | None,
     environment_type: str,
     n_concurrent: int,
+    loop_budget: int,
     timeout_multiplier: float,
     agent_timeout_s: int | None,
     verifier_timeout_s: int | None,
@@ -706,6 +707,8 @@ def _terminal_bench_cli_args(
         environment_type,
         "--n-concurrent",
         str(n_concurrent),
+        "--loop-budget",
+        str(loop_budget),
         "--timeout-multiplier",
         str(timeout_multiplier),
         "--harbor-executable",
@@ -955,6 +958,10 @@ def bench_terminal_bench(
         int,
         typer.Option("--n-concurrent", min=1, help="Concurrent Harbor trials"),
     ] = 1,
+    loop_budget: Annotated[
+        int,
+        typer.Option("--loop-budget", min=1, help="mCode terminal-agent ReACT turns"),
+    ] = 25,
     timeout_multiplier: Annotated[
         float,
         typer.Option("--timeout-multiplier", min=0.1, help="Scale Harbor task timeouts"),
@@ -1020,6 +1027,7 @@ def bench_terminal_bench(
         job_name=job_name,
         environment_type=environment_type,
         n_concurrent=n_concurrent,
+        loop_budget=loop_budget,
         timeout_multiplier=timeout_multiplier,
         agent_timeout_s=agent_timeout_s,
         verifier_timeout_s=verifier_timeout_s,
@@ -1058,6 +1066,7 @@ def bench_terminal_bench(
         harbor_executable=harbor_executable,
         artifact_dir=resolved_artifact_dir,
         extra_harbor_args=tuple(extra_harbor_arg or ()),
+        agent_kwargs={"loop_budget": str(loop_budget)},
     )
     _run_terminal_bench_local(
         config=config,
