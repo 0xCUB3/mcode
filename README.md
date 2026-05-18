@@ -106,4 +106,4 @@ Launch and bench state lives in `~/.config/mcode/launch-state.json`, or wherever
 
 ## Usage notes
 
-Run `mcode doctor <target>` before blaming the model. Use `bench smoke` before spending hours on Verified. Keep explicit `--db` paths for anything you may want to compare later. When running on Blue Vela, keep the server id and run id until the DB and artifacts have been fetched back. If a remote bench finishes but the fetch dies, rerun the same command or use `mcode bench artifacts fetch` rather than starting the whole benchmark again.
+Run `mcode doctor <target>` before blaming the model. Use `bench smoke` to eliminate infra issues before running the full suite. Keep explicit `--db` paths for anything you may want to compare later. When running on Blue Vela, keep the server id and run id until the DB and artifacts have been fetched back. If a remote bench finishes but the fetch dies, rerun the same command or use `mcode bench artifacts fetch` rather than starting the whole benchmark again.
