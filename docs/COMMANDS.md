@@ -42,9 +42,11 @@ uv run mcode doctor local-vllm
 uv run mcode doctor bluevela
 uv run mcode doctor bluevela --init --login <user>@login3.bluevela.rmf.ibm.com
 uv run mcode doctor bluevela --deep
+uv run mcode doctor terminal-bench
+uv run mcode doctor terminal-bench --deep
 ```
 
-With no target, the doctor checks the results directory, a container runtime, Mellea importability, and Ruff. `local-ollama` checks the local Ollama path. `local-vllm` checks the local vLLM path. `bluevela` checks SSH, queues, group membership, and config. `--init` is Blue Vela only and writes `~/.config/mcode/launch.toml` after probing the cluster.
+With no target, the doctor checks the results directory, a container runtime, Mellea importability, and Ruff. `local-ollama` checks the local Ollama path. `local-vllm` checks the local vLLM path. `bluevela` checks SSH, queues, group membership, and config. `terminal-bench` checks Harbor, Docker, and, with `--deep`, one oracle task. `--init` is Blue Vela only and writes `~/.config/mcode/launch.toml` after probing the cluster.
 
 When a row is red, read the `next:` line. It is usually more useful than the exception text.
 
@@ -105,6 +107,7 @@ uv run mcode bench smoke --model M [flags]
 uv run mcode bench swebench-lite --model M [flags]
 uv run mcode bench swebench-live --model M [flags]
 uv run mcode bench aider-polyglot --model M [flags]
+uv run mcode bench terminal-bench --model M [flags]
 uv run mcode bench suite --model M [flags]
 
 uv run mcode bench list
@@ -235,6 +238,46 @@ Before a full polyglot run, use:
 ```bash
 uv run mcode deps toolchains --benchmark aider-polyglot
 ```
+
+## Terminal-Bench 2.0
+
+`bench terminal-bench` uses Harbor, the official Terminal-Bench 2.0 harness. Harbor runs the task containers and verifiers; mCode imports the results into SQLite and writes artifact manifests that point at the Harbor trial directories.
+
+Start with the oracle agent to validate Harbor and Docker:
+
+```bash
+uv run mcode bench terminal-bench \
+  --agent oracle \
+  --model unused \
+  --limit 1 \
+  --db experiments/results/terminal-bench-oracle.db
+```
+
+Then run the mCode terminal agent or a built-in Harbor agent:
+
+```bash
+uv run mcode bench terminal-bench \
+  --backend openai \
+  --model Qwen/Qwen3.6-35B-A3B \
+  --loop-budget 25 \
+  --n-concurrent 2 \
+  --limit 5 \
+  --db experiments/results/terminal-bench.db
+```
+
+Terminal-Bench-specific flags:
+
+|Flag|Use|
+|-|-|
+|`--agent`|`mcode` by default, or a Harbor agent such as `oracle`, `claude-code`, or `codex`|
+|`--dataset`|Harbor dataset id. Defaults to `terminal-bench/terminal-bench-2`|
+|`--jobs-dir`|Directory where Harbor writes job outputs|
+|`--env`|Harbor environment provider, usually `docker` locally|
+|`--n-concurrent N`|Concurrent Harbor trials|
+|`--timeout-multiplier F`|Scale Harbor task timeouts|
+|`--harbor-arg X`|Append a raw argument to `harbor run`|
+
+See [`terminalbench.md`](terminalbench.md) for setup details and caveats.
 
 ## Suite
 
