@@ -39,7 +39,19 @@ def test_build_harbor_command_for_mcode_agent(tmp_path: Path) -> None:
     assert "--agent" not in cmd
 
 
-def test_build_harbor_command_for_builtin_oracle(tmp_path: Path) -> None:
+def test_build_harbor_command_splits_harbor_executable(tmp_path: Path) -> None:
+    config = TerminalBenchConfig(
+        model_id="model",
+        agent="mcode",
+        harbor_executable="uv run --with harbor harbor",
+        jobs_dir=tmp_path / "jobs",
+    )
+
+    cmd = build_harbor_command(config, limit=1)
+
+    assert cmd[:6] == ["uv", "run", "--with", "harbor", "harbor", "run"]
+
+
     config = TerminalBenchConfig(
         model_id="ignored-for-oracle",
         agent="oracle",

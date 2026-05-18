@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
 import subprocess
 from dataclasses import asdict, dataclass, field
@@ -87,7 +88,7 @@ def build_harbor_command(
     """Build the official Harbor command used for a Terminal-Bench run."""
 
     cmd = [
-        config.harbor_executable,
+        *shlex.split(config.harbor_executable),
         "run",
         "-d",
         config.dataset,
