@@ -1,6 +1,6 @@
 # mCode
 
-mCode is the benchmark harness I use for local model coding runs. It wraps the Mellea ReACT loop, gives it a small set of code tools, records every task in SQLite, and keeps enough run state around that a long benchmark can be resumed, cancelled, inspected, and cleaned up without digging through random temp files.
+mCode is a benchmark harness for local model coding runs with Mellea. It wraps the Mellea ReACT loop, gives it a small set of code tools, records every task in SQLite, and keeps enough run state around that a long benchmark can be resumed, cancelled, inspected, and cleaned up without digging through random temp files.
 
 It runs SWE-bench Verified, SWE-bench Live, SWE-bench Lite, Aider Polyglot, partial Terminal-Bench 2.0 support, and a small mixed suite. You can point it at Ollama, a local vLLM server, an OpenAI-compatible endpoint, or a vLLM job on IBM's Blue Vela cluster. Terminal-Bench currently works locally through Harbor, but Blue Vela support is not complete yet.
 
@@ -38,7 +38,7 @@ uv run mcode deps toolchains --benchmark aider-polyglot
 
 ## Local quick start
 
-This is the smallest path I trust when I want to know whether the checkout, model server, Docker setup, and result DB are all working.
+This is the quickest way to get up and running to make sure the checkout, model server, Docker setup, and result DB are all working.
 
 ```bash
 uv run mcode doctor local-ollama
@@ -107,4 +107,4 @@ Launch and bench state lives in `~/.config/mcode/launch-state.json`, or wherever
 
 ## Usage notes
 
-Run `mcode doctor <target>` before blaming the model. Use `bench smoke` before spending hours on Verified. Keep explicit `--db` paths for anything you may want to compare later. When running on Blue Vela, keep the server id and run id until the DB and artifacts have been fetched back. If a remote bench finishes but the fetch dies, rerun the same command or use `mcode bench artifacts fetch` rather than starting the whole benchmark again.
+Run `mcode doctor <target>` before blaming the model. Use `bench smoke` to eliminate infra issues before running the full suite. Keep explicit `--db` paths for anything you may want to compare later. When running on Blue Vela, keep the server id and run id until the DB and artifacts have been fetched back. If a remote bench finishes but the fetch dies, rerun the same command or use `mcode bench artifacts fetch` rather than starting the whole benchmark again.
