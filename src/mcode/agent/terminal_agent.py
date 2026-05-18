@@ -155,22 +155,25 @@ def make_terminal_tools(command_bridge: EnvironmentCommandBridge) -> list[Mellea
         return f"exit={result.return_code}\n{output}".rstrip()
 
     def list_dir(path: str = _DEFAULT_CWD) -> str:
-        if reason := _blocked_path_reason(path):
+        resolved_path = _workspace_path(path)
+        if reason := _blocked_path_reason(resolved_path):
             return f"BLOCKED: {reason}"
-        return shell(f"ls -la {shlex.quote(path)}", cwd="/", timeout_sec=30)
+        return shell(f"ls -la {shlex.quote(resolved_path)}", cwd="/", timeout_sec=30)
 
     def read_file(path: str, max_chars: int = _MAX_TOOL_OUTPUT) -> str:
-        if reason := _blocked_path_reason(path):
+        resolved_path = _workspace_path(path)
+        if reason := _blocked_path_reason(resolved_path):
             return f"BLOCKED: {reason}"
         max_chars = max(1, min(int(max_chars or _MAX_TOOL_OUTPUT), _MAX_TOOL_OUTPUT))
-        command = f"head -c {max_chars} {shlex.quote(path)}"
+        command = f"head -c {max_chars} {shlex.quote(resolved_path)}"
         return shell(command, cwd="/", timeout_sec=30)
 
     def write_file(path: str, content: str) -> str:
-        if reason := _blocked_path_reason(path):
+        resolved_path = _workspace_path(path)
+        if reason := _blocked_path_reason(resolved_path):
             return f"BLOCKED: {reason}"
         payload = base64.b64encode(content.encode("utf-8", errors="replace")).decode("ascii")
-        quoted_path = shlex.quote(path)
+        quoted_path = shlex.quote(resolved_path)
         command = (
             f"mkdir -p $(dirname {quoted_path}) && "
             f"printf %s {shlex.quote(payload)} | base64 -d > {quoted_path}"
@@ -178,7 +181,8 @@ def make_terminal_tools(command_bridge: EnvironmentCommandBridge) -> list[Mellea
         return shell(command, cwd="/", timeout_sec=60)
 
     def replace_in_file(path: str, old_str: str, new_str: str) -> str:
-        if reason := _blocked_path_reason(path):
+        resolved_path = _workspace_path(path)
+        if reason := _blocked_path_reason(resolved_path):
             return f"BLOCKED: {reason}"
         script = """
 import pathlib, sys
@@ -194,7 +198,7 @@ path.write_text(text.replace(old, new, 1))
 print('APPLIED')
 """.strip()
         command = (
-            f"python3 - {shlex.quote(path)} {shlex.quote(old_str)} "
+            f"python3 - {shlex.quote(resolved_path)} {shlex.quote(old_str)} "
             f"{shlex.quote(new_str)} <<'PY'\n{script}\nPY"
         )
         return shell(command, cwd="/", timeout_sec=60)
@@ -217,6 +221,15 @@ def _build_goal(instruction: str) -> str:
         "Important constraints: do not inspect /solution or /tests, and do not write to "
         "/logs/verifier or reward files. Leave the final answer concise."
     )
+
+
+def _workspace_path(path: str) -> str:
+    text = (path or _DEFAULT_CWD).strip()
+    if not text or text == ".":
+        return _DEFAULT_CWD
+    if text.startswith("/"):
+        return text
+    return f"{_DEFAULT_CWD.rstrip('/')}/{text}"
 
 
 def _blocked_command_reason(command: str) -> str | None:

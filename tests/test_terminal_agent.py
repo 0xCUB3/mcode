@@ -47,6 +47,15 @@ def test_terminal_tools_execute_shell_through_bridge() -> None:
     assert bridge.commands == ["pwd"]
 
 
+def test_terminal_tools_resolve_relative_paths_under_app() -> None:
+    bridge = _Bridge()
+    tools = make_terminal_tools(bridge)  # type: ignore[arg-type]
+
+    _tool(tools, "read_file").run(path="input.txt")
+
+    assert bridge.commands == ["head -c 20000 /app/input.txt"]
+
+
 def test_terminal_tools_write_file_uses_base64_payload() -> None:
     bridge = _Bridge()
     tools = make_terminal_tools(bridge)  # type: ignore[arg-type]
