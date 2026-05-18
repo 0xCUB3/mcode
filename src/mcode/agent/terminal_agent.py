@@ -141,10 +141,10 @@ def solve_terminal_task(
 
 
 def make_terminal_tools(command_bridge: EnvironmentCommandBridge) -> list[MelleaTool]:
-    def shell(command: str, cwd: str | None = _DEFAULT_CWD, timeout_sec: int = 120) -> str:
+    def shell(command: str, cwd: str | None = None, timeout_sec: int | None = None) -> str:
         if reason := _blocked_command_reason(command):
             return f"BLOCKED: {reason}"
-        timeout = _clamp_timeout(timeout_sec)
+        timeout = _clamp_timeout(timeout_sec or 120)
         try:
             result = command_bridge.exec(command, cwd=cwd or _DEFAULT_CWD, timeout_sec=timeout)
         except Exception as exc:
@@ -160,7 +160,7 @@ def make_terminal_tools(command_bridge: EnvironmentCommandBridge) -> list[Mellea
             return f"BLOCKED: {reason}"
         return shell(f"ls -la {shlex.quote(resolved_path)}", cwd="/", timeout_sec=30)
 
-    def read_file(path: str, max_chars: int = _MAX_TOOL_OUTPUT) -> str:
+    def read_file(path: str, max_chars: int | None = None) -> str:
         resolved_path = _workspace_path(path)
         if reason := _blocked_path_reason(resolved_path):
             return f"BLOCKED: {reason}"
