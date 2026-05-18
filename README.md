@@ -38,7 +38,7 @@ uv run mcode deps toolchains --benchmark aider-polyglot
 
 ## Local quick start
 
-This is the smallest path I trust when I want to know whether the checkout, model server, Docker setup, and result DB are all working.
+This is the quickest way to get up and running to make sure the checkout, model server, Docker setup, and result DB are all working.
 
 ```bash
 uv run mcode doctor local-ollama
