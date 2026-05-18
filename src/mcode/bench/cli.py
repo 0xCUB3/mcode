@@ -26,6 +26,7 @@ from mcode.bench.summary import (
     safe_rerun_metadata,
     task_time_ms,
 )
+from mcode.bench.terminalbench import DEFAULT_DATASET, TerminalBenchConfig
 from mcode.cli_shared import (
     DEFAULT_DB_PATH,
     _append_option,
@@ -175,6 +176,105 @@ def _run_single_benchmark(
 
 def _is_polyglot_toolchain_exception(exc: object) -> bool:
     return exc.__class__.__name__ == "PolyglotToolchainError"
+
+
+def _run_terminal_bench_local(
+    *,
+    config: TerminalBenchConfig,
+    db: Path,
+    limit: int | None,
+    task_ids: str | None,
+    json_mode: bool = False,
+) -> None:
+    from mcode.bench import runstate
+    from mcode.bench.terminalbench import run_terminal_bench
+    from mcode.launch.models import RunStatus, Target
+
+    parsed_task_ids = _parse_task_ids(task_ids)
+    run_id = runstate.make_run_id("terminal-bench")
+    runstate.open_run(
+        run_id=run_id,
+        benchmark="terminal-bench",
+        target=Target.LOCAL_VLLM,
+        db_path=db,
+        metadata=safe_rerun_metadata(),
+    )
+    final_status: RunStatus = RunStatus.FAILED
+    try:
+        if not json_mode:
+            print_run_plan(
+                RunPlan(
+                    benchmark="terminal-bench",
+                    backend=config.backend_name,
+                    model=config.model_id,
+                    db=db,
+                    loop_budget=0,
+                    timeout_s=int(config.timeout_multiplier * 3600),
+                    phase="run",
+                    location="local",
+                    artifact_dir=config.artifact_dir,
+                    limit=limit,
+                    task_ids=task_ids,
+                )
+            )
+        result = run_terminal_bench(
+            config=config,
+            results_db=ResultsDB(db),
+            limit=limit,
+            task_ids=parsed_task_ids,
+            stream_output=not json_mode,
+        )
+        runstate.patch_run(
+            run_id=run_id,
+            metadata={
+                "results_run_id": result.summary.run_id,
+                "harbor_job_dir": str(result.job_dir),
+            },
+        )
+        if json_mode:
+            print(
+                json.dumps(
+                    {
+                        "kind": "summary",
+                        "data": {
+                            "run_id": result.summary.run_id,
+                            "benchmark": "terminal-bench",
+                            "backend": config.backend_name,
+                            "model": config.model_id,
+                            "total": result.summary.total,
+                            "passed": result.summary.passed,
+                            "pass_rate": result.summary.pass_rate,
+                            "harbor_returncode": result.returncode,
+                            "harbor_job_dir": str(result.job_dir),
+                        },
+                    },
+                    sort_keys=True,
+                )
+            )
+        else:
+            _print_run_summary(
+                summary=result.summary,
+                benchmark="terminal-bench",
+                backend=config.backend_name,
+                model=config.model_id,
+                loop_budget=0,
+                timeout_s=int(config.timeout_multiplier * 3600),
+            )
+            print_run_footer(
+                db=db,
+                summary=result.summary,
+                task_time_ms=task_time_ms(db, result.summary.run_id),
+            )
+            console.print(f"Harbor job: {result.job_dir}")
+            print_failure_hints(db=db, run_id=result.summary.run_id)
+        if result.returncode != 0:
+            raise typer.Exit(result.returncode)
+        final_status = RunStatus.DONE
+    finally:
+        try:
+            runstate.close_run(run_id=run_id, status=final_status)
+        except Exception:
+            pass
 
 
 def _run_bluevela_benchmark(
@@ -572,6 +672,57 @@ def _run_bluevela_task_chunks(
     raise typer.Exit(0)
 
 
+def _terminal_bench_cli_args(
+    *,
+    model: str,
+    backend: str,
+    agent: str,
+    dataset: str,
+    jobs_dir: Path,
+    job_name: str | None,
+    environment_type: str,
+    n_concurrent: int,
+    timeout_multiplier: float,
+    agent_timeout_s: int | None,
+    verifier_timeout_s: int | None,
+    harbor_executable: str,
+    artifact_dir: Path,
+    limit: int | None,
+    task_ids: str | None,
+    extra_harbor_arg: list[str] | None,
+) -> list[str]:
+    argv = [
+        "--model",
+        model,
+        "--backend",
+        backend,
+        "--agent",
+        agent,
+        "--dataset",
+        dataset,
+        "--jobs-dir",
+        str(jobs_dir),
+        "--env",
+        environment_type,
+        "--n-concurrent",
+        str(n_concurrent),
+        "--timeout-multiplier",
+        str(timeout_multiplier),
+        "--harbor-executable",
+        harbor_executable,
+        "--artifact-dir",
+        str(artifact_dir),
+    ]
+    _append_option(argv, "--job-name", job_name)
+    _append_option(argv, "--agent-timeout", agent_timeout_s)
+    _append_option(argv, "--verifier-timeout", verifier_timeout_s)
+    _append_option(argv, "--limit", limit)
+    _append_option(argv, "--task-ids", task_ids)
+    for extra in extra_harbor_arg or []:
+        argv.extend(["--harbor-arg", extra])
+    return argv
+
+
 def _swebench_live_cli_args(
     *,
     model: str,
@@ -768,6 +919,153 @@ def _aider_polyglot_cli_args(
     if no_retry:
         argv.append("--no-retry")
     return argv
+
+
+@bench_app.command("terminal-bench")
+def bench_terminal_bench(
+    model: Annotated[str, typer.Option("--model", help="Model id passed to the Harbor agent")],
+    backend: Annotated[
+        str,
+        typer.Option("--backend", help="mCode backend name for the mCode Harbor agent"),
+    ] = "openai",
+    agent: Annotated[
+        str,
+        typer.Option(
+            "--agent",
+            help="Harbor agent to run: mcode, oracle, claude-code, codex, openhands, etc.",
+        ),
+    ] = "mcode",
+    dataset: Annotated[
+        str,
+        typer.Option("--dataset", help="Harbor Terminal-Bench dataset id"),
+    ] = DEFAULT_DATASET,
+    jobs_dir: Annotated[
+        Path,
+        typer.Option("--jobs-dir", help="Directory where Harbor writes job outputs"),
+    ] = Path("experiments/results/terminal-bench-jobs"),
+    job_name: Annotated[
+        str | None,
+        typer.Option("--job-name", help="Stable Harbor job name for resume/inspection"),
+    ] = None,
+    environment_type: Annotated[
+        str,
+        typer.Option("--env", help="Harbor environment: docker, daytona, modal, e2b, etc."),
+    ] = "docker",
+    n_concurrent: Annotated[
+        int,
+        typer.Option("--n-concurrent", min=1, help="Concurrent Harbor trials"),
+    ] = 1,
+    timeout_multiplier: Annotated[
+        float,
+        typer.Option("--timeout-multiplier", min=0.1, help="Scale Harbor task timeouts"),
+    ] = 1.0,
+    agent_timeout_s: Annotated[
+        int | None,
+        typer.Option("--agent-timeout", min=1, help="Override Harbor agent timeout seconds"),
+    ] = None,
+    verifier_timeout_s: Annotated[
+        int | None,
+        typer.Option("--verifier-timeout", min=1, help="Override Harbor verifier timeout seconds"),
+    ] = None,
+    harbor_executable: Annotated[
+        str,
+        typer.Option("--harbor-executable", help="Harbor executable to run"),
+    ] = "harbor",
+    db: Annotated[
+        Path,
+        typer.Option("--db", help="SQLite results DB path"),
+    ] = Path("experiments/results/terminal-bench.db"),
+    artifact_dir: Annotated[
+        Path | None,
+        typer.Option("--artifact-dir", help="Directory for imported Harbor artifacts"),
+    ] = None,
+    limit: Annotated[int | None, typer.Option("--limit", min=1, help="Run first N tasks")] = None,
+    task_ids: Annotated[
+        str | None,
+        typer.Option("--task-ids", help="Comma-separated TB2 task IDs or a JSON/text file"),
+    ] = None,
+    on: Annotated[
+        str,
+        typer.Option("--on", help="Where to run the bench: local or bluevela"),
+    ] = "local",
+    fetch_db: Annotated[
+        bool,
+        typer.Option("--fetch-db/--no-fetch-db", help="Rsync DB back when --on bluevela"),
+    ] = True,
+    fetch_artifacts: Annotated[
+        bool,
+        typer.Option(
+            "--fetch-artifacts/--no-fetch-artifacts",
+            help="Rsync the artifact directory and Harbor jobs back when --on bluevela",
+        ),
+    ] = True,
+    extra_harbor_arg: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--harbor-arg",
+            help="Extra raw argument to append to `harbor run` (repeatable)",
+        ),
+    ] = None,
+    json_mode: JsonFlag = False,
+) -> None:
+    """Run Terminal-Bench 2.0 through Harbor and import results into mCode."""
+
+    resolved_artifact_dir = _resolve_artifact_dir(db, artifact_dir)
+    base_argv = _terminal_bench_cli_args(
+        model=model,
+        backend=backend,
+        agent=agent,
+        dataset=dataset,
+        jobs_dir=jobs_dir,
+        job_name=job_name,
+        environment_type=environment_type,
+        n_concurrent=n_concurrent,
+        timeout_multiplier=timeout_multiplier,
+        agent_timeout_s=agent_timeout_s,
+        verifier_timeout_s=verifier_timeout_s,
+        harbor_executable=harbor_executable,
+        artifact_dir=resolved_artifact_dir,
+        limit=limit,
+        task_ids=task_ids,
+        extra_harbor_arg=extra_harbor_arg,
+    )
+    if on == "bluevela":
+        if json_mode:
+            base_argv.append("--json")
+        _run_bluevela_benchmark(
+            command="terminal-bench",
+            argv=base_argv,
+            model=model,
+            db=db,
+            fetch_db=fetch_db,
+            fetch_artifacts=fetch_artifacts,
+        )
+    if on != "local":
+        typer.echo(f"✗ unknown --on target {on!r}; expected local or bluevela", err=True)
+        raise typer.Exit(2)
+    config = TerminalBenchConfig(
+        model_id=model,
+        backend_name=backend,
+        agent=agent,
+        dataset=dataset,
+        jobs_dir=jobs_dir,
+        job_name=job_name,
+        environment_type=environment_type,
+        n_concurrent=n_concurrent,
+        timeout_multiplier=timeout_multiplier,
+        agent_timeout_s=agent_timeout_s,
+        verifier_timeout_s=verifier_timeout_s,
+        harbor_executable=harbor_executable,
+        artifact_dir=resolved_artifact_dir,
+        extra_harbor_args=tuple(extra_harbor_arg or ()),
+    )
+    _run_terminal_bench_local(
+        config=config,
+        db=db,
+        limit=limit,
+        task_ids=task_ids,
+        json_mode=json_mode,
+    )
 
 
 @bench_app.command("list")

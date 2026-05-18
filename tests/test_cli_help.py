@@ -44,6 +44,25 @@ EXPECTED_OPTIONS: dict[tuple[str, ...], set[str]] = {
         "phase",
         "artifact_dir",
     },
+    ("bench", "terminal-bench"): {
+        "agent",
+        "dataset",
+        "jobs_dir",
+        "job_name",
+        "environment_type",
+        "n_concurrent",
+        "timeout_multiplier",
+        "agent_timeout_s",
+        "verifier_timeout_s",
+        "harbor_executable",
+        "artifact_dir",
+        "limit",
+        "task_ids",
+        "on",
+        "fetch_db",
+        "fetch_artifacts",
+        "extra_harbor_arg",
+    },
     ("bench", "aider-polyglot"): {
         "retry_loop_budget",
         "benchmark_root",
@@ -96,6 +115,7 @@ EXPECTED_OPTIONS: dict[tuple[str, ...], set[str]] = {
 HELP_COMMANDS = [
     ("--help",),
     ("bench", "swebench-lite", "--help"),
+    ("bench", "terminal-bench", "--help"),
     ("compare", "--help"),
     ("deps", "sync", "--help"),
     ("deps", "toolchains", "--help"),
@@ -153,6 +173,8 @@ def test_bench_help_describes_benchmark_commands() -> None:
     assert "Run SWE-bench Lite or Verified tasks" in output
     assert "aider-polyglot" in output
     assert "Run Aider Polyglot coding exercises" in output
+    assert "terminal-bench" in output
+    assert "Run Terminal-Bench 2.0 through Harbor" in output
 
 
 def test_bench_help_shows_grouped_artifacts_and_hides_legacy_names() -> None:
