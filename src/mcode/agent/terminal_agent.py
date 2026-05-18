@@ -173,10 +173,14 @@ def make_terminal_tools(command_bridge: EnvironmentCommandBridge) -> list[Mellea
         if reason := _blocked_path_reason(resolved_path):
             return f"BLOCKED: {reason}"
         payload = base64.b64encode(content.encode("utf-8", errors="replace")).decode("ascii")
-        quoted_path = shlex.quote(resolved_path)
+        script = (
+            "import base64, pathlib, sys; "
+            "path = pathlib.Path(sys.argv[1]); "
+            "path.parent.mkdir(parents=True, exist_ok=True); "
+            "path.write_bytes(base64.b64decode(sys.argv[2]))"
+        )
         command = (
-            f"mkdir -p $(dirname {quoted_path}) && "
-            f"printf %s {shlex.quote(payload)} | base64 -d > {quoted_path}"
+            f"python3 -c {shlex.quote(script)} {shlex.quote(resolved_path)} {shlex.quote(payload)}"
         )
         return shell(command, cwd="/", timeout_sec=60)
 
@@ -235,13 +239,23 @@ def _workspace_path(path: str) -> str:
 def _blocked_command_reason(command: str) -> str | None:
     if reason := blocked_shell_command_reason(command):
         return reason
-    lowered = command.lower()
-    for path in _PROTECTED_PATHS:
-        if path in lowered:
-            return f"protected benchmark path is not available to the agent: {path}"
-    if "reward.txt" in lowered or "reward.json" in lowered:
-        return "reward files are verifier-owned and cannot be modified"
+    for token in _command_path_tokens(command):
+        if reason := _blocked_path_reason(token):
+            return reason
     return None
+
+
+def _command_path_tokens(command: str) -> list[str]:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+    paths = []
+    for token in tokens:
+        candidate = token.lstrip("<>").rstrip(";|&")
+        if candidate.startswith("/"):
+            paths.append(candidate)
+    return paths
 
 
 def _blocked_path_reason(path: str) -> str | None:
@@ -249,8 +263,6 @@ def _blocked_path_reason(path: str) -> str | None:
     for protected in _PROTECTED_PATHS:
         if normalized == protected or normalized.startswith(protected + "/"):
             return f"protected benchmark path is not available to the agent: {protected}"
-    if normalized.endswith("reward.txt") or normalized.endswith("reward.json"):
-        return "reward files are verifier-owned and cannot be modified"
     return None
 
 

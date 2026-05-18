@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 import shutil
 import subprocess
 import sys
@@ -43,8 +44,8 @@ def _python_check() -> Check:
 
 
 def _harbor_check(harbor_executable: str) -> Check:
-    resolved = shutil.which(harbor_executable)
-    if not resolved:
+    command = _harbor_command(harbor_executable)
+    if command is None:
         return Check(
             name="harbor executable",
             ok=False,
@@ -53,7 +54,7 @@ def _harbor_check(harbor_executable: str) -> Check:
         )
     try:
         result = subprocess.run(
-            [resolved, "--version"],
+            [*command, "--version"],
             check=False,
             capture_output=True,
             text=True,
@@ -63,12 +64,12 @@ def _harbor_check(harbor_executable: str) -> Check:
         return Check(
             name="harbor executable",
             ok=False,
-            detail=f"{resolved}: {type(exc).__name__}: {exc}",
+            detail=f"{harbor_executable}: {type(exc).__name__}: {exc}",
             next="verify Harbor runs outside mCode",
         )
     output = (result.stdout or result.stderr).strip()
     if result.returncode == 0:
-        return Check(name="harbor executable", ok=True, detail=output or resolved)
+        return Check(name="harbor executable", ok=True, detail=output or " ".join(command))
     return Check(
         name="harbor executable",
         ok=False,
@@ -113,8 +114,8 @@ def _docker_check() -> Check:
 
 
 def _oracle_smoke_check(*, harbor_executable: str) -> Check:
-    resolved = shutil.which(harbor_executable)
-    if not resolved:
+    harbor_command = _harbor_command(harbor_executable)
+    if harbor_command is None:
         return Check(
             name="terminal-bench oracle smoke",
             ok=False,
@@ -124,12 +125,14 @@ def _oracle_smoke_check(*, harbor_executable: str) -> Check:
     with tempfile.TemporaryDirectory(prefix="mcode-tb-doctor-") as td:
         jobs_dir = Path(td) / "jobs"
         cmd = [
-            resolved,
+            *harbor_command,
             "run",
             "-d",
             DEFAULT_DATASET,
             "--agent",
             "oracle",
+            "--env",
+            "docker",
             "--n-tasks",
             "1",
             "--n-concurrent",
@@ -171,3 +174,16 @@ def _oracle_smoke_check(*, harbor_executable: str) -> Check:
         detail=output[-1] if output else f"exit {result.returncode}",
         next="run the Harbor oracle command directly for full logs",
     )
+
+
+def _harbor_command(harbor_executable: str) -> list[str] | None:
+    try:
+        command = shlex.split(harbor_executable)
+    except ValueError:
+        return None
+    if not command:
+        return None
+    resolved = shutil.which(command[0])
+    if not resolved:
+        return None
+    return [resolved, *command[1:]]

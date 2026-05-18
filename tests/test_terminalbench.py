@@ -11,6 +11,7 @@ from mcode.bench.terminalbench import (
     build_harbor_command,
     import_harbor_job,
     normalize_task_id,
+    resolve_job_dir,
     trial_to_task_result,
 )
 
@@ -39,6 +40,20 @@ def test_build_harbor_command_for_mcode_agent(tmp_path: Path) -> None:
     assert "--agent" not in cmd
 
 
+def test_build_harbor_command_agent_env_overrides_defaults(tmp_path: Path) -> None:
+    config = TerminalBenchConfig(
+        model_id="default-model",
+        agent="mcode",
+        jobs_dir=tmp_path / "jobs",
+        agent_env={"MCODE_MODEL": "override-model"},
+    )
+
+    cmd = build_harbor_command(config, limit=1)
+
+    assert _option_values(cmd, "--agent-env").count("MCODE_MODEL=override-model") == 1
+    assert "MCODE_MODEL=default-model" not in _option_values(cmd, "--agent-env")
+
+
 def test_build_harbor_command_splits_harbor_executable(tmp_path: Path) -> None:
     config = TerminalBenchConfig(
         model_id="model",
@@ -51,6 +66,8 @@ def test_build_harbor_command_splits_harbor_executable(tmp_path: Path) -> None:
 
     assert cmd[:6] == ["uv", "run", "--with", "harbor", "harbor", "run"]
 
+
+def test_build_harbor_command_for_builtin_oracle(tmp_path: Path) -> None:
     config = TerminalBenchConfig(
         model_id="ignored-for-oracle",
         agent="oracle",
@@ -130,16 +147,29 @@ def test_import_harbor_job_saves_results_and_artifacts(tmp_path: Path) -> None:
     assert trial_dir.is_dir()
 
 
+def test_resolve_job_dir_ignores_non_harbor_dirs(tmp_path: Path) -> None:
+    jobs_dir = tmp_path / "jobs"
+    manual_dir = jobs_dir / "manual-notes"
+    harbor_dir = jobs_dir / "harbor-job"
+    manual_dir.mkdir(parents=True)
+    harbor_dir.mkdir(parents=True)
+    (harbor_dir / "result.json").write_text("{}", encoding="utf-8")
+
+    assert resolve_job_dir(jobs_dir, job_name=None) == harbor_dir
+
+
 def test_normalize_task_id_strips_terminal_bench_prefix() -> None:
     assert normalize_task_id("terminal-bench/foo") == "foo"
     assert normalize_task_id("foo") == "foo"
 
 
 def _option(cmd: list[str], flag: str) -> str | None:
-    if flag not in cmd:
-        return None
-    index = cmd.index(flag)
-    return cmd[index + 1]
+    values = _option_values(cmd, flag)
+    return values[0] if values else None
+
+
+def _option_values(cmd: list[str], flag: str) -> list[str]:
+    return [cmd[index + 1] for index, value in enumerate(cmd[:-1]) if value == flag]
 
 
 def _write_trial(

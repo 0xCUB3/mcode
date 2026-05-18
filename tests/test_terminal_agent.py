@@ -36,6 +36,26 @@ def test_terminal_tools_block_protected_paths() -> None:
     assert bridge.commands == []
 
 
+def test_terminal_tools_shell_allows_words_that_contain_protected_names() -> None:
+    bridge = _Bridge()
+    tools = make_terminal_tools(bridge)  # type: ignore[arg-type]
+
+    output = _tool(tools, "shell").run(command="grep tests /app/my_tests.py", cwd="/app")
+
+    assert "exit=0" in output
+    assert bridge.commands == ["grep tests /app/my_tests.py"]
+
+
+def test_terminal_tools_shell_blocks_protected_absolute_paths() -> None:
+    bridge = _Bridge()
+    tools = make_terminal_tools(bridge)  # type: ignore[arg-type]
+
+    output = _tool(tools, "shell").run(command="cat /tests/test.sh", cwd="/app")
+
+    assert output.startswith("BLOCKED:")
+    assert bridge.commands == []
+
+
 def test_terminal_tools_execute_shell_through_bridge() -> None:
     bridge = _Bridge()
     tools = make_terminal_tools(bridge)  # type: ignore[arg-type]
@@ -60,10 +80,11 @@ def test_terminal_tools_write_file_uses_base64_payload() -> None:
     bridge = _Bridge()
     tools = make_terminal_tools(bridge)  # type: ignore[arg-type]
 
-    output = _tool(tools, "write_file").run(path="/app/out.txt", content="hello")
+    output = _tool(tools, "write_file").run(path="/app/dir with spaces/out.txt", content="hello")
 
     assert "exit=0" in output
-    assert "base64 -d > /app/out.txt" in bridge.commands[0]
+    assert "path.parent.mkdir" in bridge.commands[0]
+    assert "/app/dir with spaces/out.txt" in bridge.commands[0]
 
 
 def test_mcode_terminal_bench_agent_can_initialize_without_harbor(tmp_path) -> None:

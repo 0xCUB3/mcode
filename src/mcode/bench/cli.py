@@ -684,8 +684,6 @@ def _terminal_bench_cli_args(
     n_concurrent: int,
     loop_budget: int,
     timeout_multiplier: float,
-    agent_timeout_s: int | None,
-    verifier_timeout_s: int | None,
     harbor_executable: str,
     artifact_dir: Path,
     limit: int | None,
@@ -717,8 +715,6 @@ def _terminal_bench_cli_args(
         str(artifact_dir),
     ]
     _append_option(argv, "--job-name", job_name)
-    _append_option(argv, "--agent-timeout", agent_timeout_s)
-    _append_option(argv, "--verifier-timeout", verifier_timeout_s)
     _append_option(argv, "--limit", limit)
     _append_option(argv, "--task-ids", task_ids)
     for extra in extra_harbor_arg or []:
@@ -966,22 +962,6 @@ def bench_terminal_bench(
         float,
         typer.Option("--timeout-multiplier", min=0.1, help="Scale Harbor task timeouts"),
     ] = 1.0,
-    agent_timeout_s: Annotated[
-        int | None,
-        typer.Option(
-            "--agent-timeout",
-            min=1,
-            help="Reserved for future Harbor versions; use --timeout-multiplier today",
-        ),
-    ] = None,
-    verifier_timeout_s: Annotated[
-        int | None,
-        typer.Option(
-            "--verifier-timeout",
-            min=1,
-            help="Reserved for future Harbor versions; use --timeout-multiplier today",
-        ),
-    ] = None,
     harbor_executable: Annotated[
         str,
         typer.Option("--harbor-executable", help="Harbor executable to run"),
@@ -1025,12 +1005,6 @@ def bench_terminal_bench(
 ) -> None:
     """Run Terminal-Bench 2.0 through Harbor and import results into mCode."""
 
-    if agent_timeout_s is not None or verifier_timeout_s is not None:
-        typer.echo(
-            "Note: Harbor 0.7 does not support absolute agent/verifier timeout overrides; "
-            "using --timeout-multiplier only.",
-            err=True,
-        )
     resolved_artifact_dir = _resolve_artifact_dir(db, artifact_dir)
     base_argv = _terminal_bench_cli_args(
         model=model,
@@ -1043,8 +1017,6 @@ def bench_terminal_bench(
         n_concurrent=n_concurrent,
         loop_budget=loop_budget,
         timeout_multiplier=timeout_multiplier,
-        agent_timeout_s=agent_timeout_s,
-        verifier_timeout_s=verifier_timeout_s,
         harbor_executable=harbor_executable,
         artifact_dir=resolved_artifact_dir,
         limit=limit,
@@ -1075,8 +1047,6 @@ def bench_terminal_bench(
         environment_type=environment_type,
         n_concurrent=n_concurrent,
         timeout_multiplier=timeout_multiplier,
-        agent_timeout_s=agent_timeout_s,
-        verifier_timeout_s=verifier_timeout_s,
         harbor_executable=harbor_executable,
         artifact_dir=resolved_artifact_dir,
         extra_harbor_args=tuple(extra_harbor_arg or ()),

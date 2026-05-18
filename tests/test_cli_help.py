@@ -53,8 +53,6 @@ EXPECTED_OPTIONS: dict[tuple[str, ...], set[str]] = {
         "n_concurrent",
         "loop_budget",
         "timeout_multiplier",
-        "agent_timeout_s",
-        "verifier_timeout_s",
         "harbor_executable",
         "artifact_dir",
         "limit",

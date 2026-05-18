@@ -42,8 +42,6 @@ class TerminalBenchConfig:
     environment_type: str = "docker"
     n_concurrent: int = 1
     timeout_multiplier: float = 1.0
-    agent_timeout_s: int | None = None
-    verifier_timeout_s: int | None = None
     harbor_executable: str = "harbor"
     artifact_dir: Path | None = None
     extra_harbor_args: tuple[str, ...] = ()
@@ -121,7 +119,7 @@ def build_harbor_command(
     if config.model_id and agent_name != "oracle":
         cmd.extend(["--model", config.model_id])
 
-    for key, value in sorted(_default_agent_env(config).items() | config.agent_env.items()):
+    for key, value in sorted(_agent_env(config).items()):
         cmd.extend(["--agent-env", f"{key}={value}"])
 
     cmd.extend(config.extra_harbor_args)
@@ -146,14 +144,14 @@ def run_terminal_bench(
     else:
         completed = subprocess.run(command, check=False, capture_output=True, text=True)
     job_dir = resolve_job_dir(config.jobs_dir, job_name=config.job_name, since_ts=started)
-    if completed.returncode != 0 and not job_dir.is_dir():
+    if completed.returncode != 0 and not _is_harbor_job_dir(job_dir):
         raise RuntimeError(
             f"Harbor failed with exit code {completed.returncode} before writing job dir: {job_dir}"
         )
 
     run_config = config.run_config(limit=limit, task_ids=task_ids)
     run_config["harbor_command"] = command
-    run_config["planned_task_count"] = limit
+    run_config["planned_task_count"] = len(task_ids) if task_ids else limit
     run_id = results_db.find_latest_run_by_config(BENCHMARK_NAME, run_config)
     if run_id is None:
         run_id = results_db.start_run(BENCHMARK_NAME, run_config)
@@ -183,7 +181,10 @@ def import_harbor_job(
 ) -> list[ImportedTrial]:
     imported: list[ImportedTrial] = []
     artifact_root = config.artifact_dir or _default_artifact_dir(results_db.path)
-    for trial_dir in iter_trial_dirs(job_dir):
+    trial_dirs = iter_trial_dirs(job_dir)
+    if not trial_dirs:
+        raise FileNotFoundError(f"No Harbor trial result directories found under {job_dir}")
+    for trial_dir in trial_dirs:
         trial = json.loads((trial_dir / "result.json").read_text(encoding="utf-8"))
         result = trial_to_task_result(trial, trial_dir=trial_dir)
         results_db.save_task_result(run_id, result)
@@ -217,8 +218,11 @@ def iter_trial_dirs(job_dir: Path) -> list[Path]:
 
 def resolve_job_dir(jobs_dir: Path, *, job_name: str | None, since_ts: float | None = None) -> Path:
     if job_name:
-        return jobs_dir / job_name
-    candidates = [path for path in jobs_dir.iterdir() if path.is_dir()]
+        job_dir = jobs_dir / job_name
+        if not _is_harbor_job_dir(job_dir):
+            raise FileNotFoundError(f"Harbor job result not found: {job_dir / 'result.json'}")
+        return job_dir
+    candidates = [path for path in jobs_dir.iterdir() if _is_harbor_job_dir(path)]
     if since_ts is not None:
         recent = [path for path in candidates if path.stat().st_mtime >= since_ts - 5]
         if recent:
@@ -226,6 +230,10 @@ def resolve_job_dir(jobs_dir: Path, *, job_name: str | None, since_ts: float | N
     if not candidates:
         raise FileNotFoundError(f"No Harbor job directories found under {jobs_dir}")
     return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def _is_harbor_job_dir(path: Path) -> bool:
+    return path.is_dir() and (path / "result.json").is_file()
 
 
 def trial_to_task_result(trial: dict[str, Any], *, trial_dir: Path) -> dict[str, Any]:
@@ -376,10 +384,11 @@ def _harbor_task_selector(task_id: str) -> str:
     return f"terminal-bench/{text}"
 
 
-def _default_agent_env(config: TerminalBenchConfig) -> dict[str, str]:
+def _agent_env(config: TerminalBenchConfig) -> dict[str, str]:
     return {
         "MCODE_BACKEND": config.backend_name,
         "MCODE_MODEL": config.model_id,
+        **config.agent_env,
     }
 
 
