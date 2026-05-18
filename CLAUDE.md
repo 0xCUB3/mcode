@@ -152,6 +152,43 @@ Harbor currently requires Python 3.12+. Avoid adding Harbor as a normal project 
 
 Read `docs/bluevela.md` before changing remote behavior. Remote execution uses rsync, LSF, per-run workspaces, process groups, Podman socket setup, DB fetch, and optional artifact fetch. Keep quoting and script construction in `remote_script.py` where it can be tested without submitting jobs.
 
+Always use the mCode commands for Blue Vela workflows. Run them from the local checkout:
+
+```bash
+uv run mcode doctor bluevela --init --login <user>@login3.bluevela.rmf.ibm.com
+uv run mcode doctor bluevela
+uv run mcode launch sync bluevela
+uv run mcode launch bluevela --model <model>
+uv run mcode launch wait <server-id> --timeout 1800
+uv run mcode bench <benchmark> --on bluevela --model <model> --db research/<run>/results.db
+```
+
+Do not manually copy code, venvs, benchmark data, DBs, artifacts, or run scripts onto login nodes. Do not use `/tmp` or ad hoc login-node directories for persistent repo state, benchmark state, model state, or results. The configured `workspace_root` is the synced checkout, and `shared_root` is launcher-owned runtime storage for server dirs, bench dirs, logs, DBs, and fetch metadata. If storage paths need to change, edit `~/.config/mcode/launch.toml` or rerun `doctor bluevela --init`, do not patch generated remote scripts by hand.
+
+Use login-node SSH only for light inspection when mCode tells you to or when diagnosing a leak:
+
+```bash
+ssh <user>@login3.bluevela.rmf.ibm.com 'bjobs -u $USER'
+ssh <user>@login3.bluevela.rmf.ibm.com 'bqueues'
+ssh <user>@login3.bluevela.rmf.ibm.com 'pgrep -af "mcode|podman|vllm"'
+```
+
+Access Blue Vela runs through mCode state and fetch commands:
+
+```bash
+uv run mcode bench list
+uv run mcode bench list --wide
+uv run mcode bench show --latest
+uv run mcode bench show <run-id>
+uv run mcode watch
+uv run mcode launch status
+uv run mcode launch logs <server-id>
+uv run mcode results --db research/<run>/results.db --time
+uv run mcode bench artifacts fetch <run-id> --dest research/<run>/artifacts
+```
+
+`bench show` is the main detailed view. It prints DB summaries when fetched, failed tasks, remote process info, remote DB/artifact paths, artifact fetch commands, and rerun metadata. Normal remote runs fetch the DB back by default. Use `--fetch-artifacts` for artifacts during the run, or `bench artifacts fetch` afterward.
+
 Do not hide remote failures by marking a run stopped if the remote process may still be alive. Cancellation and fetch behavior must stay visible and recoverable.
 
 ## Git and commits
