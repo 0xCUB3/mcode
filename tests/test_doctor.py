@@ -47,6 +47,22 @@ def test_doctor_unknown_target_exits_nonzero():
     assert res.exit_code == 1
 
 
+def test_doctor_terminal_bench_reports_checks(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_doctor(*, deep=False):
+        captured["deep"] = deep
+        return [Check(name="terminal-bench", ok=True, detail="ok")]
+
+    monkeypatch.setattr("mcode.bench.terminalbench_doctor.doctor", fake_doctor)
+    runner = CliRunner()
+    res = runner.invoke(app, ["doctor", "terminal-bench", "--deep"])
+    assert res.exit_code == 0
+    assert captured["deep"] is True
+    assert "terminal-bench" in res.stdout
+    assert "✓" in res.stdout
+
+
 def test_doctor_local_vllm_reports_checks(monkeypatch):
     monkeypatch.setattr("mcode.launch.config.load", lambda: SimpleNamespace())
     monkeypatch.setattr(
