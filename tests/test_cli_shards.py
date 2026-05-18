@@ -235,7 +235,6 @@ def test_terminal_bench_cli_forwards_config(monkeypatch, tmp_path: Path) -> None
     assert config.jobs_dir == tmp_path / "jobs"
     assert config.artifact_dir == tmp_path / "artifacts"
 
-
     captured: dict[str, object] = {}
     monkeypatch.setattr(
         "mcode.bench.cli._run_single_benchmark", lambda **kwargs: captured.update(kwargs)

@@ -51,7 +51,6 @@ def test_build_harbor_command_splits_harbor_executable(tmp_path: Path) -> None:
 
     assert cmd[:6] == ["uv", "run", "--with", "harbor", "harbor", "run"]
 
-
     config = TerminalBenchConfig(
         model_id="ignored-for-oracle",
         agent="oracle",

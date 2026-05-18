@@ -210,9 +210,7 @@ def iter_trial_dirs(job_dir: Path) -> list[Path]:
     if not job_dir.is_dir():
         raise FileNotFoundError(f"Harbor job directory not found: {job_dir}")
     trials = [
-        child
-        for child in job_dir.iterdir()
-        if child.is_dir() and (child / "result.json").is_file()
+        child for child in job_dir.iterdir() if child.is_dir() and (child / "result.json").is_file()
     ]
     return sorted(trials, key=lambda path: path.name)
 
