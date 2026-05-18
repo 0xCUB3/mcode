@@ -1,216 +1,84 @@
 # mCode agent guide
 
-This file is repo-level guidance for agents working in `mcode`. Read it before changing code, then follow the relevant docs linked below. The docs are the source of truth for this repo. If a doc describes a command, architecture boundary, workflow, test, or operational caveat, use that guidance instead of guessing.
+Repo-level guidance for agents working in `mcode`. Read the docs before changing code; keep docs and behavior in sync.
 
-## Documentation first
+## Read the relevant docs first
 
-Before nontrivial work, read the docs for the area you are touching:
+- `README.md`: project purpose, setup, common commands, state locations.
+- `docs/architecture.md`: runner, adapters, agent loop, artifacts, DB, launch state, remote execution.
+- `docs/COMMANDS.md`: CLI behavior, flags, examples, and command semantics.
+- `docs/local.md`: local Ollama/vLLM workflows.
+- `docs/bluevela.md`: Blue Vela launch, sync, remote bench, fetch, cancellation, LSF behavior.
+- `docs/terminalbench.md`: Terminal-Bench 2.0, Harbor integration, result import, terminal agent.
 
-- Start with `README.md` for the project purpose, quick starts, common commands, state locations, and usage notes.
-- Read `docs/architecture.md` before changing the runner, adapters, agent loop, artifacts, results DB, launch state, remote execution, or command layout.
-- Read `docs/COMMANDS.md` before changing CLI behavior, flags, output, docs examples, or command semantics.
-- Read `docs/local.md` before changing local Ollama/vLLM workflows.
-- Read `docs/bluevela.md` before changing Blue Vela launch, sync, remote bench, fetch, cancellation, or LSF behavior.
-- Read `docs/terminalbench.md` before changing Terminal-Bench 2.0, Harbor command construction, Harbor result import, or the mCode Terminal-Bench agent.
+If docs and code disagree, verify against code and update docs in the same patch when practical.
 
-If docs and code disagree, verify with the code and update the docs in the same patch when practical. If you add a new workflow, flag, artifact shape, DB behavior, remote path, or operational pitfall, document it before calling the change done.
+## Architecture boundaries
 
-## What this repo is
+mCode is a Python benchmark harness for agentic coding and terminal tasks. It wraps a Mellea ReACT loop, exposes guarded tools, stores benchmark rows in SQLite, and tracks launch/run state for long local or remote jobs.
 
-mCode is a Python benchmark harness for agentic coding and terminal tasks. It wraps a Mellea ReACT loop, exposes guarded tools, records benchmark rows in SQLite, and keeps enough launch/run state to resume, inspect, cancel, fetch, and compare long runs.
+Keep changes close to the owner:
 
-Supported benchmark areas include:
+- CLI: `src/mcode/cli.py`, `src/mcode/bench/cli.py`
+- Runner/adapters: `src/mcode/bench/runner.py`, `src/mcode/bench/adapters.py`
+- Results/artifacts: `src/mcode/bench/results*.py`, `src/mcode/bench/artifacts*.py`
+- Launch/remote execution: `src/mcode/launch/`, `src/mcode/bench/remote*.py`
+- Tool policy and coding agent: `src/mcode/agent/tool_policy.py`, `src/mcode/agent/coding_agent.py`, `src/mcode/agent/tooling.py`
+- ReACT/LLM session: `src/mcode/llm/react_driver.py`, `src/mcode/llm/session.py`
+- Terminal-Bench: `src/mcode/bench/terminalbench.py`, `src/mcode/bench/terminalbench_agent.py`, `src/mcode/agent/terminal_agent.py`
 
-- SWE-bench Lite and Verified
-- SWE-bench Live
-- Aider Polyglot
-- Terminal-Bench 2.0 through Harbor
-- mixed suites and smoke runs
+The runner should stay boring: load/filter/shard/resume tasks, call adapters, save results/artifacts, and update progress. Benchmark-specific execution belongs in adapters or execution modules. Tool safety belongs in policy/tooling modules.
 
-Model backends include Ollama, local vLLM, OpenAI-compatible endpoints, and vLLM jobs on IBM Blue Vela.
-
-## Key files and boundaries
-
-Keep changes close to the code that owns the behavior:
-
-- Top-level Typer app: `src/mcode/cli.py`
-- Benchmark CLI facade: `src/mcode/bench/cli.py`
-- Shared runner lifecycle: `src/mcode/bench/runner.py`
-- Benchmark adapter registry: `src/mcode/bench/adapters.py`
-- Suite and smoke commands: `src/mcode/bench/suite_cli.py`
-- Results DB facade/schema/export/merge: `src/mcode/bench/results*.py`
-- Artifact manifests and artifact CLI: `src/mcode/bench/artifacts.py`, `src/mcode/bench/runner_artifacts.py`, `src/mcode/bench/artifacts_cli.py`
-- Launch state and server launchers: `src/mcode/launch/`
-- Blue Vela remote bench planning: `src/mcode/bench/remote.py`, `src/mcode/bench/remote_script.py`
-- Tool policy: `src/mcode/agent/tool_policy.py`
-- Coding agent tools/prompt: `src/mcode/agent/coding_agent.py`, `src/mcode/agent/tooling.py`
-- ReACT driver and LLM session: `src/mcode/llm/react_driver.py`, `src/mcode/llm/session.py`
-- Terminal-Bench integration: `src/mcode/bench/terminalbench.py`, `src/mcode/bench/terminalbench_agent.py`, `src/mcode/agent/terminal_agent.py`
-
-The runner should stay boring: load tasks, shard/filter/resume, call the adapter, save results/artifacts, and update progress. Benchmark-specific container or evaluation behavior belongs in adapters or execution modules. Tool safety belongs in policy/tooling modules, not scattered across benchmark code.
-
-## Commands agents should know
-
-Install and basic checks:
+## Common checks
 
 ```bash
 uv sync --extra dev
 uv run mcode --help
 uv run mcode doctor
-```
-
-Focused local smoke:
-
-```bash
-uv run mcode doctor local-ollama
-uv run mcode launch local-ollama --model granite4
-uv run mcode launch wait <server-id> --timeout 120
-uv run mcode bench smoke --backend openai --model granite4 --shards 4
-uv run mcode bench show --latest
-```
-
-Blue Vela rhythm:
-
-```bash
-uv run mcode doctor bluevela --init --login <user>@login3.bluevela.rmf.ibm.com
-uv run mcode launch sync bluevela
-uv run mcode launch bluevela --model Qwen/Qwen3.6-35B-A3B --json
-uv run mcode launch wait <server-id> --timeout 1800
-uv run mcode bench smoke --backend openai --model Qwen/Qwen3.6-35B-A3B --on bluevela --shards 4
-uv run mcode bench show --latest
-uv run mcode launch stop <server-id>
-```
-
-Terminal-Bench local smoke:
-
-```bash
-uv tool install harbor
-uv run mcode doctor terminal-bench
-uv run mcode bench terminal-bench --agent oracle --model unused --limit 1
-```
-
-Use `--harbor-executable "uv run --with harbor harbor"` when Harbor needs to run from a project-aware environment, especially for the custom mCode Harbor agent.
-
-## Testing expectations
-
-Run focused tests first, then broader checks when the touched area warrants it.
-
-General final check for code changes:
-
-```bash
 uv run ruff check .
 uv run pytest -q
 ```
 
-Focused checks by area:
+Focused checks:
 
 ```bash
-# CLI shape and command registration
 uv run pytest tests/test_cli_help.py -q
-
-# Runner/results/sharding behavior
 uv run pytest tests/test_cli_shards.py tests/bench -q
-
-# Artifacts and replay plumbing
-uv run pytest tests/test_bench_artifacts_cli.py -q
-
-# Agent loop and tool behavior
 uv run pytest tests/test_react_driver.py tests/test_agent_generate.py tests/test_agent_tools.py tests/test_tool_policy.py -q
-
-# Launch and Blue Vela remote planning
 uv run pytest tests/launch tests/bench/test_remote.py -q
-
-# Terminal-Bench integration
 uv run pytest tests/test_terminalbench.py tests/test_terminal_agent.py tests/test_doctor.py -q
 ```
 
-Do not run live Docker, Harbor, Blue Vela, or model-server tests unless the user asks or the task clearly requires it. If skipped, say so.
+Do not run live Docker, Harbor, Blue Vela, or model-server tests unless asked or clearly required. If skipped, say so.
 
-## Results, artifacts, and state invariants
+## State invariants
 
 Keep these stores distinct:
 
-- SQLite results DB is benchmark truth: runs, task rows, diagnostics, artifact metadata.
-- Artifact directories hold generated patches, manifests, verifier previews, Harbor trial references, and replay inputs.
-- Launch state is operational state for listing, watching, cancellation, server records, run records, and fetch metadata.
+- SQLite results DB: benchmark truth.
+- Artifact dirs: patches, manifests, verifier previews, Harbor trial references, replay inputs.
+- Launch state: operational state for listing, watching, canceling, server records, remote process info, and fetch metadata.
 
-Do not treat launch state as benchmark truth. Do not make tests touch the real launch state. Use the isolated test fixtures and existing helpers.
+Do not treat launch state as benchmark truth. Tests must not touch real launch state. Bad `--task-ids` filters should fail early rather than create empty successful runs.
 
-Reruns against the same DB should resume completed work. Bad `--task-ids` filters should fail early rather than creating an empty successful run. Retryable infrastructure failures can be retried, but ordinary failed task rows are benchmark results.
+## Terminal-Bench / Harbor
 
-## Terminal-Bench and Harbor notes
+Terminal-Bench 2.0 is Harbor-native. Harbor owns task download, environments, verifier injection, rewards, concurrency, and trial logs. mCode owns CLI UX, DB import, artifact manifests, and the optional mCode terminal agent.
 
-Terminal-Bench 2.0 is Harbor-native. Harbor owns task download, container setup, verifier injection, reward parsing, concurrency, and trial logs. mCode owns CLI UX, DB import, artifact manifests, and the optional mCode terminal agent.
+Do not reimplement Harbor's evaluator unless explicitly asked. Preserve Harbor job/trial directories and import `result.json`, verifier logs, and rewards.
 
-Do not reimplement Harbor's evaluator unless explicitly asked. Preserve Harbor job/trial directories and import their `result.json`, verifier logs, and rewards into mCode artifacts/results.
+The mCode Terminal-Bench agent is stateful-terminal oriented, not patch oriented. Keep it separate from the SWE-bench patch agent.
 
-The custom mCode Terminal-Bench agent is stateful-terminal oriented, not patch oriented. It may create files and change container state. Keep it separate from the SWE-bench coding agent, which is git-diff/patch based and intentionally constrained.
+Harbor currently requires Python 3.12+. Prefer `uv tool install harbor` or `--harbor-executable "uv run --with harbor harbor"`; do not add Harbor as a normal project extra unless the dependency conflict is intentionally resolved.
 
-Harbor currently requires Python 3.12+. Avoid adding Harbor as a normal project extra unless the `datasets` dependency conflict is intentionally resolved. Prefer `uv tool install harbor` or `--harbor-executable "uv run --with harbor harbor"`.
+## Blue Vela
 
-## Blue Vela notes
+Read `docs/bluevela.md` before changing remote behavior. Blue Vela workflows must use mCode commands from the local checkout; do not manually copy code, venvs, benchmark data, DBs, artifacts, or scripts to login nodes or `/tmp`.
 
-Read `docs/bluevela.md` before changing remote behavior. Remote execution uses rsync, LSF, per-run workspaces, process groups, Podman socket setup, DB fetch, and optional artifact fetch. Keep quoting and script construction in `remote_script.py` where it can be tested without submitting jobs.
+Use SSH only for light inspection when mCode tells you to or while diagnosing leaks. Do not hide remote failures by marking runs stopped if the remote process may still be alive.
 
-Always use the mCode commands for Blue Vela workflows. Run them from the local checkout:
+## Git and responses
 
-```bash
-uv run mcode doctor bluevela --init --login <user>@login3.bluevela.rmf.ibm.com
-uv run mcode doctor bluevela
-uv run mcode launch sync bluevela
-uv run mcode launch bluevela --model <model>
-uv run mcode launch wait <server-id> --timeout 1800
-uv run mcode bench <benchmark> --on bluevela --model <model> --db research/<run>/results.db
-```
+Use small, incremental commits. Before committing, inspect `git status --short`, `git diff --stat`, and relevant diffs. Stage only intended files. Do not push unless asked.
 
-Do not manually copy code, venvs, benchmark data, DBs, artifacts, or run scripts onto login nodes. Do not use `/tmp` or ad hoc login-node directories for persistent repo state, benchmark state, model state, or results. The configured `workspace_root` is the synced checkout, and `shared_root` is launcher-owned runtime storage for server dirs, bench dirs, logs, DBs, and fetch metadata. If storage paths need to change, edit `~/.config/mcode/launch.toml` or rerun `doctor bluevela --init`, do not patch generated remote scripts by hand.
-
-Use login-node SSH only for light inspection when mCode tells you to or when diagnosing a leak:
-
-```bash
-ssh <user>@login3.bluevela.rmf.ibm.com 'bjobs -u $USER'
-ssh <user>@login3.bluevela.rmf.ibm.com 'bqueues'
-ssh <user>@login3.bluevela.rmf.ibm.com 'pgrep -af "mcode|podman|vllm"'
-```
-
-Access Blue Vela runs through mCode state and fetch commands:
-
-```bash
-uv run mcode bench list
-uv run mcode bench list --wide
-uv run mcode bench show --latest
-uv run mcode bench show <run-id>
-uv run mcode watch
-uv run mcode launch status
-uv run mcode launch logs <server-id>
-uv run mcode results --db research/<run>/results.db --time
-uv run mcode bench artifacts fetch <run-id> --dest research/<run>/artifacts
-```
-
-`bench show` is the main detailed view. It prints DB summaries when fetched, failed tasks, remote process info, remote DB/artifact paths, artifact fetch commands, and rerun metadata. Normal remote runs fetch the DB back by default. Use `--fetch-artifacts` for artifacts during the run, or `bench artifacts fetch` afterward.
-
-Do not hide remote failures by marking a run stopped if the remote process may still be alive. Cancellation and fetch behavior must stay visible and recoverable.
-
-## Git and commits
-
-Use small, incremental commits for multi-step work. Before committing, inspect status and diff:
-
-```bash
-git status --short
-git diff --stat
-git diff
-```
-
-Stage only intended files. Commit messages should be short, imperative, and specific. Do not use conventional prefixes unless the repo starts doing so. Do not push unless the user asks.
-
-## Writing and responses
-
-Keep user-facing responses concise and concrete. Mention:
-
-- what changed
-- files or area touched
-- tests/checks run
-- commits made, if any
-- known issues or follow-up
-
-Do not paste large file contents into responses. Do not narrate every tool call. If a bug is unclear, gather evidence with logs/tests/instrumentation instead of speculating.
+Keep responses concise: what changed, files/areas touched, checks run, commits made, and known follow-up.

@@ -1,27 +1,20 @@
 # Terminal-Bench 2.0
 
-mCode runs Terminal-Bench 2.0 through Harbor, the official TB2 harness. Harbor owns task download, Docker/cloud environments, verifier injection, reward parsing, and trial logs. mCode owns the CLI, launch state, SQLite results, artifact import, and the optional mCode terminal agent.
+mCode runs Terminal-Bench 2.0 through Harbor, the official TB2 harness. Harbor owns task download, environments, verifier injection, rewards, concurrency, and trial logs. mCode owns CLI UX, SQLite import, artifact manifests, and the optional mCode terminal agent.
 
-## Setup
+## Setup and smoke tests
 
-Install Harbor as a tool so it can keep its own Python/dependency set:
+Install Harbor outside the project dependency set:
 
 ```bash
 uv tool install harbor
 uv run mcode doctor terminal-bench
-```
-
-Run the deep doctor when you want to prove Docker and the TB2 dataset work end to end:
-
-```bash
 uv run mcode doctor terminal-bench --deep
 ```
 
-The deep check runs one Harbor oracle task and can take several minutes the first time because Harbor may download task metadata and pull/build a container image.
+The deep doctor runs one Harbor oracle task and can take several minutes while Harbor downloads metadata and pulls/builds an image.
 
-## Oracle smoke
-
-Use Harbor's oracle agent first. This verifies the dataset, Docker, and result import path without spending model tokens.
+Start with the oracle agent to validate Harbor, Docker, and mCode result import without spending model tokens:
 
 ```bash
 uv run mcode bench terminal-bench \
@@ -31,11 +24,9 @@ uv run mcode bench terminal-bench \
   --db experiments/results/terminal-bench-oracle.db
 ```
 
-mCode imports Harbor's job output into the DB and stores per-task artifact manifests that point back to the Harbor trial directory.
-
 ## mCode agent run
 
-The default agent is `mcode`. It is a custom Harbor external agent that runs mCode's terminal-mode ReACT loop against Harbor's task container.
+The default `mcode` agent is a custom Harbor external agent that runs mCode's terminal-mode ReACT loop against Harbor's task container:
 
 ```bash
 uv run mcode bench terminal-bench \
@@ -47,57 +38,40 @@ uv run mcode bench terminal-bench \
   --db experiments/results/terminal-bench.db
 ```
 
-The mCode terminal agent uses tools for shell execution, listing, reading, writing, and string replacement. It is intentionally separate from the SWE-bench patch agent because Terminal-Bench tasks often require creating files or changing container state rather than producing a git diff.
+Use `--harbor-executable "uv run --with harbor harbor"` when Harbor must run from a project-aware environment, especially for the custom mCode agent.
 
-## Built-in Harbor agents
+The terminal agent is intentionally separate from the SWE-bench patch agent because TB2 tasks mutate container state rather than submit git diffs.
 
-You can still run Harbor's installed agents through the mCode command and import their results:
+## Other Harbor agents and flags
+
+Built-in Harbor agents still work through mCode and are imported into the mCode DB:
 
 ```bash
-uv run mcode bench terminal-bench \
-  --agent claude-code \
-  --model anthropic/claude-opus-4-1 \
-  --limit 5
+uv run mcode bench terminal-bench --agent claude-code --model anthropic/claude-opus-4-1 --limit 5
 ```
 
 Useful flags:
 
 |Flag|Use|
 |-|-|
-|`--agent`|`mcode`, `oracle`, or any Harbor-supported agent such as `claude-code` or `codex`|
-|`--dataset`|Harbor dataset id. Defaults to `terminal-bench/terminal-bench-2`|
+|`--agent`|`mcode`, `oracle`, or any Harbor-supported agent|
+|`--dataset`|Harbor dataset id; defaults to `terminal-bench/terminal-bench-2`|
 |`--limit`|Run the first N selected tasks|
-|`--task-ids`|Comma-separated TB2 ids such as `log-summary-date-ranges`|
+|`--task-ids`|Comma-separated TB2 ids, e.g. `log-summary-date-ranges`|
 |`--n-concurrent`|Harbor trial concurrency|
 |`--env`|Harbor environment provider, usually `docker` locally|
 |`--timeout-multiplier`|Scale task agent/verifier timeouts|
 |`--jobs-dir`|Where Harbor writes job directories|
 |`--artifact-dir`|Where mCode writes imported artifact manifests|
-|`--harbor-arg`|Append a raw argument to `harbor run` for newer Harbor flags|
+|`--harbor-arg`|Append a raw argument to `harbor run`|
 
 ## Results and artifacts
 
-Harbor writes a job like:
-
-```text
-jobs/<job-name>/
-  result.json
-  config.json
-  <trial>/
-    result.json
-    trial.log
-    agent/
-    verifier/
-      test-stdout.txt
-      test-stderr.txt
-      reward.txt or reward.json
-    artifacts/
-```
-
-mCode imports each trial as a `terminal-bench` task result. The task `submission_json` includes Harbor metadata such as trial name, trial path, task checksum, and reward. The artifact manifest stores evaluation metadata and paths to the Harbor trial, verifier logs, and reward file.
+Harbor writes `jobs/<job-name>/result.json` plus one trial directory per task, each with its own `result.json`, logs, verifier output, and rewards. mCode imports every trial as a `terminal-bench` task result. The artifact manifest records evaluation metadata and paths back to the Harbor trial, verifier logs, and reward file.
 
 ## Notes
 
 - Harbor currently requires Python 3.12+. Keeping it as a `uv tool` avoids dependency conflicts with mCode's optional dataset stack.
-- Normal mCode patch replay does not apply to Terminal-Bench because the benchmark scores final container state, not a git patch.
-- Full TB2 runs are expensive. Many tasks have 15-60 minute timeouts, and a few are longer. Start with `--agent oracle --limit 1`, then a small model slice.
+- Normal mCode patch replay does not apply because TB2 scores final container state.
+- Full TB2 runs are expensive. Start with `--agent oracle --limit 1`, then a small model slice.
+- Terminal-Bench support is partial on Blue Vela until Harbor execution there is validated end to end.
