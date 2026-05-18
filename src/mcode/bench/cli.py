@@ -968,11 +968,19 @@ def bench_terminal_bench(
     ] = 1.0,
     agent_timeout_s: Annotated[
         int | None,
-        typer.Option("--agent-timeout", min=1, help="Override Harbor agent timeout seconds"),
+        typer.Option(
+            "--agent-timeout",
+            min=1,
+            help="Reserved for future Harbor versions; use --timeout-multiplier today",
+        ),
     ] = None,
     verifier_timeout_s: Annotated[
         int | None,
-        typer.Option("--verifier-timeout", min=1, help="Override Harbor verifier timeout seconds"),
+        typer.Option(
+            "--verifier-timeout",
+            min=1,
+            help="Reserved for future Harbor versions; use --timeout-multiplier today",
+        ),
     ] = None,
     harbor_executable: Annotated[
         str,
@@ -1017,6 +1025,12 @@ def bench_terminal_bench(
 ) -> None:
     """Run Terminal-Bench 2.0 through Harbor and import results into mCode."""
 
+    if agent_timeout_s is not None or verifier_timeout_s is not None:
+        typer.echo(
+            "Note: Harbor 0.7 does not support absolute agent/verifier timeout overrides; "
+            "using --timeout-multiplier only.",
+            err=True,
+        )
     resolved_artifact_dir = _resolve_artifact_dir(db, artifact_dir)
     base_argv = _terminal_bench_cli_args(
         model=model,

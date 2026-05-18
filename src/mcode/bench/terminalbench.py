@@ -106,11 +106,6 @@ def build_harbor_command(
         cmd.extend(["--job-name", config.job_name])
     if limit is not None:
         cmd.extend(["--n-tasks", str(limit)])
-    if config.agent_timeout_s is not None:
-        cmd.extend(["--agent-timeout", str(config.agent_timeout_s)])
-    if config.verifier_timeout_s is not None:
-        cmd.extend(["--verifier-timeout", str(config.verifier_timeout_s)])
-
     for task_id in task_ids or []:
         cmd.extend(["--include-task-name", _harbor_task_selector(task_id)])
 
@@ -151,6 +146,10 @@ def run_terminal_bench(
     else:
         completed = subprocess.run(command, check=False, capture_output=True, text=True)
     job_dir = resolve_job_dir(config.jobs_dir, job_name=config.job_name, since_ts=started)
+    if completed.returncode != 0 and not job_dir.is_dir():
+        raise RuntimeError(
+            f"Harbor failed with exit code {completed.returncode} before writing job dir: {job_dir}"
+        )
 
     run_config = config.run_config(limit=limit, task_ids=task_ids)
     run_config["harbor_command"] = command
