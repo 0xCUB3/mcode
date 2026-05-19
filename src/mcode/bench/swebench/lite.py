@@ -3,13 +3,12 @@ from __future__ import annotations
 import hashlib
 import os
 import platform
-import re
-import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from mcode.bench.swebench import common
 from mcode.bench.swebench.docker import (
     ensure_docker_client,
     is_docker_unavailable_error,
@@ -17,37 +16,16 @@ from mcode.bench.swebench.docker import (
 )
 from mcode.util import make_temp_dir, temporary_directory
 
+_build_agent_shell_command = common.build_agent_shell_command
+_copy_to_container = common.copy_to_container
+_exec_agent_command_in_container = common.exec_agent_command_in_container
+
 
 def _fq_image(name: str) -> str:
     """Fully qualify an image name for podman Docker-compat API."""
     if "/" in name and "." in name.split("/")[0]:
         return name
     return f"docker.io/{name}"
-
-
-def _copy_to_container_safe(container: object, content: str, dest: str) -> None:
-    """Copy content into a container without triggering lchown.
-
-    Rootless podman without subuid ranges fails on the standard
-    ``put_archive`` / ``copy_to_container`` because it cannot lchown
-    the extracted file.  We build a tar with uid/gid 0 so no ownership
-    change is needed.
-    """
-    import io
-    import os
-    import tarfile as _tarfile
-
-    data = content.encode("utf-8")
-    buf = io.BytesIO()
-    with _tarfile.open(fileobj=buf, mode="w") as tar:
-        info = _tarfile.TarInfo(name=os.path.basename(dest))
-        info.size = len(data)
-        info.uid = 0
-        info.gid = 0
-        info.mode = 0o644
-        tar.addfile(info, io.BytesIO(data))
-    buf.seek(0)
-    container.put_archive(os.path.dirname(dest) or "/", buf)
 
 
 _RETRYABLE_PODMAN_IMAGE_PATTERNS = (
@@ -284,53 +262,6 @@ def _ensure_image(
             raise
 
 
-def _truncate_command_output(output: str, *, max_chars: int = 10_000) -> str:
-    if len(output) <= max_chars:
-        return output
-    half = max_chars // 2
-    return (
-        output[:half]
-        + f"\n\n[... truncated {len(output) - max_chars} chars ...]\n\n"
-        + output[-half:]
-    )
-
-
-def _replace_agent_path_alias(command: str, alias: str, replacement: str = "/testbed") -> str:
-    normalized_alias = alias.rstrip("/")
-    if not normalized_alias:
-        return command
-    pattern = re.compile(rf"(?<![A-Za-z0-9_./-]){re.escape(normalized_alias)}(?=$|[\s/'\";)&|])")
-    return pattern.sub(replacement, command)
-
-
-def _normalize_agent_command(command: str, *, host_repo_root: str | None = None) -> str:
-    normalized = command
-    normalized = re.sub(
-        r"(?<![A-Za-z0-9_./-])/home/user/repos/[^\s/'\";)&|]+",
-        "/testbed",
-        normalized,
-    )
-    for alias in (host_repo_root, "/home/user/repo", "c:/users/user/tmp/repo"):
-        if alias:
-            normalized = _replace_agent_path_alias(normalized, alias)
-    return normalized
-
-
-def _build_agent_shell_command(
-    command: str,
-    *,
-    host_repo_root: str | None = None,
-) -> str:
-    normalized = _normalize_agent_command(command, host_repo_root=host_repo_root)
-    preamble = [
-        "source /opt/miniconda3/bin/activate",
-        "conda activate testbed",
-        "cd /testbed",
-        "git config --global --add safe.directory /testbed",
-    ]
-    return "\n".join([*preamble, normalized])
-
-
 def _build_agent_setup_script(eval_script_list: list[str]) -> str:
     setup_commands: list[str] = []
     for raw_command in eval_script_list:
@@ -364,35 +295,6 @@ def _extract_agent_test_commands(eval_script_list: list[str]) -> list[str]:
         if in_test_output and command:
             commands.append(command)
     return commands
-
-
-def _exec_agent_command_in_container(
-    container,
-    cmd: str,
-    *,
-    workdir: str = "/testbed",
-    timeout_s: int = 30,
-) -> tuple[str, int, bool]:
-    result_box: list[tuple[str, int]] = []
-
-    def _run() -> None:
-        try:
-            val = container.exec_run(
-                ["bash", "-o", "pipefail", "-c", cmd],
-                workdir=workdir,
-            )
-            output = (val.output or b"").decode("utf-8", errors="replace")
-            result_box.append((_truncate_command_output(output), val.exit_code))
-        except Exception as e:
-            result_box.append((f"Error: {type(e).__name__}: {e}", -1))
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    t.join(timeout=timeout_s)
-    if not result_box:
-        return ("", -1, True)
-    output, exit_code = result_box[0]
-    return (output, exit_code, False)
 
 
 @dataclass(frozen=True)
@@ -783,7 +685,7 @@ class SWEbenchSandbox:
 
             # Copy patch to container via exec (avoids put_archive lchown
             # failures in rootless podman without subuid ranges).
-            _copy_to_container_safe(container, patch or "", str(DOCKER_PATCH))
+            _copy_to_container(container, str(DOCKER_PATCH), patch or "")
 
             # Apply patch (mirror swebench harness behavior).
             apply_cmds = [
@@ -825,7 +727,7 @@ class SWEbenchSandbox:
 
             # Copy eval script and run.
             eval_script = test_spec.eval_script
-            _copy_to_container_safe(container, eval_script, "/eval.sh")
+            _copy_to_container(container, "/eval.sh", eval_script)
             test_output, timed_out, runtime_s = exec_run_with_timeout(
                 container, "/bin/bash /eval.sh", timeout_s
             )

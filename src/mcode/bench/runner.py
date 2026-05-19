@@ -1228,7 +1228,7 @@ def _is_polyglot_toolchain_error(exc: BaseException) -> bool:
 
 def _is_retryable_infra_text(text: str) -> bool:
     try:
-        from mcode.bench.swebench.execution import _is_retryable_podman_image_error
+        from mcode.bench.swebench.lite import _is_retryable_podman_image_error
 
         if _is_retryable_podman_image_error(text):
             return True

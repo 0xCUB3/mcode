@@ -44,7 +44,7 @@ def _swebench_lite_adapter(
     *,
     run_swebench_task: Callable[[object, object | None, int], dict[str, object] | None],
 ) -> BenchmarkAdapter:
-    from mcode.bench.swebench.execution import SWEbenchSandbox
+    from mcode.bench.swebench.lite import SWEbenchSandbox
     from mcode.bench.swebench_lite import load_swebench_lite
 
     def load_tasks(limit: int | None, task_ids: list[str] | None) -> list[object]:
@@ -93,7 +93,7 @@ def _swebench_live_adapter(
     *,
     run_swebench_live_task: Callable[[object, object | None, int], dict[str, object] | None],
 ) -> BenchmarkAdapter:
-    from mcode.bench.swebench.live_execution import SWEbenchLiveSandbox
+    from mcode.bench.swebench.live import SWEbenchLiveSandbox
     from mcode.bench.swebench_live import load_swebench_live
 
     def load_tasks(limit: int | None, task_ids: list[str] | None) -> list[object]:

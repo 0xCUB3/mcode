@@ -3,7 +3,7 @@
 Replaces three near-identical loops in the codebase:
 - launch/bluevela.py queued-phase SSH fail streak
 - launch/bluevela.py starting-phase SSH fail streak (basically the same loop)
-- bench/swebench/execution.py podman pull retry
+- bench/swebench/lite.py podman pull retry
 
 Sleep between attempts follows `min(base_sleep_s * 2 ** (attempt - 1), max_sleep_s)`.
 Note this is NOT identical to the launcher's pre-existing

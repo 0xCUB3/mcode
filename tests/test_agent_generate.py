@@ -689,7 +689,7 @@ def test_swebench_runner_skips_completed_tasks_without_touching_sandbox(
         "mcode.bench.swebench_lite.load_swebench_lite",
         lambda *args, **kwargs: [task],
     )
-    monkeypatch.setattr("mcode.bench.swebench.execution.SWEbenchSandbox", FirstSandbox)
+    monkeypatch.setattr("mcode.bench.swebench.lite.SWEbenchSandbox", FirstSandbox)
 
     results_db = ResultsDB(tmp_path / "results.db")
     runner = BenchmarkRunner(
@@ -706,7 +706,7 @@ def test_swebench_runner_skips_completed_tasks_without_touching_sandbox(
     assert first.total == 1
     assert first.passed == 1
 
-    monkeypatch.setattr("mcode.bench.swebench.execution.SWEbenchSandbox", ForbiddenSandbox)
+    monkeypatch.setattr("mcode.bench.swebench.lite.SWEbenchSandbox", ForbiddenSandbox)
     second = runner.run_benchmark("swebench-lite")
 
     assert second.run_id == first.run_id
@@ -871,7 +871,7 @@ def test_swebench_runner_retries_prior_infra_failure(tmp_path, monkeypatch) -> N
 
     runner._generate_task_patch = generate_patch  # type: ignore[method-assign]
 
-    monkeypatch.setattr("mcode.bench.swebench.execution.SWEbenchSandbox", FirstSandbox)
+    monkeypatch.setattr("mcode.bench.swebench.lite.SWEbenchSandbox", FirstSandbox)
     first = runner.run_benchmark("swebench-lite")
     assert first.total == 1
     assert first.passed == 0
@@ -879,7 +879,7 @@ def test_swebench_runner_retries_prior_infra_failure(tmp_path, monkeypatch) -> N
     assert first_rows[task.instance_id]["terminal_reason"] == "infra_failure"
     assert sandbox_calls["generate"] == 0
 
-    monkeypatch.setattr("mcode.bench.swebench.execution.SWEbenchSandbox", SecondSandbox)
+    monkeypatch.setattr("mcode.bench.swebench.lite.SWEbenchSandbox", SecondSandbox)
     second = runner.run_benchmark("swebench-lite")
 
     assert second.run_id == first.run_id

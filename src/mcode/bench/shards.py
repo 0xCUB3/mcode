@@ -144,7 +144,7 @@ _INFRA_ERROR_PATTERNS = (
 
 def _is_retryable_infra_exception(exc: object) -> bool:
     try:
-        from mcode.bench.swebench.execution import _is_retryable_podman_image_error
+        from mcode.bench.swebench.lite import _is_retryable_podman_image_error
 
         return _is_retryable_podman_image_error(exc)
     except Exception:

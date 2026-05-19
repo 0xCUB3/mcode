@@ -9,7 +9,7 @@ import pytest
 
 import mcode.bench.swebench.docker as sandbox_module
 from mcode.bench.swebench.docker import DockerUnavailableError, is_docker_unavailable_error
-from mcode.bench.swebench.execution import (
+from mcode.bench.swebench.lite import (
     RetryablePodmanImageError,
     SWEbenchSandbox,
     _build_agent_setup_script,
@@ -490,11 +490,11 @@ def test_repo_context_disables_network_for_source_container(monkeypatch):
     monkeypatch.setitem(sys.modules, "swebench.harness.test_spec.test_spec", fake_test_spec_module)
 
     monkeypatch.setattr(
-        "mcode.bench.swebench.execution._ensure_image",
+        "mcode.bench.swebench.lite._ensure_image",
         lambda client, name, **kwargs: None,
     )
     monkeypatch.setattr(
-        "mcode.bench.swebench.execution._exec_agent_command_in_container",
+        "mcode.bench.swebench.lite._exec_agent_command_in_container",
         lambda *args, **kwargs: ("", 0, False),
     )
 
@@ -559,11 +559,11 @@ def test_repo_context_caps_exec_container_cpu_when_cpu_limit_set(monkeypatch):
     )
     monkeypatch.setitem(sys.modules, "swebench.harness.test_spec.test_spec", fake_test_spec_module)
     monkeypatch.setattr(
-        "mcode.bench.swebench.execution._ensure_image",
+        "mcode.bench.swebench.lite._ensure_image",
         lambda client, name, **kwargs: None,
     )
     monkeypatch.setattr(
-        "mcode.bench.swebench.execution._exec_agent_command_in_container",
+        "mcode.bench.swebench.lite._exec_agent_command_in_container",
         lambda *args, **kwargs: ("", 0, False),
     )
 

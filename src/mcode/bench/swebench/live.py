@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 import hashlib
-import io
-import tarfile
 import threading
 import time
 from dataclasses import dataclass
 
+from mcode.bench.swebench import common
 from mcode.bench.swebench.docker import ensure_docker_client, reraise_docker_unavailable
-from mcode.bench.swebench.execution import (
+from mcode.bench.swebench.lite import (
     _container_cpu_kwargs,
     _copy_testbed_from_container,
     _ensure_image,
     _thread_limit_env,
 )
 from mcode.util import make_temp_dir
+
+_build_agent_shell_command = common.build_agent_shell_command
+_copy_to_container = common.copy_to_container
+_exec_agent_command_in_container = common.exec_agent_command_in_container
 
 
 @dataclass(frozen=True)
@@ -463,84 +466,6 @@ class SWEbenchLiveSandbox:
                     container.remove(force=True)
                 except Exception:
                     pass
-
-
-def _copy_to_container(container, dest_path: str, content: str) -> None:
-    data = content.encode("utf-8", errors="replace")
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w") as tar:
-        info = tarfile.TarInfo(name=dest_path.split("/")[-1])
-        info.size = len(data)
-        info.uid = 0
-        info.gid = 0
-        info.mode = 0o644
-        tar.addfile(info, io.BytesIO(data))
-    buf.seek(0)
-    dest_dir = "/".join(dest_path.split("/")[:-1]) or "/"
-    container.put_archive(dest_dir, buf)
-
-
-def _truncate_agent_output(output: str, *, max_chars: int = 10_000) -> str:
-    if len(output) <= max_chars:
-        return output
-    half = max_chars // 2
-    return (
-        output[:half]
-        + f"\n\n[... truncated {len(output) - max_chars} chars ...]\n\n"
-        + output[-half:]
-    )
-
-
-def _normalize_agent_command(command: str, *, host_repo_root: str | None = None) -> str:
-    normalized = command
-    for alias in (host_repo_root, "/home/user/repo", "c:/users/user/tmp/repo"):
-        if alias:
-            normalized = normalized.replace(alias, "/testbed")
-    return normalized
-
-
-def _build_agent_shell_command(
-    command: str,
-    *,
-    host_repo_root: str | None = None,
-) -> str:
-    normalized = _normalize_agent_command(command, host_repo_root=host_repo_root)
-    preamble = [
-        "source /opt/miniconda3/bin/activate",
-        "conda activate testbed",
-        "cd /testbed",
-        "git config --global --add safe.directory /testbed",
-    ]
-    return "\n".join([*preamble, normalized])
-
-
-def _exec_agent_command_in_container(
-    container,
-    cmd: str,
-    *,
-    workdir: str = "/testbed",
-    timeout_s: int = 30,
-) -> tuple[str, int, bool]:
-    result_box: list[tuple[str, int]] = []
-
-    def _run():
-        try:
-            val = container.exec_run(
-                ["bash", "-o", "pipefail", "-c", cmd],
-                workdir=workdir,
-            )
-            output = (val.output or b"").decode("utf-8", errors="replace")
-            result_box.append((_truncate_agent_output(output), val.exit_code))
-        except Exception as e:
-            result_box.append((f"Error: {type(e).__name__}: {e}", -1))
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    t.join(timeout=timeout_s)
-    if not result_box:
-        return ("", -1, True)
-    output, exit_code = result_box[0]
-    return (output, exit_code, False)
 
 
 def _exec_in_container(
