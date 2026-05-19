@@ -29,6 +29,67 @@ Keep changes close to the owner:
 
 The runner should stay boring: load/filter/shard/resume tasks, call adapters, save results/artifacts, and update progress. Benchmark-specific execution belongs in adapters or execution modules. Tool safety belongs in policy/tooling modules.
 
+## Human handoff overview
+
+Use this section when onboarding a new human maintainer. The short mental model is:
+
+```text
+benchmark task -> Mellea-backed agent generates a patch -> benchmark evaluator tests it -> mCode saves DB rows and artifacts
+```
+
+Most of the repository is scaffolding around that loop: benchmark-specific task prep, Docker/Podman isolation, guarded agent tools, verification, retry/resume/sharding, result persistence, artifact replay, and Blue Vela operations.
+
+### Folder map
+
+- `src/mcode/bench/`: benchmark orchestration. Important files: `bench/cli.py` turns CLI flags into `BenchConfig` and dispatches local/sharded/remote runs; `bench/runner.py` is the main lifecycle; `bench/adapters.py` maps benchmark names to task loaders/environments.
+- `src/mcode/agent/`: coding-agent layer around Mellea. Important files: `agent/coding_agent.py` builds prompts/tools; `agent/tool_policy.py` enforces edit/test/final-answer rules; `agent/verification.py` builds the `run_tests` tool and failure feedback.
+- `src/mcode/llm/`: Mellea integration. Important files: `llm/session.py` starts sessions, snapshots repos, runs attempts, and selects a patch; `llm/react_driver.py` is the custom ReACT loop with tool filtering, final-answer gating, malformed-call recovery, and trace collection.
+- `src/mcode/execution/`: benchmark sandboxes/evaluators. Important files: `execution/swebench.py` handles SWE-bench Lite/Verified image prep, repo context, patch apply, and official eval; `execution/swebench_live.py` does the same for SWE-bench Live.
+- `src/mcode/launch/`: model-server and remote-run operations. Important files: `launch/cli.py` exposes local/Blue Vela launch/status/wait/stop/sync commands; `launch/bluevela.py` submits and monitors vLLM LSF jobs; `launch/state.py` stores atomic server/run records.
+- `src/mcode/ui/`: human/JSON output, dashboards, and friendly errors. Important files: `ui/task_reporter.py`, `ui/dashboard.py`, and `ui/errors.py`.
+- `src/mcode/util/`: small shared helpers, mainly temp directories and retry/backoff.
+- `research/`: experiment reports and result DBs. Treat each `research/*/README.md` as the index for which DBs are final vs partial/recovery.
+- `experiments/`, `results*`, and `logs/`: generated local outputs. Useful for debugging history, but not core source.
+- `benchmarks/`: local benchmark checkouts such as Aider Polyglot when present.
+
+### What one task looks like
+
+A SWE-bench Lite/Verified task is conceptually `repo`, `instance_id`, `base_commit`, `problem_statement`, optional `hints_text`, and the raw SWE-bench row containing test/eval metadata. The adapter loads this into `SWEbenchLiteTask`, the sandbox prepares a repo from the task image, the agent produces a git diff, and `SWEbenchSandbox.evaluate_patch()` runs the official eval in a clean container.
+
+An Aider Polyglot task is simpler: `language`, `exercise`, `task_id` like `python/proverb`, and a source directory. `PreparedPolyglotTask` adds a temp work dir, editable stub paths, test paths, commands, and timeout; mCode restricts the agent to those implementation files.
+
+### Why Docker/Podman appears everywhere
+
+For SWE-bench, containers are for task environments and evaluation, not for hosting the model. Each task comes from an old real-world repo commit with specific dependencies, Python/system packages, and official eval scripts; containers make those reproducible and isolated.
+
+There are two distinct phases: `repo_context()` gives the agent a copied repo mounted into an execution container for exploration and verification commands, while `evaluate_patch()` later applies only the generated patch in a clean container for official scoring.
+
+### Vanilla Mellea vs mCode loop
+
+Vanilla Mellea provides the model/session/tool framework and a general agent loop. mCode adds benchmark-specific scaffolding: constrained prompts, guarded tools, edit-before-final-answer behavior, mandatory verification, retry with test output, editable-path restrictions, patch/artifact capture, official evaluation, and SQLite metrics.
+
+The key files for this distinction are `llm/session.py`, `llm/react_driver.py`, `agent/coding_agent.py`, `agent/tool_policy.py`, and for Polyglot specifically `bench/runner.py` plus `bench/aider_polyglot.py`.
+
+### Data and result locations
+
+- Local default DB: `experiments/results/results.db`, unless `--db` is passed.
+- Important local experiment DBs: usually under `research/<date>-<experiment>/`.
+- Local artifacts: `<db-stem>-artifacts/` beside the DB unless `--artifact-dir` is passed.
+- Local operational state: `~/.config/mcode/launch-state.json`, or `MCODE_LAUNCH_STATE`.
+- Blue Vela remote benchmark runs: `$HOME/mcode-launch/bench-runs/<run-id>/`, including `results.db`, `logs/bench-<attempt>.log`, `exit-<attempt>.code`, and the generated bench script.
+- Blue Vela vLLM server logs: usually `$HOME/mcode-shared/runs/<server-run-id>/vllm.log`.
+- When `--fetch-db` is enabled, the remote Blue Vela DB is copied back to the local `--db` path; `--fetch-artifacts` similarly fetches the remote artifact directory.
+
+### Reading research reports
+
+Research reports generally follow: what was tested, setup, exact commands, result tables, important files, and notes/gotchas. Start with the README in the experiment directory; it should identify the final merged DB and separate it from shard, partial, smoke, or recovery DBs.
+
+Token counts are stored per task in SQLite (`task_results.prompt_tokens`, `completion_tokens`, `total_tokens`) and per artifact candidate (`artifact_candidates.*_tokens`). `uv run mcode results --db <db> --time` surfaces average token/task, but there is not a full dollar-cost accounting model because most runs were local or Blue Vela vLLM rather than paid APIs.
+
+### Future experiment runner idea
+
+If future work needs many experiment variants, consider adding Hydra as a separate experiment entrypoint rather than replacing Typer. Keep the boundary `Hydra config -> BenchConfig -> BenchmarkRunner`; do not make the runner depend on Hydra.
+
 ## Common checks
 
 ```bash
