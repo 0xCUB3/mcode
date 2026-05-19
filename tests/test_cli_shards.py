@@ -193,7 +193,48 @@ def test_smoke_local_forwards_manual_shards(monkeypatch, tmp_path: Path) -> None
     assert captured["artifact_dir"] == tmp_path / "smoke" / "artifacts"
 
 
-def test_aider_polyglot_cli_forwards_config(monkeypatch, tmp_path: Path) -> None:
+def test_terminal_bench_cli_forwards_config(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        "mcode.bench.cli._run_terminal_bench_local", lambda **kwargs: captured.update(kwargs)
+    )
+
+    res = CliRunner().invoke(
+        app,
+        [
+            "bench",
+            "terminal-bench",
+            "--model",
+            "test-model",
+            "--backend",
+            "openai",
+            "--agent",
+            "mcode",
+            "--limit",
+            "1",
+            "--task-ids",
+            "log-summary-date-ranges",
+            "--jobs-dir",
+            str(tmp_path / "jobs"),
+            "--db",
+            str(tmp_path / "tb.db"),
+            "--artifact-dir",
+            str(tmp_path / "artifacts"),
+        ],
+    )
+
+    assert res.exit_code == 0
+    config = captured["config"]
+    assert captured["db"] == tmp_path / "tb.db"
+    assert captured["limit"] == 1
+    assert captured["task_ids"] == "log-summary-date-ranges"
+    assert config.model_id == "test-model"
+    assert config.backend_name == "openai"
+    assert config.agent == "mcode"
+    assert config.agent_kwargs["loop_budget"] == "25"
+    assert config.jobs_dir == tmp_path / "jobs"
+    assert config.artifact_dir == tmp_path / "artifacts"
+
     captured: dict[str, object] = {}
     monkeypatch.setattr(
         "mcode.bench.cli._run_single_benchmark", lambda **kwargs: captured.update(kwargs)

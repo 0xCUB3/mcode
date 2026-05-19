@@ -2,7 +2,7 @@
 
 mCode is a benchmark harness for local model coding runs with Mellea. It wraps the Mellea ReACT loop, gives it a small set of code tools, records every task in SQLite, and keeps enough run state around that a long benchmark can be resumed, cancelled, inspected, and cleaned up without digging through random temp files.
 
-It runs SWE-bench Verified, SWE-bench Live, SWE-bench Lite, Aider Polyglot, and TerminalBench 2.0 (WIP). You can point it at Ollama, a local vLLM server, an OpenAI-compatible endpoint, or a vLLM job on IBM's Blue Vela cluster.
+It runs SWE-bench Verified, SWE-bench Live, SWE-bench Lite, Aider Polyglot, experimental Terminal-Bench 2.0 support, and a small mixed suite. You can point it at Ollama, a local vLLM server, an OpenAI-compatible endpoint, or a vLLM job on IBM's Blue Vela cluster. Terminal-Bench currently has only local Harbor smoke coverage; full Terminal-Bench runs and Blue Vela support are not validated yet.
 
 ## Results
 
@@ -78,6 +78,7 @@ Start with the workflow that matches where you plan to run the model.
 |Local Ollama and local vLLM runs|[`docs/local.md`](docs/local.md)|
 |Blue Vela LSF runs|[`docs/bluevela.md`](docs/bluevela.md)|
 |Command reference with the weird corners included|[`docs/COMMANDS.md`](docs/COMMANDS.md)|
+|Terminal-Bench 2.0 via Harbor|[`docs/terminalbench.md`](docs/terminalbench.md)|
 |How the code is put together|[`docs/architecture.md`](docs/architecture.md)|
 
 ## Common commands

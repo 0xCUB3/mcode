@@ -157,13 +157,17 @@ def deps_toolchains(
 def doctor_cmd(
     target: str = typer.Argument(
         None,
-        help="optional: bluevela | local-vllm | local-ollama. Omit for system-wide checks.",
+        help=(
+            "optional: bluevela | local-vllm | local-ollama | terminal-bench. "
+            "Omit for system-wide checks."
+        ),
     ),
     deep: bool = typer.Option(False, "--deep"),
     init: bool = typer.Option(False, "--init", help="bootstrap launch.toml (bluevela only)"),
     login: str | None = typer.Option(None, "--login", help="user@host for --init"),
 ) -> None:
     """Run system and launch checks."""
+    from mcode.bench import terminalbench_doctor
     from mcode.doctor import render_check_lines, system_checks
     from mcode.launch import bluevela, local_ollama, local_vllm
     from mcode.launch import config as config_mod
@@ -208,22 +212,25 @@ def doctor_cmd(
     else:
         # Validate target BEFORE loading config so an unknown target produces
         # a clean error instead of surfacing an unrelated TOML parse failure.
-        if target not in ("bluevela", "local-vllm", "local-ollama"):
+        if target not in ("bluevela", "local-vllm", "local-ollama", "terminal-bench"):
             print_error(
                 MCodeError(
                     what=f"unknown target {target!r}",
-                    why="valid: bluevela, local-vllm, local-ollama",
+                    why="valid: bluevela, local-vllm, local-ollama, terminal-bench",
                     next="pick one or omit for system-wide checks",
                 )
             )
             raise typer.Exit(1)
-        cfg = _launch_run(config_mod.load)
-        if target == "bluevela":
-            checks = bluevela.doctor(cfg)
-        elif target == "local-vllm":
-            checks = local_vllm.doctor(cfg)
+        if target == "terminal-bench":
+            checks = terminalbench_doctor.doctor(deep=deep)
         else:
-            checks = local_ollama.doctor(cfg)
+            cfg = _launch_run(config_mod.load)
+            if target == "bluevela":
+                checks = bluevela.doctor(cfg)
+            elif target == "local-vllm":
+                checks = local_vllm.doctor(cfg)
+            else:
+                checks = local_ollama.doctor(cfg)
 
     lines, any_failed = render_check_lines(checks)
     for line in lines:
