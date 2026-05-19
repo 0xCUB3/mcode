@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from mcode.execution.sandbox import (
+from mcode.bench.swebench.docker import (
     ensure_docker_client,
     is_docker_unavailable_error,
     reraise_docker_unavailable,

@@ -18,7 +18,7 @@ from mcode.bench.adapters import BenchmarkAdapter, adapter_for
 from mcode.bench.artifacts import TaskArtifactManifest
 from mcode.bench.results import ResultsDB, RunSummary
 from mcode.bench.runner_state import RunStateUpdater
-from mcode.execution.sandbox import DockerUnavailableError
+from mcode.bench.swebench.docker import DockerUnavailableError
 from mcode.llm.session import LLMSession
 from mcode.ui.task_reporter import choose as choose_task_reporter
 from mcode.util.retry import with_backoff
@@ -1228,7 +1228,7 @@ def _is_polyglot_toolchain_error(exc: BaseException) -> bool:
 
 def _is_retryable_infra_text(text: str) -> bool:
     try:
-        from mcode.execution.swebench import _is_retryable_podman_image_error
+        from mcode.bench.swebench.execution import _is_retryable_podman_image_error
 
         if _is_retryable_podman_image_error(text):
             return True

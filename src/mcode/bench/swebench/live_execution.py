@@ -7,8 +7,8 @@ import threading
 import time
 from dataclasses import dataclass
 
-from mcode.execution.sandbox import ensure_docker_client, reraise_docker_unavailable
-from mcode.execution.swebench import (
+from mcode.bench.swebench.docker import ensure_docker_client, reraise_docker_unavailable
+from mcode.bench.swebench.execution import (
     _container_cpu_kwargs,
     _copy_testbed_from_container,
     _ensure_image,

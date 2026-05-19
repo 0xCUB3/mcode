@@ -5,9 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
-import mcode.execution.swebench_live as swebench_live_module
-from mcode.execution.sandbox import DockerUnavailableError
-from mcode.execution.swebench_live import (
+import mcode.bench.swebench.live_execution as swebench_live_module
+from mcode.bench.swebench.docker import DockerUnavailableError
+from mcode.bench.swebench.live_execution import (
     SWEbenchLiveSandbox,
     _build_agent_shell_command,
     _check_resolution,

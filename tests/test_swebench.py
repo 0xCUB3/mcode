@@ -7,13 +7,9 @@ import types
 
 import pytest
 
-import mcode.execution.sandbox as sandbox_module
-from mcode.execution.sandbox import (
-    DockerSandbox,
-    DockerUnavailableError,
-    is_docker_unavailable_error,
-)
-from mcode.execution.swebench import (
+import mcode.bench.swebench.docker as sandbox_module
+from mcode.bench.swebench.docker import DockerUnavailableError, is_docker_unavailable_error
+from mcode.bench.swebench.execution import (
     RetryablePodmanImageError,
     SWEbenchSandbox,
     _build_agent_setup_script,
@@ -494,11 +490,11 @@ def test_repo_context_disables_network_for_source_container(monkeypatch):
     monkeypatch.setitem(sys.modules, "swebench.harness.test_spec.test_spec", fake_test_spec_module)
 
     monkeypatch.setattr(
-        "mcode.execution.swebench._ensure_image",
+        "mcode.bench.swebench.execution._ensure_image",
         lambda client, name, **kwargs: None,
     )
     monkeypatch.setattr(
-        "mcode.execution.swebench._exec_agent_command_in_container",
+        "mcode.bench.swebench.execution._exec_agent_command_in_container",
         lambda *args, **kwargs: ("", 0, False),
     )
 
@@ -563,11 +559,11 @@ def test_repo_context_caps_exec_container_cpu_when_cpu_limit_set(monkeypatch):
     )
     monkeypatch.setitem(sys.modules, "swebench.harness.test_spec.test_spec", fake_test_spec_module)
     monkeypatch.setattr(
-        "mcode.execution.swebench._ensure_image",
+        "mcode.bench.swebench.execution._ensure_image",
         lambda client, name, **kwargs: None,
     )
     monkeypatch.setattr(
-        "mcode.execution.swebench._exec_agent_command_in_container",
+        "mcode.bench.swebench.execution._exec_agent_command_in_container",
         lambda *args, **kwargs: ("", 0, False),
     )
 
@@ -604,56 +600,3 @@ def test_sandbox_cpu_limit_zero_or_negative_treated_as_unlimited():
     # than send a half-set HostConfig.
     s = SWEbenchSandbox(cpu_limit=0.0001)
     assert s._cpu_kwargs() == {}
-
-
-def test_docker_sandbox_timeout_ignores_cleanup_and_log_failures() -> None:
-    class FakeImages:
-        def get(self, image):
-            assert image == "python:3.11-slim"
-
-    class FakeContainer:
-        killed = False
-        removed = False
-
-        def wait(self, *, timeout):
-            del timeout
-            raise TimeoutError("command timed out")
-
-        def kill(self):
-            self.killed = True
-            raise RuntimeError("kill failed")
-
-        def logs(self, *args, **kwargs):
-            del args, kwargs
-            raise RuntimeError("logs unavailable")
-
-        def remove(self, *, force):
-            del force
-            self.removed = True
-            raise RuntimeError("remove failed")
-
-    fake_container = FakeContainer()
-
-    class FakeContainers:
-        def run(self, *args, **kwargs):
-            del args, kwargs
-            return fake_container
-
-    class FakeClient:
-        images = FakeImages()
-        containers = FakeContainers()
-
-        def ping(self):
-            pass
-
-    sandbox = DockerSandbox()
-    sandbox._client = FakeClient()
-
-    result = sandbox.run_python("print('hello')", timeout_s=1)
-
-    assert result.success is False
-    assert result.timed_out is True
-    assert result.error == "Timed out"
-    assert "logs unavailable" in result.stderr
-    assert fake_container.killed is True
-    assert fake_container.removed is True
