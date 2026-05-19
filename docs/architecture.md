@@ -24,7 +24,7 @@ The agent loop is under `src/mcode/agent/` and `src/mcode/llm/`. `tool_policy.py
 |Runner|`src/mcode/bench/runner.py`|Shared task loop across benchmarks|
 |Run-state updates|`src/mcode/bench/runner_state.py`|Best-effort metadata and progress patches into launch state|
 |Artifacts|`src/mcode/bench/runner_artifacts.py`, `src/mcode/bench/artifacts/`|Manifest writing, patch storage, replay, fetch, and inspection|
-|Adapters|`src/mcode/bench/adapters.py`, `aider_polyglot.py`, `src/mcode/bench/swebench/`|Benchmark-specific task loading and Docker-based SWE-bench verification|
+|Adapters|`src/mcode/bench/adapters.py`, `src/mcode/bench/aider_polyglot/`, `src/mcode/bench/swebench/`|Benchmark-specific task loading and verification|
 |Terminal-Bench|`src/mcode/bench/terminalbench.py`, `terminalbench_agent.py`, `src/mcode/agent/terminal_agent.py`|Harbor-backed Terminal-Bench 2.0 execution, result import, and mCode terminal agent|
 |Sharding|`src/mcode/bench/shards.py`|Worker process launch, shard DB paths, merge, retryable infra exit code|
 |Remote bench|`src/mcode/bench/remote.py`, `src/mcode/bench/remote_script.py`|Blue Vela bench plan, shell script generation, fetch planning|
