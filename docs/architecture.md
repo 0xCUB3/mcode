@@ -23,14 +23,14 @@ The agent loop is under `src/mcode/agent/` and `src/mcode/llm/`. `tool_policy.py
 |Bench CLI|`src/mcode/bench/cli.py`|Public bench facade, run planning, local and remote dispatch|
 |Runner|`src/mcode/bench/runner.py`|Shared task loop across benchmarks|
 |Run-state updates|`src/mcode/bench/runner_state.py`|Best-effort metadata and progress patches into launch state|
-|Artifacts|`src/mcode/bench/runner_artifacts.py`, `src/mcode/bench/artifacts.py`, `src/mcode/bench/artifacts_cli.py`|Manifest writing, patch storage, replay, fetch, and inspection|
+|Artifacts|`src/mcode/bench/runner_artifacts.py`, `src/mcode/bench/artifacts/`|Manifest writing, patch storage, replay, fetch, and inspection|
 |Adapters|`src/mcode/bench/adapters.py`, `aider_polyglot.py`, SWE-bench execution modules|Benchmark-specific task loading and verification|
 |Terminal-Bench|`src/mcode/bench/terminalbench.py`, `terminalbench_agent.py`, `src/mcode/agent/terminal_agent.py`|Harbor-backed Terminal-Bench 2.0 execution, result import, and mCode terminal agent|
 |Sharding|`src/mcode/bench/shards.py`|Worker process launch, shard DB paths, merge, retryable infra exit code|
 |Remote bench|`src/mcode/bench/remote.py`, `src/mcode/bench/remote_script.py`|Blue Vela bench plan, shell script generation, fetch planning|
 |Summaries|`src/mcode/bench/summary.py`|Run plan, failure hints, footer, rerun metadata|
 |Suites|`src/mcode/bench/suite_cli.py`|Mixed-suite command and suite manifest handling|
-|Results|`src/mcode/bench/results*.py`|SQLite facade, schema, ingest, metrics, export, merge|
+|Results|`src/mcode/bench/results/`|SQLite facade, schema, ingest, metrics, export, merge|
 |Launch|`src/mcode/launch/*.py`|Config, state file, Blue Vela launch, local launchers, status, stop, sync|
 |Agent policy|`src/mcode/agent/tool_policy.py`|Tool-call checks and denial reasons|
 |Mellea driver|`src/mcode/llm/react_driver.py`|ReACT loop integration and tool-call recovery|
@@ -41,9 +41,9 @@ The split is not about hiding complexity. It is about keeping each failure mode 
 
 This distinction matters because a lot of bugs come from treating them as one blob.
 
-The SQLite results DB is the durable record of benchmark runs and task results. `src/mcode/bench/results.py` is the public facade, with schema, ingest, metrics, exports, artifact-copy helpers, and merge logic split into smaller modules beside it. If you change the schema, update the schema module, exports, tests, and docs in the same patch.
+The SQLite results DB is the durable record of benchmark runs and task results. `src/mcode/bench/results/__init__.py` is the public facade, with schema, ingest, metrics, exports, artifact-copy helpers, and merge logic split into smaller modules in the same package. If you change the schema, update the schema module, exports, tests, and docs in the same patch.
 
-Artifacts are the saved per-task generation records: manifests, candidate patches, selected candidate metadata, and evaluation inputs. They live in an artifact directory, usually next to the DB as `<db-stem>-artifacts`. The runner writes them through `runner_artifacts.py`, and the artifact CLI in `artifacts_cli.py` lets you list, show, patch, replay, or fetch them later.
+Artifacts are the saved per-task generation records: manifests, candidate patches, selected candidate metadata, and evaluation inputs. They live in an artifact directory, usually next to the DB as `<db-stem>-artifacts`. The runner writes them through `runner_artifacts.py`, and the artifact CLI in `bench/artifacts/cli.py` lets you list, show, patch, replay, or fetch them later.
 
 Launch state is operational state, not benchmark truth. It lives in `~/.config/mcode/launch-state.json` unless `MCODE_LAUNCH_STATE` points somewhere else. It records servers and bench runs so commands like `launch status`, `bench list`, `bench show`, `bench cancel`, `bench prune`, and `watch` have something to read. Tests must never touch the real state file; `tests/conftest.py` isolates it for every test.
 
@@ -64,7 +64,7 @@ The schema is append-only because old research DBs stay useful. Schema setup cre
 |`artifact_verification_evidence`|Verification commands and output previews attached to a candidate|
 |`artifact_evaluations`|Evaluation rows produced while replaying or evaluating artifacts|
 
-`ResultsDB` in `results.py` is the public API. The smaller `results_*` modules do the schema setup, artifact copying, metrics, ingest, export, and merge work. Callers should go through the facade unless there is a good reason not to.
+`ResultsDB` in `bench/results/__init__.py` is the public API. The smaller modules in that package do the schema setup, artifact copying, metrics, ingest, export, and merge work. Callers should go through the facade unless there is a good reason not to.
 
 ## Artifact layout
 

@@ -4,9 +4,9 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
-from mcode.bench.results_artifacts_copy import copy_artifact_task_from_conn
-from mcode.bench.results_sqlite import row_value as _row_value
-from mcode.bench.results_sqlite import sqlite_table_exists as _sqlite_table_exists
+from mcode.bench.results.artifacts_copy import copy_artifact_task_from_conn
+from mcode.bench.results.sqlite import row_value as _row_value
+from mcode.bench.results.sqlite import sqlite_table_exists as _sqlite_table_exists
 
 
 def ingest_one(

@@ -4,8 +4,8 @@ import csv
 import sqlite3
 from pathlib import Path
 
-from mcode.bench.results_sqlite import row_value as _row_value
-from mcode.bench.results_sqlite import sqlite_table_exists as _sqlite_table_exists
+from mcode.bench.results.sqlite import row_value as _row_value
+from mcode.bench.results.sqlite import sqlite_table_exists as _sqlite_table_exists
 
 RUN_FIELDS = [
     "source_db",

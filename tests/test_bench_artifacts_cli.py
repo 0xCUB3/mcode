@@ -281,12 +281,12 @@ def test_bench_artifacts_replay_fetches_missing_artifacts(monkeypatch, tmp_path:
         return ("run-fetch", "/remote/artifacts", fetched_root)
 
     monkeypatch.setattr(
-        "mcode.bench.artifacts_cli._resolve_artifact_fetch_run",
+        "mcode.bench.artifacts.cli._resolve_artifact_fetch_run",
         lambda **_kwargs: object(),
     )
     monkeypatch.setattr("mcode.bench.cli._run_single_benchmark", fake_run_single_benchmark)
     monkeypatch.setattr(
-        "mcode.bench.artifacts_cli._fetch_remote_artifacts_for_run",
+        "mcode.bench.artifacts.cli._fetch_remote_artifacts_for_run",
         fake_fetch_remote_artifacts_for_run,
     )
 

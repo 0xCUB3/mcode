@@ -7,11 +7,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from mcode.bench import results_export, results_ingest, results_merge, results_metrics
 from mcode.bench.artifacts import TaskArtifactManifest
-from mcode.bench.results_schema import init_results_schema, table_columns
-from mcode.bench.results_sqlite import row_value as _row_value
-from mcode.bench.results_sqlite import sqlite_table_exists as _sqlite_table_exists
+
+from . import export as results_export
+from . import ingest as results_ingest
+from . import merge as results_merge
+from . import metrics as results_metrics
+from .schema import init_results_schema, table_columns
+from .sqlite import row_value as _row_value
+from .sqlite import sqlite_table_exists as _sqlite_table_exists
 
 
 @dataclass(frozen=True)

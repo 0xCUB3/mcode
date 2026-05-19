@@ -6,8 +6,9 @@ from typing import Annotated, Literal
 
 import typer
 
-from mcode.bench.artifacts_cli import register_artifact_commands
-from mcode.bench.results import ResultsDB, merge_shard_dbs
+from mcode.bench.artifacts.cli import register_artifact_commands
+from mcode.bench.commands.ops import register_ops_commands
+from mcode.bench.results import ResultsDB
 from mcode.bench.runner import BenchConfig, BenchmarkRunner, NoTasksMatchedError
 from mcode.bench.shards import (
     SHARDED_INFRA_EXIT_CODE,
@@ -659,7 +660,7 @@ def _run_bluevela_task_chunks(
 
     if db.exists():
         db.unlink()
-    summary = _merge_into_results_db(db=db, shard_paths=chunk_dbs, merge_mode="full_db")
+    _merge_into_results_db(db=db, shard_paths=chunk_dbs, merge_mode="full_db")
     summary = _full_db_summary(db)
     _print_run_summary(
         summary=summary,
@@ -722,7 +723,7 @@ def _terminal_bench_cli_args(
     return argv
 
 
-def _swebench_live_cli_args(
+def _base_swebench_cli_args(
     *,
     model: str,
     backend: str,
@@ -744,6 +745,7 @@ def _swebench_live_cli_args(
     check_image_digests: bool,
     phase: str,
     artifact_dir: Path,
+    extra: list[str] | None = None,
 ) -> list[str]:
     argv = [
         "--model",
@@ -756,6 +758,7 @@ def _swebench_live_cli_args(
         str(timeout_s),
         "--split",
         split,
+        *(extra or []),
         "--mem-limit",
         mem_limit,
         "--pids-limit",
@@ -769,14 +772,17 @@ def _swebench_live_cli_args(
         "--artifact-dir",
         str(artifact_dir),
     ]
-    _append_option(argv, "--temperature", temperature)
-    _append_option(argv, "--seed", seed)
-    _append_option(argv, "--limit", limit)
-    _append_option(argv, "--sampling-budget", sampling_budget)
+    for flag, value in (
+        ("--temperature", temperature),
+        ("--seed", seed),
+        ("--limit", limit),
+        ("--sampling-budget", sampling_budget),
+        ("--task-ids", task_ids),
+        ("--cpu-limit", cpu_limit),
+    ):
+        _append_option(argv, flag, value)
     if selection_attempts != 1:
         _append_option(argv, "--selection-attempts", selection_attempts)
-    _append_option(argv, "--task-ids", task_ids)
-    _append_option(argv, "--cpu-limit", cpu_limit)
     if not check_image_digests:
         argv.append("--no-check-image-digests")
     if diagnostic_traces:
@@ -784,83 +790,37 @@ def _swebench_live_cli_args(
     return argv
 
 
+def _swebench_live_cli_args(**kwargs) -> list[str]:
+    return _base_swebench_cli_args(**kwargs)
+
+
 def _swebench_lite_cli_args(
     *,
-    model: str,
-    backend: str,
-    loop_budget: int,
-    temperature: float | None,
-    seed: int | None,
-    timeout_s: int,
-    split: str,
     arch: str,
     namespace: str,
     max_workers: int,
     force_rebuild: bool,
-    mem_limit: str,
-    pids_limit: int,
-    cpu_limit: float | None,
-    limit: int | None,
-    n_samples: int,
-    sampling: str,
-    sampling_budget: int | None,
-    selection_attempts: int,
-    task_ids: str | None,
     dataset: str,
-    diagnostic_traces: bool,
-    check_image_digests: bool,
     eval_repair_attempts: int,
-    phase: str,
-    artifact_dir: Path,
+    **kwargs,
 ) -> list[str]:
-    argv = [
-        "--model",
-        model,
-        "--backend",
-        backend,
-        "--loop-budget",
-        str(loop_budget),
-        "--timeout",
-        str(timeout_s),
-        "--split",
-        split,
-        "--arch",
-        arch,
-        "--namespace",
-        namespace,
-        "--max-workers",
-        str(max_workers),
-        "--mem-limit",
-        mem_limit,
-        "--pids-limit",
-        str(pids_limit),
-        "--n-samples",
-        str(n_samples),
-        "--sampling",
-        sampling,
-        "--dataset",
-        dataset,
-        "--phase",
-        phase,
-        "--artifact-dir",
-        str(artifact_dir),
-    ]
-    _append_option(argv, "--temperature", temperature)
-    _append_option(argv, "--seed", seed)
-    _append_option(argv, "--limit", limit)
-    _append_option(argv, "--sampling-budget", sampling_budget)
-    if selection_attempts != 1:
-        _append_option(argv, "--selection-attempts", selection_attempts)
-    _append_option(argv, "--task-ids", task_ids)
-    _append_option(argv, "--cpu-limit", cpu_limit)
+    argv = _base_swebench_cli_args(
+        **kwargs,
+        extra=[
+            "--arch",
+            arch,
+            "--namespace",
+            namespace,
+            "--max-workers",
+            str(max_workers),
+            "--dataset",
+            dataset,
+        ],
+    )
     if eval_repair_attempts:
         _append_option(argv, "--eval-repair-attempts", eval_repair_attempts)
     if force_rebuild:
         argv.append("--force-rebuild")
-    if not check_image_digests:
-        argv.append("--no-check-image-digests")
-    if diagnostic_traces:
-        argv.append("--diagnostic-traces")
     return argv
 
 
@@ -1061,126 +1021,9 @@ def bench_terminal_bench(
     )
 
 
-@bench_app.command("list")
-def bench_list(
-    json_mode: JsonFlag = False,
-    benchmark: Annotated[str | None, typer.Option("--benchmark")] = None,
-    status: Annotated[str | None, typer.Option("--status")] = None,
-    artifacts_only: Annotated[
-        bool,
-        typer.Option("--artifacts", help="Only show runs with remote artifact metadata"),
-    ] = False,
-    limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
-    wide: Annotated[
-        bool, typer.Option("--wide", help="Show target, shard, artifact, and DB columns")
-    ] = False,
-) -> None:
-    """List saved bench runs from the launch state file."""
-    from mcode.bench.cancel import list_runs
-
-    rc = list_runs(
-        json_mode=json_mode,
-        benchmark=benchmark,
-        status=status,
-        artifacts_only=artifacts_only,
-        limit=limit,
-        wide=wide,
-    )
-    if rc != 0:
-        raise typer.Exit(rc)
-
-
-@bench_app.command("show")
-def bench_show(
-    run_id: Annotated[str | None, typer.Argument(help="run id (from `mcode bench list`)")] = None,
-    latest: Annotated[bool, typer.Option("--latest", help="Show the most recent run")] = False,
-    json_mode: JsonFlag = False,
-) -> None:
-    """Show run details, DB summary, and artifact paths."""
-    from mcode.bench.cancel import show_run
-    from mcode.ui.errors import handle_errors
-
-    @handle_errors
-    def _do() -> None:
-        rc = show_run(run_id, latest=latest, json_mode=json_mode)
-        if rc != 0:
-            raise typer.Exit(rc)
-
-    _do()
-
-
-@bench_app.command("prune")
-def bench_prune(
-    json_mode: JsonFlag = False,
-    status: Annotated[
-        str | None, typer.Option("--status", help="Only prune this run status")
-    ] = None,
-    older_than: Annotated[
-        str | None,
-        typer.Option("--older-than", help="Only prune runs older than a duration like 7d or 12h"),
-    ] = None,
-    missing_db: Annotated[
-        bool,
-        typer.Option("--missing-db/--any-db", help="Only prune records whose DB path is missing"),
-    ] = True,
-    yes: Annotated[bool, typer.Option("--yes", help="Actually delete matching records")] = False,
-) -> None:
-    """Remove stale bench run records from the launch state file."""
-    from mcode.bench.cancel import prune_runs
-    from mcode.ui.errors import handle_errors
-
-    @handle_errors
-    def _do() -> None:
-        rc = prune_runs(
-            json_mode=json_mode,
-            status=status,
-            older_than=older_than,
-            missing_db=missing_db,
-            yes=yes,
-        )
-        if rc != 0:
-            raise typer.Exit(rc)
-
-    _do()
-
-
-@bench_app.command("cancel")
-def bench_cancel(
-    run_id: str = typer.Argument(..., help="run id (from `mcode bench list`)"),
-) -> None:
-    """Cancel a running sharded or Blue Vela bench run."""
-    from mcode.bench.cancel import cancel_run
-    from mcode.ui.errors import handle_errors
-
-    @handle_errors
-    def _do() -> None:
-        rc = cancel_run(run_id)
-        if rc != 0:
-            raise typer.Exit(rc)
-
-    _do()
-
-
 register_artifact_commands(bench_app)
 register_suite_commands(bench_app)
-
-
-@bench_app.command("merge-shards")
-def bench_merge_shards(
-    out: Annotated[Path, typer.Option("--out", help="Output SQLite DB path")],
-    shards: Annotated[list[Path], typer.Argument(..., help="Shard SQLite DB paths")],
-    force: Annotated[
-        bool,
-        typer.Option("--force", help="Overwrite output DB if it exists"),
-    ] = False,
-) -> None:
-    """Merge shard SQLite DBs into a single run DB."""
-    report = merge_shard_dbs(out_path=out, shard_paths=shards, force=force)
-    console.print(
-        f"out={report['out_path']} benchmark={report['benchmark']} run_id={report['run_id']} "
-        f"tasks={report['tasks_written']} shards_used={report['shards_used']} "
-        f"shards_ignored={report['shards_ignored']}"
-    )
+register_ops_commands(bench_app)
 
 
 @bench_app.command("swebench-live")

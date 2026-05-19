@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from mcode.bench.results_sqlite import row_value as _row_value
-from mcode.bench.results_sqlite import sqlite_table_exists as _table_exists
+from mcode.bench.results.sqlite import row_value as _row_value
+from mcode.bench.results.sqlite import sqlite_table_exists as _table_exists
 
 
 def copy_artifact_task_from_conn(

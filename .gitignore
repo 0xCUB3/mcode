@@ -24,7 +24,7 @@ htmlcov/
 tmp_cache/
 benchmarks/
 experiments/results/
-results/
+/results/
 *.log
 logs/
 .tmp/

@@ -4,7 +4,7 @@ import math
 import sqlite3
 from collections.abc import Sequence
 
-from mcode.bench.results_sqlite import row_value as _row_value
+from mcode.bench.results.sqlite import row_value as _row_value
 
 _TERMINAL_REASON_BUCKETS = (
     "budget_exhausted",
