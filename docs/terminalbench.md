@@ -1,5 +1,7 @@
 # Terminal-Bench 2.0
 
+> **Experimental:** this integration has local Harbor smoke coverage only. Full Terminal-Bench runs, the mCode terminal agent's benchmark quality, and Blue Vela execution are not validated yet.
+
 mCode runs Terminal-Bench 2.0 through Harbor, the official TB2 harness. Harbor owns task download, environments, verifier injection, rewards, concurrency, and trial logs. mCode owns CLI UX, SQLite import, artifact manifests, and the optional mCode terminal agent.
 
 ## Setup and smoke tests
@@ -74,4 +76,4 @@ Harbor writes `jobs/<job-name>/result.json` plus one trial directory per task, e
 - Harbor currently requires Python 3.12+. Keeping it as a `uv tool` avoids dependency conflicts with mCode's optional dataset stack.
 - Normal mCode patch replay does not apply because TB2 scores final container state.
 - Full TB2 runs are expensive. Start with `--agent oracle --limit 1`, then a small model slice.
-- Terminal-Bench support is partial on Blue Vela until Harbor execution there is validated end to end.
+- Blue Vela support is not validated yet; treat it as incomplete until Harbor execution is tested end to end there.

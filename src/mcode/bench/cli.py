@@ -1003,7 +1003,7 @@ def bench_terminal_bench(
     ] = None,
     json_mode: JsonFlag = False,
 ) -> None:
-    """Run Terminal-Bench 2.0 through Harbor and import results into mCode."""
+    """Run Terminal-Bench 2.0 through Harbor and import results into mCode (experimental)."""
 
     resolved_artifact_dir = _resolve_artifact_dir(db, artifact_dir)
     base_argv = _terminal_bench_cli_args(

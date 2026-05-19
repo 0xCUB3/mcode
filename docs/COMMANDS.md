@@ -241,7 +241,7 @@ uv run mcode deps toolchains --benchmark aider-polyglot
 
 ## Terminal-Bench 2.0
 
-`bench terminal-bench` uses Harbor, the official Terminal-Bench 2.0 harness. Harbor runs the task containers and verifiers; mCode imports the results into SQLite and writes artifact manifests that point at the Harbor trial directories.
+`bench terminal-bench` is experimental. It uses Harbor, the official Terminal-Bench 2.0 harness. Harbor runs the task containers and verifiers; mCode imports the results into SQLite and writes artifact manifests that point at the Harbor trial directories. The local Harbor path has smoke coverage only; full runs and Blue Vela execution are not validated yet.
 
 Start with the oracle agent to validate Harbor and Docker:
 
